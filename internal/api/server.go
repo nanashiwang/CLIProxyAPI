@@ -26,6 +26,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/managementasset"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
+	internalusage "github.com/router-for-me/CLIProxyAPI/v7/internal/usage"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -197,6 +198,10 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		authManager.SetRetryConfig(cfg.RequestRetry, time.Duration(cfg.MaxRetryInterval)*time.Second, cfg.MaxRetryCredentials)
 	}
 	managementasset.SetCurrentConfig(cfg)
+	internalusage.SetStatisticsEnabled(cfg.UsageStatisticsEnabled)
+	if errUsage := internalusage.ConfigureDefault(cfg.UsageStatistics, configFilePath); errUsage != nil {
+		log.WithError(errUsage).Warn("failed to configure persistent usage statistics")
+	}
 	auth.SetQuotaCooldownDisabled(cfg.DisableCooling)
 	auth.SetTransientErrorCooldownSeconds(cfg.TransientErrorCooldownSeconds)
 	applySignatureCacheConfig(nil, cfg)

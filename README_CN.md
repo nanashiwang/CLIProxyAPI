@@ -140,7 +140,27 @@ CLIProxyAPI 用户手册： [https://help.router-for.me/](https://help.router-fo
 
 ## 使用量统计
 
-自v6.10.0版本以后，CLIProxyAPI及 [CPAMC](https://github.com/router-for-me/Cli-Proxy-API-Management-Center) 项目不再预置数据统计功能，如果有数据统计需求的请使用以下项目：
+当前版本已内置可选的持久化使用量与美元费用统计，默认关闭。可在 `config.yaml` 中启用：
+
+```yaml
+usage-statistics-enabled: true
+usage-statistics:
+  storage-file: "data/usage_statistics.jsonl"
+  retention-days: 90
+  max-records: 200000
+```
+
+每条请求会保存请求发生时的价格快照、账号/模型/Provider 维度、状态、延迟，以及包含缓存读取和缓存写入在内的 Token 分类。API Key 仅保存 SHA-256 短指纹。[CPAMC](https://github.com/nanashiwang/Cli-Proxy-API-Management-Center) 的“使用统计”页面支持费用趋势、排行、请求明细、模型价格管理，以及统计数据导入、导出和清空。
+
+管理接口：
+
+- `GET /v0/management/usage`
+- `GET /v0/management/usage/status`
+- `GET /v0/management/usage/export`
+- `POST /v0/management/usage/import`
+- `DELETE /v0/management/usage`
+
+如需 SQLite 外部存储或更完整的账号池运维，也可继续使用以下社区项目：
 
 ### [CPA Usage Keeper](https://github.com/Willxup/cpa-usage-keeper)
 
@@ -148,7 +168,7 @@ CLIProxyAPI 用户手册： [https://help.router-for.me/](https://help.router-fo
 
 ### [CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus)
 
-面向 CLIProxyAPI 的完整管理中心，提供请求级监控和费用预估。CPA-Manager 可按账号、模型、渠道、延迟、状态和 token 用量追踪采集到的请求；支持可编辑模型价格与一键同步 LiteLLM 价格来估算费用；用 SQLite 持久化事件；并提供面向 Codex 账号池的批量巡检、配额识别、异常账号定位、清理建议与一键执行能力，适合多账号池的日常运维管理。
+面向 CLIProxyAPI 的完整管理中心，提供请求级监控、可编辑模型价格、SQLite 持久化和 Codex 账号池运维能力。
 
 ## SDK 文档
 

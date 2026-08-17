@@ -20,6 +20,24 @@ type RequestScopedErrorRule struct {
 	Action string `yaml:"action,omitempty" json:"action,omitempty"`
 }
 
+// UsageStatisticsConfig controls persistent request usage storage.
+type UsageStatisticsConfig struct {
+	// StorageFile overrides the JSONL storage path. Relative paths resolve from the config directory.
+	StorageFile string `yaml:"storage-file,omitempty" json:"storage-file,omitempty"`
+	// RetentionDays limits how long request-level records are retained.
+	RetentionDays int `yaml:"retention-days,omitempty" json:"retention-days,omitempty"`
+	// MaxRecords caps retained request-level records after time-based pruning.
+	MaxRecords int `yaml:"max-records,omitempty" json:"max-records,omitempty"`
+}
+
+// DefaultUsageStatisticsConfig returns persistent usage storage defaults.
+func DefaultUsageStatisticsConfig() UsageStatisticsConfig {
+	return UsageStatisticsConfig{
+		RetentionDays: 90,
+		MaxRecords:    200000,
+	}
+}
+
 // PricingConfig controls built-in model pricing and usage cost calculation.
 type PricingConfig struct {
 	// Enabled toggles built-in USD cost calculation for usage records.

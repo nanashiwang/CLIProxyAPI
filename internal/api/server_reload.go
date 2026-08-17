@@ -12,6 +12,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/managementasset"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pricing"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
+	internalusage "github.com/router-for-me/CLIProxyAPI/v7/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -87,6 +88,10 @@ func (s *Server) UpdateClientsContext(ctx context.Context, cfg *config.Config) b
 
 	if oldCfg == nil || oldCfg.UsageStatisticsEnabled != cfg.UsageStatisticsEnabled {
 		redisqueue.SetUsageStatisticsEnabled(cfg.UsageStatisticsEnabled)
+		internalusage.SetStatisticsEnabled(cfg.UsageStatisticsEnabled)
+	}
+	if errUsage := internalusage.ConfigureDefault(cfg.UsageStatistics, s.configFilePath); errUsage != nil {
+		log.WithError(errUsage).Warn("failed to reconfigure persistent usage statistics")
 	}
 	pricing.ConfigureDefault(cfg.Pricing, s.configFilePath)
 

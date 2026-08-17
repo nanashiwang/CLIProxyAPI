@@ -139,15 +139,35 @@ CLIProxyAPIガイド：[https://help.router-for.me/](https://help.router-for.me/
 
 ## 使用量統計
 
-v6.10.0以降、CLIProxyAPIおよび [CPAMC](https://github.com/router-for-me/Cli-Proxy-API-Management-Center) プロジェクトには使用量統計機能がプリセットされなくなりました。使用量統計が必要な場合は、次のプロジェクトをご利用ください：
+このビルドには、任意で有効化できる永続的な使用量・米ドルコスト統計が組み込まれています。既定では無効です。`config.yaml` で有効化できます：
+
+```yaml
+usage-statistics-enabled: true
+usage-statistics:
+  storage-file: "data/usage_statistics.jsonl"
+  retention-days: 90
+  max-records: 200000
+```
+
+各リクエストについて、リクエスト時点の価格スナップショット、アカウント/モデル/Provider、状態、レイテンシ、キャッシュ読み取り・書き込みを含むToken分類を保存します。API KeyはSHA-256の短いフィンガープリントのみ保存されます。[CPAMC](https://github.com/nanashiwang/Cli-Proxy-API-Management-Center)の「使用量統計」ページでは、コスト推移、ランキング、リクエスト詳細、モデル価格管理、統計データのインポート/エクスポート/消去を利用できます。
+
+管理エンドポイント：
+
+- `GET /v0/management/usage`
+- `GET /v0/management/usage/status`
+- `GET /v0/management/usage/export`
+- `POST /v0/management/usage/import`
+- `DELETE /v0/management/usage`
+
+SQLiteベースの外部保存や、より高度なアカウントプール運用が必要な場合は、以下のコミュニティプロジェクトも利用できます：
 
 ### [CPA Usage Keeper](https://github.com/Willxup/cpa-usage-keeper)
 
-CLIProxyAPI向けの独立した使用量永続化・可視化サービス。CLIProxyAPIデータを定期同期してSQLiteに保存し、集計APIと、使用量や各種統計を確認できる組み込みダッシュボードを提供します。
+CLIProxyAPI向けの独立した使用量永続化・可視化サービス。CLIProxyAPIデータを定期同期してSQLiteに保存し、集計APIと組み込みダッシュボードを提供します。
 
 ### [CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus)
 
-リクエスト単位の監視とコスト推定を備えたCLIProxyAPI向けのフル管理センターです。CPA-Managerは、収集したリクエストをアカウント、モデル、チャネル、レイテンシ、ステータス、Token使用量ごとに追跡し、編集可能なモデル価格とLiteLLM価格のワンクリック同期でコストを推定します。SQLiteでイベントを永続化し、Codexアカウントプール向けに一括検査、クォータ判定、異常アカウント検出、クリーンアップ提案、ワンクリック実行を提供し、日常的なマルチアカウント運用に適しています。
+リクエスト単位の監視、編集可能なモデル価格、SQLite永続化、Codexアカウントプール運用を備えたCLIProxyAPI向け管理センターです。
 
 ## SDKドキュメント
 

@@ -14,6 +14,7 @@ type StreamingConfig = internalconfig.StreamingConfig
 type ClaudeCodeConfig = internalconfig.ClaudeCodeConfig
 type TLSConfig = internalconfig.TLSConfig
 type RemoteManagement = internalconfig.RemoteManagement
+type UsageStatisticsConfig = internalconfig.UsageStatisticsConfig
 type PricingConfig = internalconfig.PricingConfig
 type PricingOverride = internalconfig.PricingOverride
 type OAuthModelAlias = internalconfig.OAuthModelAlias
@@ -48,6 +49,10 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 func ParseConfigBytes(data []byte) (*Config, error) { return internalconfig.ParseConfigBytes(data) }
 
 func DefaultPricingConfig() PricingConfig { return internalconfig.DefaultPricingConfig() }
+
+func DefaultUsageStatisticsConfig() UsageStatisticsConfig {
+	return internalconfig.DefaultUsageStatisticsConfig()
+}
 
 func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 	return internalconfig.SaveConfigPreserveComments(configFile, cfg)

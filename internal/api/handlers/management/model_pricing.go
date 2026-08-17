@@ -108,6 +108,7 @@ func (h *Handler) PutCustomModelPricing(c *gin.Context) {
 	}
 	h.mu.Unlock()
 
+	pricing.ConfigureDefault(snapshot.cfg.Pricing, h.configFilePath)
 	h.reloadConfigAfterManagementSaveAsync(c.Request.Context(), snapshot)
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "model": model, "override": override})
 }
@@ -140,6 +141,7 @@ func (h *Handler) DeleteCustomModelPricing(c *gin.Context) {
 	}
 	h.mu.Unlock()
 
+	pricing.ConfigureDefault(snapshot.cfg.Pricing, h.configFilePath)
 	h.reloadConfigAfterManagementSaveAsync(c.Request.Context(), snapshot)
 	c.JSON(http.StatusOK, gin.H{"status": "deleted", "model": model})
 }

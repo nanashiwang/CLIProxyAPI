@@ -140,7 +140,27 @@ see [MANAGEMENT_API.md](https://help.router-for.me/management/api)
 
 ## Usage Statistics
 
-Since v6.10.0, CLIProxyAPI and [CPAMC](https://github.com/router-for-me/Cli-Proxy-API-Management-Center) no longer ship built-in usage statistics. If you need usage statistics, use:
+This build includes opt-in persistent usage and USD cost statistics. Enable it in `config.yaml`:
+
+```yaml
+usage-statistics-enabled: true
+usage-statistics:
+  storage-file: "data/usage_statistics.jsonl"
+  retention-days: 90
+  max-records: 200000
+```
+
+Each request stores a request-time pricing snapshot, account/model/provider dimensions, status, latency, and token buckets including cache reads and cache writes. API keys are stored only as short SHA-256 fingerprints. The [CPAMC](https://github.com/nanashiwang/Cli-Proxy-API-Management-Center) **Usage Statistics** page provides cost trends, rankings, request details, model-price management, and statistics import/export/clear operations.
+
+Management endpoints:
+
+- `GET /v0/management/usage`
+- `GET /v0/management/usage/status`
+- `GET /v0/management/usage/export`
+- `POST /v0/management/usage/import`
+- `DELETE /v0/management/usage`
+
+For SQLite-based external storage or additional account-pool operations, the following community projects remain available:
 
 ### [CPA Usage Keeper](https://github.com/Willxup/cpa-usage-keeper)
 
@@ -148,7 +168,7 @@ Standalone persistence and visualization service for CLIProxyAPI, with periodic 
 
 ### [CPA-Manager-Plus](https://github.com/seakee/CPA-Manager-Plus)
 
-Full CLIProxyAPI management center with request-level monitoring and cost estimates. CPA-Manager tracks collected requests by account, model, channel, latency, status, and token usage; estimates cost with editable model prices and one-click LiteLLM price sync; persists events in SQLite; and provides Codex account-pool operations with batch inspection, quota detection, unhealthy account discovery, cleanup suggestions, and one-click execution for day-to-day multi-account maintenance.
+Full CLIProxyAPI management center with request-level monitoring, editable model prices, SQLite persistence, and Codex account-pool operations.
 
 ## SDK Docs
 

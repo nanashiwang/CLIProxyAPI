@@ -13,10 +13,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pricing"
 )
 
 func TestCustomModelPricingCRUD(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { pricing.ConfigureDefault(config.DefaultPricingConfig(), "") })
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	if errWrite := os.WriteFile(configPath, []byte("pricing:\n  enabled: true\n"), 0o600); errWrite != nil {
 		t.Fatalf("os.WriteFile() error = %v", errWrite)
@@ -41,6 +43,10 @@ func TestCustomModelPricingCRUD(t *testing.T) {
 	router.ServeHTTP(putRecorder, httptest.NewRequest(http.MethodPut, "/model-pricing/custom/gpt-custom", bytes.NewReader(putBody)))
 	if putRecorder.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d, body = %s", putRecorder.Code, putRecorder.Body.String())
+	}
+	modelsAfterPut := pricing.Default().ListModels("gpt-custom", 10)
+	if len(modelsAfterPut) != 1 || !modelsAfterPut[0].CustomOverride || modelsAfterPut[0].InputUSDPerMillion != 1.25 {
+		t.Fatalf("pricing service after PUT = %+v", modelsAfterPut)
 	}
 	select {
 	case snapshot := <-reloads:
@@ -80,6 +86,9 @@ func TestCustomModelPricingCRUD(t *testing.T) {
 	if deleteRecorder.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d, body = %s", deleteRecorder.Code, deleteRecorder.Body.String())
 	}
+	if modelsAfterDelete := pricing.Default().ListModels("gpt-custom", 10); len(modelsAfterDelete) != 0 {
+		t.Fatalf("pricing service after DELETE = %+v", modelsAfterDelete)
+	}
 	select {
 	case snapshot := <-reloads:
 		if _, exists := snapshot.Pricing.Overrides["gpt-custom"]; exists {
@@ -87,6 +96,13 @@ func TestCustomModelPricingCRUD(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for delete reload")
+	}
+	persistedAfterDelete, errReloadDelete := config.LoadConfig(configPath)
+	if errReloadDelete != nil {
+		t.Fatalf("LoadConfig() after DELETE error = %v", errReloadDelete)
+	}
+	if _, exists := persistedAfterDelete.Pricing.Overrides["gpt-custom"]; exists {
+		t.Fatalf("persisted pricing after DELETE = %+v", persistedAfterDelete.Pricing)
 	}
 }
 
