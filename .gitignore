@@ -5,6 +5,8 @@ cli-proxy-api
 # Configuration
 config.yaml
 .env
+deploy/cpa-node/*.env
+!deploy/cpa-node/*.env.example
 
 # Generated content
 bin/*
