@@ -10,6 +10,7 @@
 - CPA 只监听 `127.0.0.1:8317`。
 - 自动配置 systemd、ECC 证书和 Nginx。
 - Nginx 支持 WebSocket、长连接、100 MB 请求、管理接口限速及可选 IP 白名单。
+- 默认开启商业模式。
 - CPA 日志总量默认限制为 512 MB，避免磁盘被无限占满。
 - 密钥不写入 Git 仓库。
 - 安装后使用统一命令升级。
@@ -41,6 +42,7 @@ CPA_NODE="cpa025"
 CPA_DOMAIN="cpa025.meta-api.vip"
 CPA_MANAGEMENT_KEY="新的高强度管理密钥"
 CPA_API_KEYS="API密钥1,API密钥2"
+CPA_COMMERCIAL_MODE="true"
 CPA_ADMIN_CIDR="管理员公网IP/32"
 ```
 

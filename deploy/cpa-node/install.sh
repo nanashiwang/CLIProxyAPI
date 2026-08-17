@@ -36,6 +36,7 @@ load_environment() {
 
   SING_BOX_CONFIG="${SING_BOX_CONFIG:-/etc/sing-box/config.json}"
   CPA_PORT="${CPA_PORT:-8317}"
+  CPA_COMMERCIAL_MODE="${CPA_COMMERCIAL_MODE:-true}"
   CPA_LOG_LIMIT_MB="${CPA_LOG_LIMIT_MB:-512}"
   CPA_ERROR_LOG_MAX_FILES="${CPA_ERROR_LOG_MAX_FILES:-10}"
   CPA_ADMIN_CIDR="${CPA_ADMIN_CIDR:-}"
@@ -45,6 +46,7 @@ load_environment() {
   [[ "${CPA_NODE}" =~ ^cpa[0-9]+$ ]] || fail "invalid CPA_NODE: ${CPA_NODE}"
   [[ "${CPA_DOMAIN}" =~ ^[A-Za-z0-9.-]+$ ]] || fail "invalid CPA_DOMAIN: ${CPA_DOMAIN}"
   [[ "${CPA_PORT}" =~ ^[0-9]+$ ]] || fail "invalid CPA_PORT: ${CPA_PORT}"
+  [[ "${CPA_COMMERCIAL_MODE}" == "true" || "${CPA_COMMERCIAL_MODE}" == "false" ]] || fail "CPA_COMMERCIAL_MODE must be true or false"
   [[ -z "${CPA_ADMIN_CIDR}" || "${CPA_ADMIN_CIDR}" =~ ^[0-9A-Fa-f:.]+/[0-9]+$ ]] || fail "invalid CPA_ADMIN_CIDR: ${CPA_ADMIN_CIDR}"
   [[ ${#CPA_MANAGEMENT_KEY} -ge 16 ]] || fail "CPA_MANAGEMENT_KEY must contain at least 16 characters"
   [[ -r "${SING_BOX_CONFIG}" ]] || fail "sing-box config not found: ${SING_BOX_CONFIG}"
@@ -76,6 +78,7 @@ configure_cpa() {
   CPA_MANAGEMENT_KEY="${CPA_MANAGEMENT_KEY}" \
   CPA_API_KEYS="${CPA_API_KEYS}" \
   CPA_PORT="${CPA_PORT}" \
+  CPA_COMMERCIAL_MODE="${CPA_COMMERCIAL_MODE}" \
   CPA_LOG_LIMIT_MB="${CPA_LOG_LIMIT_MB}" \
   CPA_ERROR_LOG_MAX_FILES="${CPA_ERROR_LOG_MAX_FILES}" \
   python3 - <<'PY'
@@ -166,6 +169,7 @@ text = set_nested(text, "remote-management", "allow-remote", "true")
 text = set_nested(text, "remote-management", "secret-key", quoted(os.environ["CPA_MANAGEMENT_KEY"]))
 text = set_nested(text, "remote-management", "disable-control-panel", "false")
 text = set_api_keys(text, api_keys)
+text = set_top_level(text, "commercial-mode", os.environ["CPA_COMMERCIAL_MODE"])
 text = set_top_level(text, "logging-to-file", "true")
 text = set_top_level(text, "logs-max-total-size-mb", int(os.environ["CPA_LOG_LIMIT_MB"]))
 text = set_top_level(text, "error-logs-max-files", int(os.environ["CPA_ERROR_LOG_MAX_FILES"]))
