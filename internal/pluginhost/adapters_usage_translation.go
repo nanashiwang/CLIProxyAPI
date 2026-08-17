@@ -141,6 +141,7 @@ func (a *usageAdapter) HandleUsage(ctx context.Context, record coreusage.Record)
 			a.host.fusePlugin(a.pluginID, "UsagePlugin.HandleUsage", recovered)
 		}
 	}()
+	detail := coreusage.EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType)
 	plugin.HandleUsage(ctx, pluginapi.UsageRecord{
 		Provider:        record.Provider,
 		ExecutorType:    record.ExecutorType,
@@ -163,13 +164,14 @@ func (a *usageAdapter) HandleUsage(ctx context.Context, record coreusage.Record)
 			Body:       record.Fail.Body,
 		},
 		Detail: pluginapi.UsageDetail{
-			InputTokens:         record.Detail.InputTokens,
-			OutputTokens:        record.Detail.OutputTokens,
-			ReasoningTokens:     record.Detail.ReasoningTokens,
-			CachedTokens:        record.Detail.CachedTokens,
-			CacheReadTokens:     record.Detail.CacheReadTokens,
-			CacheCreationTokens: record.Detail.CacheCreationTokens,
-			TotalTokens:         record.Detail.TotalTokens,
+			InputTokens:         detail.InputTokens,
+			OutputTokens:        detail.OutputTokens,
+			ReasoningTokens:     detail.ReasoningTokens,
+			CachedTokens:        detail.CachedTokens,
+			CacheReadTokens:     detail.CacheReadTokens,
+			CacheWriteTokens:    detail.CacheWriteTokens,
+			CacheCreationTokens: detail.CacheCreationTokens,
+			TotalTokens:         detail.TotalTokens,
 		},
 		ResponseHeaders: cloneHeader(record.ResponseHeaders),
 	})

@@ -246,10 +246,11 @@ func EnsureTokenBreakdown(detail Detail) Detail {
 // direct SDK usage details using the known provider's token semantics. Unknown
 // providers remain unclassified instead of guessing how their buckets overlap.
 func EnsureTokenBreakdownForProvider(detail Detail, provider, executorType string) Detail {
+	detail = NormalizeCacheWriteTokens(detail)
 	if !detail.TokenBreakdown.Valid() {
 		semantics := tokenAccountingSemanticsFor(provider, executorType)
 		if detail.CacheReadTokens == 0 && detail.CachedTokens > 0 && detail.InputTokens == 0 &&
-			detail.OutputTokens == 0 && detail.ReasoningTokens == 0 && detail.CacheCreationTokens == 0 && detail.TotalTokens == 0 &&
+			detail.OutputTokens == 0 && detail.ReasoningTokens == 0 && detail.CacheWriteTokens == 0 && detail.TotalTokens == 0 &&
 			(semantics == tokenAccountingSemanticsSubset || semantics == tokenAccountingSemanticsSeparateReasoning) {
 			detail.CacheReadTokens = detail.CachedTokens
 		}
@@ -261,6 +262,22 @@ func EnsureTokenBreakdownForProvider(detail Detail, provider, executorType strin
 	return detail
 }
 
+// NormalizeCacheWriteTokens keeps the OpenAI cache_write_tokens name and the
+// historical CacheCreationTokens alias synchronized. The canonical field wins
+// when both are set, while valid token breakdowns can restore either alias.
+func NormalizeCacheWriteTokens(detail Detail) Detail {
+	cacheWriteTokens := detail.CacheWriteTokens
+	if cacheWriteTokens == 0 {
+		cacheWriteTokens = detail.CacheCreationTokens
+	}
+	if cacheWriteTokens == 0 && detail.TokenBreakdown.Valid() {
+		cacheWriteTokens = detail.TokenBreakdown.Input.CacheWriteTokens
+	}
+	detail.CacheWriteTokens = cacheWriteTokens
+	detail.CacheCreationTokens = cacheWriteTokens
+	return detail
+}
+
 func tokenBreakdownForSemantics(detail Detail, semantics tokenAccountingSemantics) TokenBreakdown {
 	if detail.TotalTokens == 0 && detail.InputTokens == 0 && detail.OutputTokens == 0 {
 		if total, okTotal := unclassifiedTokenLowerBound(detail); !okTotal {
@@ -268,7 +285,7 @@ func tokenBreakdownForSemantics(detail Detail, semantics tokenAccountingSemantic
 		} else if total > 0 && (semantics == tokenAccountingSemanticsUnknown ||
 			semantics == tokenAccountingSemanticsSubset ||
 			(semantics == tokenAccountingSemanticsSeparateReasoning &&
-				(detail.CacheReadTokens > 0 || detail.CacheCreationTokens > 0 || detail.CachedTokens > 0))) {
+				(detail.CacheReadTokens > 0 || detail.CacheWriteTokens > 0 || detail.CachedTokens > 0))) {
 			return NewUnclassifiedTokenBreakdown(total)
 		}
 	}
@@ -277,7 +294,7 @@ func tokenBreakdownForSemantics(detail Detail, semantics tokenAccountingSemantic
 		return NewSubsetTokenBreakdown(
 			detail.InputTokens,
 			detail.CacheReadTokens,
-			detail.CacheCreationTokens,
+			detail.CacheWriteTokens,
 			detail.OutputTokens,
 			detail.ReasoningTokens,
 			detail.TotalTokens,
@@ -286,7 +303,7 @@ func tokenBreakdownForSemantics(detail Detail, semantics tokenAccountingSemantic
 		return NewIndependentTokenBreakdown(
 			detail.InputTokens,
 			detail.CacheReadTokens,
-			detail.CacheCreationTokens,
+			detail.CacheWriteTokens,
 			detail.OutputTokens,
 			detail.ReasoningTokens,
 			detail.TotalTokens,
@@ -295,7 +312,7 @@ func tokenBreakdownForSemantics(detail Detail, semantics tokenAccountingSemantic
 		return NewSeparateReasoningTokenBreakdown(
 			detail.InputTokens,
 			detail.CacheReadTokens,
-			detail.CacheCreationTokens,
+			detail.CacheWriteTokens,
 			detail.OutputTokens,
 			detail.ReasoningTokens,
 			detail.TotalTokens,
@@ -314,7 +331,7 @@ func tokenBreakdownForSemantics(detail Detail, semantics tokenAccountingSemantic
 }
 
 func unclassifiedTokenLowerBound(detail Detail) (int64, bool) {
-	cacheTokens, okCache := nonNegativeSum(detail.CacheReadTokens, detail.CacheCreationTokens)
+	cacheTokens, okCache := nonNegativeSum(detail.CacheReadTokens, detail.CacheWriteTokens)
 	if !okCache || detail.InputTokens < 0 || detail.OutputTokens < 0 || detail.ReasoningTokens < 0 || detail.CachedTokens < 0 {
 		return 0, false
 	}

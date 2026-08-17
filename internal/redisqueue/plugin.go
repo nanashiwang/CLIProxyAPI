@@ -74,6 +74,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		CachedTokens:           usageDetail.CachedTokens,
 		CacheReadTokens:        usageDetail.CacheReadTokens,
 		CacheReadTokensPresent: true,
+		CacheWriteTokens:       usageDetail.CacheWriteTokens,
 		CacheCreationTokens:    usageDetail.CacheCreationTokens,
 		TotalTokens:            usageDetail.TotalTokens,
 	}
@@ -164,8 +165,10 @@ type tokenStats struct {
 	CachedTokens           int64 `json:"cached_tokens"`
 	CacheReadTokens        int64 `json:"cache_read_tokens"`
 	CacheReadTokensPresent bool  `json:"cache_read_tokens_present"`
-	CacheCreationTokens    int64 `json:"cache_creation_tokens"`
-	TotalTokens            int64 `json:"total_tokens"`
+	CacheWriteTokens       int64 `json:"cache_write_tokens"`
+	// CacheCreationTokens is retained for older usage consumers.
+	CacheCreationTokens int64 `json:"cache_creation_tokens"`
+	TotalTokens         int64 `json:"total_tokens"`
 }
 
 type failDetail struct {

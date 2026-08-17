@@ -176,6 +176,29 @@ func TestUsageQueuePluginPreservesLegacyCachedOnlyUsage(t *testing.T) {
 	})
 }
 
+func TestUsageQueuePluginEmitsCanonicalAndLegacyCacheWriteFields(t *testing.T) {
+	withEnabledQueue(t, func() {
+		ctx := internallogging.WithResponseStatusHolder(context.Background())
+		internallogging.SetResponseStatus(ctx, http.StatusOK)
+
+		(&usageQueuePlugin{}).HandleUsage(ctx, coreusage.Record{
+			Provider: "openai",
+			Model:    "gpt-5.4",
+			Detail: coreusage.Detail{
+				InputTokens:      10,
+				OutputTokens:     2,
+				CacheWriteTokens: 4,
+				TotalTokens:      12,
+			},
+		})
+
+		payload := popSinglePayload(t)
+		tokens := requireTokensPayload(t, payload)
+		requireIntField(t, tokens, "cache_write_tokens", 4)
+		requireIntField(t, tokens, "cache_creation_tokens", 4)
+	})
+}
+
 func TestUsageQueuePluginEmitsSingleCanonicalAutoTier(t *testing.T) {
 	withEnabledQueue(t, func() {
 		ctx := coreusage.WithServiceTier(context.Background(), coreusage.AutoServiceTier)

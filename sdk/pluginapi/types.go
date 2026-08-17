@@ -1377,7 +1377,9 @@ type UsageDetail struct {
 	CachedTokens int64
 	// CacheReadTokens is the cache read token count.
 	CacheReadTokens int64
-	// CacheCreationTokens is the cache creation token count.
+	// CacheWriteTokens is the cache write token count reported by OpenAI-style APIs.
+	CacheWriteTokens int64
+	// CacheCreationTokens is a deprecated alias for CacheWriteTokens.
 	CacheCreationTokens int64
 	// TotalTokens is the total token count.
 	TotalTokens int64

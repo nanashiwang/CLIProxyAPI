@@ -2257,6 +2257,35 @@ func TestUsageAdapterNormalizesOmittedGenerateToTrue(t *testing.T) {
 	}
 }
 
+func TestUsageAdapterExposesCanonicalCacheWriteTokens(t *testing.T) {
+	var gotDetail pluginapi.UsageDetail
+	plugin := usagePluginFunc(func(ctx context.Context, record pluginapi.UsageRecord) {
+		gotDetail = record.Detail
+	})
+	host := newHostWithRecords(capabilityRecord{
+		id: "usage-cache-write",
+		plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{
+			UsagePlugin: plugin,
+		}},
+	})
+	adapter := &usageAdapter{
+		host:     host,
+		pluginID: "usage-cache-write",
+	}
+
+	adapter.HandleUsage(context.Background(), coreusage.Record{
+		Provider: "openai",
+		Detail: coreusage.Detail{
+			InputTokens:         10,
+			OutputTokens:        2,
+			CacheCreationTokens: 4,
+		},
+	})
+	if gotDetail.CacheWriteTokens != 4 || gotDetail.CacheCreationTokens != 4 {
+		t.Fatalf("plugin cache write aliases = (%d, %d), want (4, 4)", gotDetail.CacheWriteTokens, gotDetail.CacheCreationTokens)
+	}
+}
+
 func TestUsageAdapterPreservesExplicitGenerateFalse(t *testing.T) {
 	var gotGenerate bool
 	plugin := usagePluginFunc(func(ctx context.Context, record pluginapi.UsageRecord) {

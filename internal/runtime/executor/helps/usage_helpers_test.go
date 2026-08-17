@@ -116,6 +116,9 @@ func TestParseCodexUsageIncludesCacheWriteTokens(t *testing.T) {
 	if detail.CacheCreationTokens != 40 {
 		t.Fatalf("cache creation tokens = %d, want 40", detail.CacheCreationTokens)
 	}
+	if detail.CacheWriteTokens != 40 {
+		t.Fatalf("cache write tokens = %d, want 40", detail.CacheWriteTokens)
+	}
 	if detail.TotalTokens != 120 {
 		t.Fatalf("total tokens = %d, want 120", detail.TotalTokens)
 	}
@@ -130,8 +133,27 @@ func TestParseCodexUsageIncludesCacheWriteTokens(t *testing.T) {
 func TestParseOpenAIUsageNormalizesCacheCreationAlias(t *testing.T) {
 	data := []byte(`{"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12,"input_tokens_details":{"cache_creation_tokens":4}}}`)
 	detail := ParseOpenAIUsage(data)
-	if detail.CacheCreationTokens != 4 {
-		t.Fatalf("cache creation tokens = %d, want 4", detail.CacheCreationTokens)
+	if detail.CacheWriteTokens != 4 || detail.CacheCreationTokens != 4 {
+		t.Fatalf("cache write aliases = (%d, %d), want (4, 4)", detail.CacheWriteTokens, detail.CacheCreationTokens)
+	}
+}
+
+func TestParseOpenAIUsageIncludesOfficialCacheWriteTokens(t *testing.T) {
+	data := []byte(`{"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":4}}}`)
+	detail := ParseOpenAIUsage(data)
+	if detail.CacheWriteTokens != 4 || detail.CacheCreationTokens != 4 {
+		t.Fatalf("cache write aliases = (%d, %d), want (4, 4)", detail.CacheWriteTokens, detail.CacheCreationTokens)
+	}
+	if detail.TokenBreakdown.Input.CacheWriteTokens != 4 || detail.TokenBreakdown.Input.UncachedTokens != 3 {
+		t.Fatalf("token breakdown = %+v", detail.TokenBreakdown)
+	}
+}
+
+func TestParseOpenAIUsagePrefersOfficialCacheWriteField(t *testing.T) {
+	data := []byte(`{"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12,"input_tokens_details":{"cache_write_tokens":4,"cache_creation_tokens":3}}}`)
+	detail := ParseOpenAIUsage(data)
+	if detail.CacheWriteTokens != 4 || detail.CacheCreationTokens != 4 {
+		t.Fatalf("cache write aliases = (%d, %d), want (4, 4)", detail.CacheWriteTokens, detail.CacheCreationTokens)
 	}
 }
 
@@ -169,7 +191,7 @@ func TestParseOpenAIStreamUsageIgnoresNullUsage(t *testing.T) {
 }
 
 func TestParseOpenAIStreamUsageResponsesFields(t *testing.T) {
-	line := []byte(`data: {"id":"chunk_1","object":"chat.completion.chunk","service_tier":"flex","choices":[],"usage":{"input_tokens":8,"output_tokens":5,"total_tokens":13,"input_tokens_details":{"cached_tokens":3},"output_tokens_details":{"reasoning_tokens":2}}}`)
+	line := []byte(`data: {"id":"chunk_1","object":"chat.completion.chunk","service_tier":"flex","choices":[],"usage":{"input_tokens":8,"output_tokens":5,"total_tokens":13,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":2},"output_tokens_details":{"reasoning_tokens":2}}}`)
 	detail, ok := ParseOpenAIStreamUsage(line)
 	if !ok {
 		t.Fatal("ParseOpenAIStreamUsage() ok = false, want true")
@@ -188,6 +210,9 @@ func TestParseOpenAIStreamUsageResponsesFields(t *testing.T) {
 	}
 	if detail.CacheReadTokens != 3 {
 		t.Fatalf("cache read tokens = %d, want %d", detail.CacheReadTokens, 3)
+	}
+	if detail.CacheWriteTokens != 2 || detail.CacheCreationTokens != 2 {
+		t.Fatalf("cache write aliases = (%d, %d), want (2, 2)", detail.CacheWriteTokens, detail.CacheCreationTokens)
 	}
 	if detail.ReasoningTokens != 2 {
 		t.Fatalf("reasoning tokens = %d, want %d", detail.ReasoningTokens, 2)

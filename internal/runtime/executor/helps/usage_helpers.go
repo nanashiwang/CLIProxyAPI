@@ -239,6 +239,7 @@ func hasNonZeroTokenUsage(detail usage.Detail) bool {
 		detail.ReasoningTokens != 0 ||
 		detail.CachedTokens != 0 ||
 		detail.CacheReadTokens != 0 ||
+		detail.CacheWriteTokens != 0 ||
 		detail.CacheCreationTokens != 0 ||
 		detail.TotalTokens != 0 ||
 		detail.TokenBreakdown.TotalTokens != 0
@@ -610,15 +611,16 @@ func parseOpenAIStyleUsageNode(usageNode gjson.Result) usage.Detail {
 		detail.CachedTokens = cached.Int()
 		detail.CacheReadTokens = cached.Int()
 	}
-	cacheCreation := firstExistingUsageNode(
+	cacheWrite := firstExistingUsageNode(
 		usageNode,
-		"input_tokens_details.cache_creation_tokens",
 		"input_tokens_details.cache_write_tokens",
-		"prompt_tokens_details.cache_creation_tokens",
 		"prompt_tokens_details.cache_write_tokens",
+		"input_tokens_details.cache_creation_tokens",
+		"prompt_tokens_details.cache_creation_tokens",
 	)
-	if cacheCreation.Exists() {
-		detail.CacheCreationTokens = cacheCreation.Int()
+	if cacheWrite.Exists() {
+		detail.CacheWriteTokens = cacheWrite.Int()
+		detail.CacheCreationTokens = detail.CacheWriteTokens
 	}
 	reasoning := usageNode.Get("completion_tokens_details.reasoning_tokens")
 	if !reasoning.Exists() {
@@ -632,17 +634,17 @@ func parseOpenAIStyleUsageNode(usageNode gjson.Result) usage.Detail {
 			detail.TokenBreakdown = usage.NewSubsetTokenBreakdown(
 				detail.InputTokens,
 				detail.CacheReadTokens,
-				detail.CacheCreationTokens,
+				detail.CacheWriteTokens,
 				detail.OutputTokens,
 				detail.ReasoningTokens,
 				detail.TotalTokens,
 			)
 		} else {
 			cacheReadTokens := detail.CacheReadTokens
-			cacheCreationTokens := detail.CacheCreationTokens
+			cacheWriteTokens := detail.CacheWriteTokens
 			if !inputNode.Exists() {
 				cacheReadTokens = 0
-				cacheCreationTokens = 0
+				cacheWriteTokens = 0
 			}
 			reasoningTokens := detail.ReasoningTokens
 			if !outputNode.Exists() {
@@ -651,7 +653,7 @@ func parseOpenAIStyleUsageNode(usageNode gjson.Result) usage.Detail {
 			detail.TokenBreakdown = usage.NewPartialSubsetTokenBreakdown(
 				detail.InputTokens,
 				cacheReadTokens,
-				cacheCreationTokens,
+				cacheWriteTokens,
 				detail.OutputTokens,
 				reasoningTokens,
 				detail.TotalTokens,
@@ -735,18 +737,19 @@ func parseClaudeUsageNode(usageNode gjson.Result) usage.Detail {
 		ReasoningTokens:     reasoningTokens,
 		CachedTokens:        cacheReadTokens,
 		CacheReadTokens:     cacheReadTokens,
+		CacheWriteTokens:    cacheCreationTokens,
 		CacheCreationTokens: cacheCreationTokens,
 	}
 	if detail.CachedTokens == 0 {
-		detail.CachedTokens = detail.CacheCreationTokens
+		detail.CachedTokens = detail.CacheWriteTokens
 	}
 	// raw output_tokens already includes thinking; cache fields are independent
 	// from input_tokens in the Messages API.
-	detail.TotalTokens = detail.InputTokens + rawOutputTokens + detail.CacheReadTokens + detail.CacheCreationTokens
+	detail.TotalTokens = detail.InputTokens + rawOutputTokens + detail.CacheReadTokens + detail.CacheWriteTokens
 	detail.TokenBreakdown = usage.NewIndependentTokenBreakdown(
 		detail.InputTokens,
 		detail.CacheReadTokens,
-		detail.CacheCreationTokens,
+		detail.CacheWriteTokens,
 		nonReasoningOutput,
 		detail.ReasoningTokens,
 		detail.TotalTokens,
@@ -782,7 +785,7 @@ func parseGeminiFamilyUsageDetail(node gjson.Result) usage.Detail {
 	detail.TokenBreakdown = usage.NewSeparateReasoningTokenBreakdown(
 		detail.InputTokens,
 		detail.CacheReadTokens,
-		detail.CacheCreationTokens,
+		detail.CacheWriteTokens,
 		detail.OutputTokens,
 		detail.ReasoningTokens,
 		detail.TotalTokens,
@@ -792,6 +795,7 @@ func parseGeminiFamilyUsageDetail(node gjson.Result) usage.Detail {
 
 func parseInteractionsUsageDetail(node gjson.Result) usage.Detail {
 	cacheRead := firstExistingUsageNode(node, "cache_read_tokens", "cacheReadTokens")
+	cacheWriteTokens := firstExistingUsageNode(node, "cache_write_tokens", "cacheWriteTokens", "cache_creation_tokens", "cacheCreationTokens").Int()
 	toolUseTokens := firstExistingUsageNode(node, "tool_use_tokens", "total_tool_use_tokens", "toolUseTokens", "totalToolUseTokens").Int()
 	inputTokens, okInput := safeUsageTokenSum(
 		firstExistingUsageNode(node, "input_tokens", "prompt_tokens", "total_input_tokens").Int(),
@@ -804,7 +808,8 @@ func parseInteractionsUsageDetail(node gjson.Result) usage.Detail {
 		TotalTokens:         firstExistingUsageNode(node, "total_tokens", "totalTokenCount").Int(),
 		CachedTokens:        firstExistingUsageNode(node, "cached_tokens", "cachedContentTokenCount", "total_cached_tokens").Int(),
 		CacheReadTokens:     cacheRead.Int(),
-		CacheCreationTokens: firstExistingUsageNode(node, "cache_creation_tokens", "cacheCreationTokens", "cache_write_tokens", "cacheWriteTokens").Int(),
+		CacheWriteTokens:    cacheWriteTokens,
+		CacheCreationTokens: cacheWriteTokens,
 	}
 	if !okInput {
 		detail.TokenBreakdown = invalidUsageTokenBreakdown(detail.TotalTokens)
@@ -825,7 +830,7 @@ func parseInteractionsUsageDetail(node gjson.Result) usage.Detail {
 	detail.TokenBreakdown = usage.NewSeparateReasoningTokenBreakdown(
 		detail.InputTokens,
 		detail.CacheReadTokens,
-		detail.CacheCreationTokens,
+		detail.CacheWriteTokens,
 		detail.OutputTokens,
 		detail.ReasoningTokens,
 		detail.TotalTokens,
