@@ -14,20 +14,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  verify-tag-and-release:
+  verify:
     if: >-
       github.repository == 'nanashiwang/CLIProxyAPI' &&
       !contains(github.event.head_commit.message, '[skip release]')
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          fetch-tags: true
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -39,10 +38,18 @@ jobs:
           go test ./...
           go build -o "${RUNNER_TEMP}/cli-proxy-api" ./cmd/server
 
+  tag-and-release:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
       - name: Create next personal tag
         id: version
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           git fetch --force --tags origin
