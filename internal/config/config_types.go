@@ -20,6 +20,37 @@ type RequestScopedErrorRule struct {
 	Action string `yaml:"action,omitempty" json:"action,omitempty"`
 }
 
+// PricingConfig controls built-in model pricing and usage cost calculation.
+type PricingConfig struct {
+	// Enabled toggles built-in USD cost calculation for usage records.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// SourceURL overrides the remote LiteLLM-compatible pricing catalog URL.
+	SourceURL string `yaml:"source-url,omitempty" json:"source-url,omitempty"`
+	// RefreshIntervalMinutes controls background catalog refresh frequency.
+	RefreshIntervalMinutes int `yaml:"refresh-interval-minutes,omitempty" json:"refresh-interval-minutes,omitempty"`
+	// CacheFile overrides the local catalog cache path. Relative paths resolve from the config directory.
+	CacheFile string `yaml:"cache-file,omitempty" json:"cache-file,omitempty"`
+	// Overrides contains exact model price overrides in USD per million tokens.
+	Overrides map[string]PricingOverride `yaml:"overrides,omitempty" json:"overrides,omitempty"`
+}
+
+// PricingOverride replaces selected price buckets for one exact model.
+type PricingOverride struct {
+	Provider   string   `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Input      *float64 `yaml:"input,omitempty" json:"input,omitempty"`
+	Output     *float64 `yaml:"output,omitempty" json:"output,omitempty"`
+	CacheRead  *float64 `yaml:"cache-read,omitempty" json:"cache-read,omitempty"`
+	CacheWrite *float64 `yaml:"cache-write,omitempty" json:"cache-write,omitempty"`
+}
+
+// DefaultPricingConfig returns the default built-in pricing configuration.
+func DefaultPricingConfig() PricingConfig {
+	return PricingConfig{
+		Enabled:                true,
+		RefreshIntervalMinutes: 180,
+	}
+}
+
 // PluginsConfig holds dynamic plugin system settings.
 type PluginsConfig struct {
 	// Enabled toggles dynamic plugin loading.

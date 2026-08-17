@@ -108,6 +108,22 @@ plugins:
       config3: 3
       mode: "safe" # enum example: safe, fast
 
+# Built-in model pricing and request-time USD cost calculation.
+# Prices are refreshed from a LiteLLM-compatible catalog and cached locally.
+pricing:
+  enabled: true
+  # source-url: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+  refresh-interval-minutes: 180
+  # cache-file: "data/model_pricing.json"
+  # Exact-model overrides use USD per million tokens.
+  # overrides:
+  #   gpt-5.6:
+  #     provider: "openai"
+  #     input: 5
+  #     output: 30
+  #     cache-read: 0.5
+  #     cache-write: 6.25
+
 # When true, disable high-overhead request logging and HTTP middleware features to reduce per-request memory usage under high concurrency.
 commercial-mode: false
 

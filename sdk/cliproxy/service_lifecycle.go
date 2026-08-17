@@ -9,6 +9,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pricing"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
@@ -49,6 +50,10 @@ func (s *Service) Run(ctx context.Context) error {
 		s.homeMu.Unlock()
 	}()
 
+	if s.cfg != nil {
+		pricing.ConfigureDefault(s.cfg.Pricing, s.configPath)
+	}
+	pricing.StartDefaultUpdater(ctx)
 	usage.StartDefault(ctx)
 	homeEnabled := s.cfg != nil && s.cfg.Home.Enabled
 	if homeEnabled {

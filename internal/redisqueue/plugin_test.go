@@ -82,6 +82,93 @@ func TestUsageQueuePluginPayloadIncludesStableFieldsAndSuccess(t *testing.T) {
 	})
 }
 
+func TestUsageQueuePluginPayloadIncludesAccountAndBilling(t *testing.T) {
+	withEnabledQueue(t, func() {
+		calculatedAt := time.Date(2026, 8, 17, 1, 2, 3, 0, time.UTC)
+		(&usageQueuePlugin{}).HandleUsage(context.Background(), coreusage.Record{
+			Provider: "openai",
+			Model:    "gpt-5.6",
+			AuthID:   "account-123",
+			Detail: coreusage.Detail{
+				InputTokens:  10,
+				OutputTokens: 2,
+				TotalTokens:  12,
+			},
+			Billing: coreusage.Billing{
+				Currency: "USD",
+				Priced:   true,
+				TotalUSD: 0.0123,
+				Breakdown: coreusage.CostBreakdown{
+					InputUSD:  0.01,
+					OutputUSD: 0.0023,
+				},
+				Pricing: coreusage.PricingSnapshot{
+					Version:      "sha256:test",
+					Source:       "test",
+					MatchedModel: "gpt-5.6",
+					ServiceTier:  "standard",
+					CalculatedAt: calculatedAt,
+				},
+			},
+		})
+
+		payload := popSinglePayload(t)
+		requireStringField(t, payload, "auth_id", "account-123")
+		requireFloatField(t, payload, "cost_usd", 0.0123)
+
+		var billing coreusage.Billing
+		if err := json.Unmarshal(payload["billing"], &billing); err != nil {
+			t.Fatalf("unmarshal billing: %v", err)
+		}
+		if !billing.Priced || billing.TotalUSD != 0.0123 || billing.Pricing.Version != "sha256:test" {
+			t.Fatalf("billing = %+v", billing)
+		}
+
+		var breakdown coreusage.CostBreakdown
+		if err := json.Unmarshal(payload["cost_breakdown"], &breakdown); err != nil {
+			t.Fatalf("unmarshal cost_breakdown: %v", err)
+		}
+		if breakdown.InputUSD != 0.01 || breakdown.OutputUSD != 0.0023 {
+			t.Fatalf("cost_breakdown = %+v", breakdown)
+		}
+
+		var snapshot coreusage.PricingSnapshot
+		if err := json.Unmarshal(payload["pricing"], &snapshot); err != nil {
+			t.Fatalf("unmarshal pricing: %v", err)
+		}
+		if snapshot.MatchedModel != "gpt-5.6" || !snapshot.CalculatedAt.Equal(calculatedAt) {
+			t.Fatalf("pricing = %+v", snapshot)
+		}
+	})
+}
+
+func TestUsageQueuePluginOmitsDollarTotalWhenUnpriced(t *testing.T) {
+	withEnabledQueue(t, func() {
+		(&usageQueuePlugin{}).HandleUsage(context.Background(), coreusage.Record{
+			Provider: "plugin-provider",
+			Model:    "unknown-model",
+			Billing: coreusage.Billing{
+				Currency: "USD",
+				Priced:   false,
+				Reason:   "model_price_not_found",
+			},
+		})
+
+		payload := popSinglePayload(t)
+		requireMissingField(t, payload, "cost_usd")
+		requireMissingField(t, payload, "cost_breakdown")
+		requireMissingField(t, payload, "pricing")
+
+		var billing coreusage.Billing
+		if err := json.Unmarshal(payload["billing"], &billing); err != nil {
+			t.Fatalf("unmarshal billing: %v", err)
+		}
+		if billing.Priced || billing.Reason != "model_price_not_found" {
+			t.Fatalf("billing = %+v", billing)
+		}
+	})
+}
+
 func TestUsageQueuePluginNormalizesDirectSDKUsageByProvider(t *testing.T) {
 	tests := []struct {
 		provider  string
@@ -472,6 +559,22 @@ func requireIntField(t *testing.T, payload map[string]json.RawMessage, key strin
 	}
 	if got != want {
 		t.Fatalf("%s = %d, want %d", key, got, want)
+	}
+}
+
+func requireFloatField(t *testing.T, payload map[string]json.RawMessage, key string, want float64) {
+	t.Helper()
+
+	raw, ok := payload[key]
+	if !ok {
+		t.Fatalf("payload missing %q", key)
+	}
+	var got float64
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal %q: %v", key, err)
+	}
+	if got != want {
+		t.Fatalf("%s = %f, want %f", key, got, want)
 	}
 }
 

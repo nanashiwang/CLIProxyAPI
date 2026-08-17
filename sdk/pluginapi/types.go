@@ -1338,6 +1338,8 @@ type UsageRecord struct {
 	ReasoningEffort string
 	// ServiceTier records the requested or reported service tier.
 	ServiceTier string
+	// ResponseServiceTier records the final tier reported by the upstream response.
+	ResponseServiceTier string
 	// Generate reports whether the client requested actual generation.
 	// The host normalizes omitted usage.Record values to true before delivery.
 	Generate bool
@@ -1353,8 +1355,49 @@ type UsageRecord struct {
 	Failure UsageFailure
 	// Detail contains token usage counters.
 	Detail UsageDetail
+	// Billing contains the request-time USD cost and pricing snapshot.
+	Billing UsageBilling
 	// ResponseHeaders contains selected upstream response headers.
 	ResponseHeaders http.Header
+}
+
+// UsageBilling contains the USD cost calculated for one usage record.
+type UsageBilling struct {
+	Currency  string
+	Priced    bool
+	Reason    string
+	TotalUSD  float64
+	Breakdown UsageCostBreakdown
+	Pricing   UsagePricingSnapshot
+}
+
+// UsageCostBreakdown contains mutually exclusive USD cost buckets.
+type UsageCostBreakdown struct {
+	InputUSD      float64
+	OutputUSD     float64
+	CacheReadUSD  float64
+	CacheWriteUSD float64
+}
+
+// UsageUnitPrices contains USD prices per million tokens.
+type UsageUnitPrices struct {
+	Input      float64
+	Output     float64
+	CacheRead  float64
+	CacheWrite float64
+}
+
+// UsagePricingSnapshot records the pricing decision used for a request.
+type UsagePricingSnapshot struct {
+	Version                 string
+	Source                  string
+	MatchedModel            string
+	MatchedProvider         string
+	ServiceTier             string
+	ContextThresholdTokens  int64
+	UnitPricesUSDPerMillion UsageUnitPrices
+	Estimated               bool
+	CalculatedAt            time.Time
 }
 
 // UsageFailure describes an upstream or executor failure.

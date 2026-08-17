@@ -82,6 +82,12 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.DELETE("/api-keys", s.mgmt.DeleteAPIKeys)
 		mgmt.GET("/api-key-usage", s.mgmt.GetAPIKeyUsage)
 		mgmt.GET("/usage-queue", s.mgmt.GetUsageQueue)
+		mgmt.GET("/model-pricing", s.mgmt.GetModelPricing)
+		mgmt.GET("/model-pricing/status", s.mgmt.GetModelPricingStatus)
+		mgmt.POST("/model-pricing/refresh", s.mgmt.PostModelPricingRefresh)
+		mgmt.GET("/model-pricing/custom/*model", s.mgmt.GetCustomModelPricing)
+		mgmt.PUT("/model-pricing/custom/*model", s.mgmt.PutCustomModelPricing)
+		mgmt.DELETE("/model-pricing/custom/*model", s.mgmt.DeleteCustomModelPricing)
 
 		mgmt.GET("/gemini-api-key", s.mgmt.GetGeminiKeys)
 		mgmt.PUT("/gemini-api-key", s.mgmt.PutGeminiKeys)

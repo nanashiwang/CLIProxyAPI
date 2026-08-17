@@ -28,6 +28,9 @@ type Config struct {
 	// RemoteManagement nests management-related options under 'remote-management'.
 	RemoteManagement RemoteManagement `yaml:"remote-management" json:"-"`
 
+	// Pricing configures built-in model pricing and USD usage cost calculation.
+	Pricing PricingConfig `yaml:"pricing" json:"pricing"`
+
 	// Plugins configures dynamic plugin discovery and per-plugin settings.
 	Plugins PluginsConfig `yaml:"plugins" json:"plugins"`
 

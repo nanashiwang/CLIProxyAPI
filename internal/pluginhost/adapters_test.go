@@ -2286,6 +2286,61 @@ func TestUsageAdapterExposesCanonicalCacheWriteTokens(t *testing.T) {
 	}
 }
 
+func TestUsageAdapterExposesBillingSnapshot(t *testing.T) {
+	var got pluginapi.UsageRecord
+	plugin := usagePluginFunc(func(ctx context.Context, record pluginapi.UsageRecord) {
+		got = record
+	})
+	host := newHostWithRecords(capabilityRecord{
+		id: "usage-billing",
+		plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{
+			UsagePlugin: plugin,
+		}},
+	})
+	adapter := &usageAdapter{
+		host:     host,
+		pluginID: "usage-billing",
+	}
+	calculatedAt := time.Date(2026, 8, 17, 1, 2, 3, 0, time.UTC)
+
+	adapter.HandleUsage(context.Background(), coreusage.Record{
+		Provider:            "openai",
+		Model:               "gpt-5.6",
+		ServiceTier:         "auto",
+		ResponseServiceTier: "priority",
+		Billing: coreusage.Billing{
+			Currency: "USD",
+			Priced:   true,
+			TotalUSD: 0.25,
+			Breakdown: coreusage.CostBreakdown{
+				InputUSD:      0.1,
+				OutputUSD:     0.12,
+				CacheReadUSD:  0.01,
+				CacheWriteUSD: 0.02,
+			},
+			Pricing: coreusage.PricingSnapshot{
+				Version:                 "sha256:test",
+				Source:                  "test",
+				MatchedModel:            "gpt-5.6",
+				MatchedProvider:         "openai",
+				ServiceTier:             "priority",
+				ContextThresholdTokens:  272_000,
+				UnitPricesUSDPerMillion: coreusage.UnitPrices{Input: 10, Output: 60, CacheRead: 1, CacheWrite: 12.5},
+				Estimated:               true,
+				CalculatedAt:            calculatedAt,
+			},
+		},
+	})
+
+	if got.ResponseServiceTier != "priority" || !got.Billing.Priced || got.Billing.TotalUSD != 0.25 {
+		t.Fatalf("usage record = %+v", got)
+	}
+	if got.Billing.Breakdown.CacheWriteUSD != 0.02 || got.Billing.Pricing.Version != "sha256:test" ||
+		got.Billing.Pricing.UnitPricesUSDPerMillion.Output != 60 || !got.Billing.Pricing.CalculatedAt.Equal(calculatedAt) {
+		t.Fatalf("billing = %+v", got.Billing)
+	}
+}
+
 func TestUsageAdapterPreservesExplicitGenerateFalse(t *testing.T) {
 	var gotGenerate bool
 	plugin := usagePluginFunc(func(ctx context.Context, record pluginapi.UsageRecord) {

@@ -10,6 +10,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/managementasset"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pricing"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
@@ -87,6 +88,7 @@ func (s *Server) UpdateClientsContext(ctx context.Context, cfg *config.Config) b
 	if oldCfg == nil || oldCfg.UsageStatisticsEnabled != cfg.UsageStatisticsEnabled {
 		redisqueue.SetUsageStatisticsEnabled(cfg.UsageStatisticsEnabled)
 	}
+	pricing.ConfigureDefault(cfg.Pricing, s.configFilePath)
 
 	if oldCfg == nil || oldCfg.RedisUsageQueueRetentionSeconds != cfg.RedisUsageQueueRetentionSeconds {
 		redisqueue.SetRetentionSeconds(cfg.RedisUsageQueueRetentionSeconds)
