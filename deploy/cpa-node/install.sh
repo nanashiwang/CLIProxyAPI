@@ -48,7 +48,7 @@ load_environment() {
   [[ "${CPA_PORT}" =~ ^[0-9]+$ ]] || fail "invalid CPA_PORT: ${CPA_PORT}"
   [[ "${CPA_COMMERCIAL_MODE}" == "true" || "${CPA_COMMERCIAL_MODE}" == "false" ]] || fail "CPA_COMMERCIAL_MODE must be true or false"
   [[ -z "${CPA_ADMIN_CIDR}" || "${CPA_ADMIN_CIDR}" =~ ^[0-9A-Fa-f:.]+/[0-9]+$ ]] || fail "invalid CPA_ADMIN_CIDR: ${CPA_ADMIN_CIDR}"
-  [[ ${#CPA_MANAGEMENT_KEY} -ge 16 ]] || fail "CPA_MANAGEMENT_KEY must contain at least 16 characters"
+  [[ ${#CPA_MANAGEMENT_KEY} -ge 12 ]] || fail "CPA_MANAGEMENT_KEY must contain at least 12 characters"
   [[ -r "${SING_BOX_CONFIG}" ]] || fail "sing-box config not found: ${SING_BOX_CONFIG}"
 }
 
@@ -56,7 +56,7 @@ install_packages() {
   log "installing required packages"
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    ca-certificates curl wget tar nginx openssl python3
+    ca-certificates curl wget tar nginx openssl python3 git
 }
 
 install_cpa() {
@@ -225,8 +225,21 @@ EOF_SERVICE
 install_certificate() {
   log "installing acme.sh and issuing an ECC certificate"
   if [[ ! -x /root/.acme.sh/acme.sh ]]; then
-    curl --retry 5 --retry-all-errors -fsSL https://get.acme.sh | sh -s email="${ACME_EMAIL}"
+    if ! curl --retry 5 --retry-all-errors -fsSL https://get.acme.sh | sh -s email="${ACME_EMAIL}"; then
+      log "the acme.sh archive installer failed; falling back to a shallow Git clone"
+      local acme_source="/root/.cache/cpa-node-acme.sh"
+      install -d -m 0700 /root/.cache
+      if [[ -d "${acme_source}/.git" ]]; then
+        git -C "${acme_source}" pull --ff-only
+      else
+        rm -rf "${acme_source}"
+        git -c http.version=HTTP/1.1 clone --depth 1 \
+          https://github.com/acmesh-official/acme.sh.git "${acme_source}"
+      fi
+      (cd "${acme_source}" && ./acme.sh --install --accountemail "${ACME_EMAIL}")
+    fi
   fi
+  [[ -x /root/.acme.sh/acme.sh ]] || fail "acme.sh installation failed"
 
   systemctl start nginx || true
   if ! /root/.acme.sh/acme.sh --issue \
