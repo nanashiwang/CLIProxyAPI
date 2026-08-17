@@ -668,4 +668,15 @@ jobs:
             exit 0
           fi
           sha256sum "${archives[@]}" | sort -k2 > checksums.txt
-          gh release upload "$GITHUB_REF_NAME" checksums.txt --clobber
+          for attempt in 1 2 3 4 5; do
+            if gh release upload "$GITHUB_REF_NAME" checksums.txt --clobber; then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 5 ]]; then
+              echo "Failed to upload final checksums after ${attempt} attempts" >&2
+              exit 1
+            fi
+            sleep_seconds=$((attempt * 5))
+            echo "Checksum upload failed; retrying in ${sleep_seconds}s"
+            sleep "$sleep_seconds"
+          done
