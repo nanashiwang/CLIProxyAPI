@@ -124,6 +124,25 @@ type AccountUsageSnapshot struct {
 	CacheWriteUnreported bool   `json:"cache_write_unreported"`
 }
 
+// AccountUsageRange identifies one credential and time window to aggregate.
+type AccountUsageRange struct {
+	Key       string
+	AuthIndex string
+	From      time.Time
+	To        time.Time
+}
+
+// AccountUsageRangeSnapshot contains totals for one requested credential time window.
+type AccountUsageRangeSnapshot struct {
+	DimensionSnapshot
+	Key                  string    `json:"key"`
+	AuthIndex            string    `json:"auth_index"`
+	From                 time.Time `json:"from"`
+	To                   time.Time `json:"to"`
+	Estimated            bool      `json:"estimated"`
+	CacheWriteUnreported bool      `json:"cache_write_unreported"`
+}
+
 // StatisticsSnapshot is an immutable view of retained usage events.
 type StatisticsSnapshot struct {
 	TotalRequests    int64 `json:"total_requests"`
@@ -385,6 +404,50 @@ func (s *RequestStatistics) AccountSnapshotsRange(from, to time.Time) []AccountU
 		}
 		return result[i].Key < result[j].Key
 	})
+	return result
+}
+
+// AccountSnapshotsRanges aggregates multiple credential windows in one event scan.
+func (s *RequestStatistics) AccountSnapshotsRanges(ranges []AccountUsageRange) []AccountUsageRangeSnapshot {
+	result := make([]AccountUsageRangeSnapshot, len(ranges))
+	indexesByAuth := make(map[string][]int)
+	for index, usageRange := range ranges {
+		authIndex := strings.TrimSpace(usageRange.AuthIndex)
+		result[index] = AccountUsageRangeSnapshot{
+			Key:       strings.TrimSpace(usageRange.Key),
+			AuthIndex: authIndex,
+			From:      usageRange.From.UTC(),
+			To:        usageRange.To.UTC(),
+		}
+		if authIndex != "" {
+			indexesByAuth[authIndex] = append(indexesByAuth[authIndex], index)
+		}
+	}
+	if s == nil || len(indexesByAuth) == 0 {
+		return result
+	}
+
+	s.mu.RLock()
+	events := append([]storedEvent(nil), s.events...)
+	s.mu.RUnlock()
+
+	for _, event := range events {
+		detail := event.Detail
+		indexes := indexesByAuth[strings.TrimSpace(detail.AuthIndex)]
+		for _, index := range indexes {
+			value := &result[index]
+			if detail.Timestamp.Before(value.From) || !detail.Timestamp.Before(value.To) {
+				continue
+			}
+			cost := 0.0
+			if detail.CostUSD != nil {
+				cost = *detail.CostUSD
+			}
+			value.DimensionSnapshot = addDimension(value.DimensionSnapshot, detail, cost)
+			value.Estimated = value.Estimated || detail.Billing.Pricing.Estimated
+			value.CacheWriteUnreported = value.CacheWriteUnreported || detail.Billing.Reason == "cache_write_tokens_unreported"
+		}
+	}
 	return result
 }
 

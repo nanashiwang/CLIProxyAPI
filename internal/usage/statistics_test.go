@@ -267,3 +267,57 @@ func TestAccountSnapshotsRangeGroupsByStableAuthIndex(t *testing.T) {
 		t.Fatalf("pricing flags = %+v", account)
 	}
 }
+
+func TestAccountSnapshotsRangesAggregatesMultipleWindowsInOnePass(t *testing.T) {
+	previousEnabled := StatisticsEnabled()
+	SetStatisticsEnabled(true)
+	t.Cleanup(func() { SetStatisticsEnabled(previousEnabled) })
+
+	stats := NewRequestStatistics()
+	if errConfigure := stats.Configure(Options{StoragePath: filepath.Join(t.TempDir(), "usage.jsonl"), RetentionDays: 365, MaxRecords: 100}); errConfigure != nil {
+		t.Fatalf("Configure() error = %v", errConfigure)
+	}
+
+	base := time.Date(2026, 8, 13, 11, 30, 0, 0, time.UTC)
+	for index, record := range []struct {
+		authIndex string
+		cost      float64
+		estimated bool
+	}{
+		{authIndex: "account-a", cost: 1.25},
+		{authIndex: "account-a", cost: 2.75, estimated: true},
+		{authIndex: "account-b", cost: 9},
+	} {
+		stats.Record(context.Background(), coreusage.Record{
+			Provider:    "codex",
+			Model:       "gpt-5.6-luna",
+			AuthIndex:   record.authIndex,
+			RequestedAt: base.Add(time.Duration(index+1) * time.Hour),
+			Detail:      coreusage.Detail{InputTokens: 100, TotalTokens: 100},
+			Billing: coreusage.Billing{
+				Currency: "USD",
+				Priced:   true,
+				TotalUSD: record.cost,
+				Pricing:  coreusage.PricingSnapshot{Estimated: record.estimated},
+			},
+		})
+	}
+
+	ranges := stats.AccountSnapshotsRanges([]AccountUsageRange{
+		{Key: "account-a:week", AuthIndex: "account-a", From: base, To: base.Add(4 * time.Hour)},
+		{Key: "account-a:short", AuthIndex: "account-a", From: base.Add(2 * time.Hour), To: base.Add(4 * time.Hour)},
+		{Key: "account-c:empty", AuthIndex: "account-c", From: base, To: base.Add(4 * time.Hour)},
+	})
+	if len(ranges) != 3 {
+		t.Fatalf("ranges = %+v", ranges)
+	}
+	if ranges[0].TotalRequests != 2 || math.Abs(ranges[0].TotalCostUSD-4) > 1e-12 || !ranges[0].Estimated {
+		t.Fatalf("weekly range = %+v", ranges[0])
+	}
+	if ranges[1].TotalRequests != 1 || math.Abs(ranges[1].TotalCostUSD-2.75) > 1e-12 {
+		t.Fatalf("short range = %+v", ranges[1])
+	}
+	if ranges[2].TotalRequests != 0 || ranges[2].AuthIndex != "account-c" {
+		t.Fatalf("empty range = %+v", ranges[2])
+	}
+}
