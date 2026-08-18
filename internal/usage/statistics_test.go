@@ -202,3 +202,68 @@ func TestStorageStatusOmitsEmptyTimestamps(t *testing.T) {
 		t.Fatalf("empty timestamps should be omitted: %s", raw)
 	}
 }
+
+func TestAccountSnapshotsRangeGroupsByStableAuthIndex(t *testing.T) {
+	previousEnabled := StatisticsEnabled()
+	SetStatisticsEnabled(true)
+	t.Cleanup(func() { SetStatisticsEnabled(previousEnabled) })
+
+	stats := NewRequestStatistics()
+	if errConfigure := stats.Configure(Options{StoragePath: filepath.Join(t.TempDir(), "usage.jsonl"), RetentionDays: 365, MaxRecords: 100}); errConfigure != nil {
+		t.Fatalf("Configure() error = %v", errConfigure)
+	}
+
+	base := time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC)
+	for index, cost := range []float64{0.25, 0.75} {
+		stats.Record(context.Background(), coreusage.Record{
+			Provider:    "codex",
+			Model:       "gpt-5.6-luna",
+			AuthID:      "codex-account.json",
+			AuthIndex:   "stable-index",
+			AuthType:    "oauth",
+			Source:      "account@example.com",
+			RequestedAt: base.Add(time.Duration(index) * time.Hour),
+			Detail:      coreusage.Detail{InputTokens: 100, TotalTokens: 100},
+			Billing: coreusage.Billing{
+				Currency: "USD",
+				Priced:   true,
+				Reason: func() string {
+					if index == 1 {
+						return "cache_write_tokens_unreported"
+					}
+					return ""
+				}(),
+				TotalUSD: cost,
+				Pricing: coreusage.PricingSnapshot{
+					Estimated: index == 1,
+				},
+			},
+		})
+	}
+	stats.Record(context.Background(), coreusage.Record{
+		Provider:    "codex",
+		Model:       "gpt-5.6-luna",
+		AuthIndex:   "outside-range",
+		RequestedAt: base.Add(-24 * time.Hour),
+		Detail:      coreusage.Detail{InputTokens: 50, TotalTokens: 50},
+		Billing:     coreusage.Billing{Currency: "USD", Priced: true, TotalUSD: 5},
+	})
+
+	accounts := stats.AccountSnapshotsRange(base, base.Add(3*time.Hour))
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %+v, want one account", accounts)
+	}
+	account := accounts[0]
+	if account.Key != "auth_index:stable-index" || account.AuthIndex != "stable-index" {
+		t.Fatalf("identity = %+v", account)
+	}
+	if account.Provider != "codex" || account.AuthID != "codex-account.json" || account.Source != "account@example.com" {
+		t.Fatalf("metadata = %+v", account)
+	}
+	if account.TotalRequests != 2 || account.TotalTokens != 200 || math.Abs(account.TotalCostUSD-1) > 1e-12 {
+		t.Fatalf("totals = %+v", account.DimensionSnapshot)
+	}
+	if !account.Estimated || !account.CacheWriteUnreported {
+		t.Fatalf("pricing flags = %+v", account)
+	}
+}

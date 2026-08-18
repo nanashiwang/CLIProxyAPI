@@ -112,6 +112,18 @@ type DimensionSnapshot struct {
 	TotalCostUSD     float64    `json:"total_cost_usd"`
 }
 
+// AccountUsageSnapshot contains lightweight totals for one stable credential identity.
+type AccountUsageSnapshot struct {
+	DimensionSnapshot
+	Key                  string `json:"key"`
+	AuthIndex            string `json:"auth_index,omitempty"`
+	AuthID               string `json:"auth_id,omitempty"`
+	Source               string `json:"source,omitempty"`
+	Provider             string `json:"provider"`
+	Estimated            bool   `json:"estimated"`
+	CacheWriteUnreported bool   `json:"cache_write_unreported"`
+}
+
 // StatisticsSnapshot is an immutable view of retained usage events.
 type StatisticsSnapshot struct {
 	TotalRequests    int64 `json:"total_requests"`
@@ -311,6 +323,68 @@ func (s *RequestStatistics) SnapshotRange(from, to time.Time) StatisticsSnapshot
 		}
 		addEventToSnapshot(&result, event)
 	}
+	return result
+}
+
+// AccountSnapshotsRange returns lightweight credential totals in the half-open [from, to) range.
+func (s *RequestStatistics) AccountSnapshotsRange(from, to time.Time) []AccountUsageSnapshot {
+	if s == nil {
+		return []AccountUsageSnapshot{}
+	}
+
+	s.mu.RLock()
+	events := append([]storedEvent(nil), s.events...)
+	s.mu.RUnlock()
+
+	byAccount := make(map[string]AccountUsageSnapshot)
+	for _, event := range events {
+		detail := event.Detail
+		if !from.IsZero() && detail.Timestamp.Before(from) {
+			continue
+		}
+		if !to.IsZero() && !detail.Timestamp.Before(to) {
+			continue
+		}
+		key := stableAccountUsageIdentifier(detail)
+		if key == "" {
+			continue
+		}
+
+		value := byAccount[key]
+		value.Key = key
+		if authIndex := strings.TrimSpace(detail.AuthIndex); authIndex != "" {
+			value.AuthIndex = authIndex
+		}
+		if authID := strings.TrimSpace(detail.AuthID); authID != "" {
+			value.AuthID = authID
+		}
+		if source := strings.TrimSpace(detail.Source); source != "" {
+			value.Source = source
+		}
+		value.Provider = valueOrUnknown(detail.Provider)
+		cost := 0.0
+		if detail.CostUSD != nil {
+			cost = *detail.CostUSD
+		}
+		value.DimensionSnapshot = addDimension(value.DimensionSnapshot, detail, cost)
+		value.Estimated = value.Estimated || detail.Billing.Pricing.Estimated
+		value.CacheWriteUnreported = value.CacheWriteUnreported || detail.Billing.Reason == "cache_write_tokens_unreported"
+		byAccount[key] = value
+	}
+
+	result := make([]AccountUsageSnapshot, 0, len(byAccount))
+	for _, value := range byAccount {
+		result = append(result, value)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].TotalCostUSD != result[j].TotalCostUSD {
+			return result[i].TotalCostUSD > result[j].TotalCostUSD
+		}
+		if result[i].TotalTokens != result[j].TotalTokens {
+			return result[i].TotalTokens > result[j].TotalTokens
+		}
+		return result[i].Key < result[j].Key
+	})
 	return result
 }
 
@@ -820,6 +894,20 @@ func addTokenStats(dst *TokenStats, value TokenStats) {
 	dst.CacheReadTokens += value.CacheReadTokens
 	dst.CacheWriteTokens += value.CacheWriteTokens
 	dst.TotalTokens += value.TotalTokens
+}
+
+func stableAccountUsageIdentifier(detail RequestDetail) string {
+	if authIndex := strings.TrimSpace(detail.AuthIndex); authIndex != "" {
+		return "auth_index:" + authIndex
+	}
+	provider := valueOrUnknown(detail.Provider)
+	if authID := strings.TrimSpace(detail.AuthID); authID != "" {
+		return provider + ":auth_id:" + authID
+	}
+	if source := strings.TrimSpace(detail.Source); source != "" {
+		return provider + ":source:" + source
+	}
+	return ""
 }
 
 func accountIdentifier(detail RequestDetail) string {

@@ -44,6 +44,20 @@ func (h *Handler) GetUsageStatistics(c *gin.Context) {
 	})
 }
 
+// GetUsageAccountSummaries returns lightweight totals grouped by stable credential identity.
+func (h *Handler) GetUsageAccountSummaries(c *gin.Context) {
+	from, to, errRange := parseUsageTimeRange(c)
+	if errRange != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_time_range", "message": errRange.Error()})
+		return
+	}
+	stats := internalusage.GetRequestStatistics()
+	c.JSON(http.StatusOK, gin.H{
+		"accounts": stats.AccountSnapshotsRange(from, to),
+		"storage":  stats.Status(),
+	})
+}
+
 // GetUsageStatisticsStatus returns persistent storage status.
 func (h *Handler) GetUsageStatisticsStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, internalusage.GetRequestStatistics().Status())
