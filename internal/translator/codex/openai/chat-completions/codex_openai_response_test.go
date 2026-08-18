@@ -544,18 +544,19 @@ func assertUsageMapping(t *testing.T, payload []byte, wantCachedCreation int64, 
 		t.Fatalf("expected reasoning_tokens=5, got %d; payload=%s", got, string(payload))
 	}
 
+	gotCacheWrite := gjson.GetBytes(payload, "usage.prompt_tokens_details.cache_write_tokens")
 	gotCachedCreation := gjson.GetBytes(payload, "usage.prompt_tokens_details.cached_creation_tokens")
 	if expectCachedCreation {
-		if !gotCachedCreation.Exists() {
-			t.Fatalf("expected cached_creation_tokens to exist, payload=%s", string(payload))
+		if !gotCacheWrite.Exists() || !gotCachedCreation.Exists() {
+			t.Fatalf("expected cache-write fields to exist, payload=%s", string(payload))
 		}
-		if gotCachedCreation.Int() != wantCachedCreation {
-			t.Fatalf("expected cached_creation_tokens=%d, got %d; payload=%s", wantCachedCreation, gotCachedCreation.Int(), string(payload))
+		if gotCacheWrite.Int() != wantCachedCreation || gotCachedCreation.Int() != wantCachedCreation {
+			t.Fatalf("expected cache-write fields=%d, got official=%d legacy=%d; payload=%s", wantCachedCreation, gotCacheWrite.Int(), gotCachedCreation.Int(), string(payload))
 		}
 		return
 	}
-	if gotCachedCreation.Exists() {
-		t.Fatalf("expected cached_creation_tokens to be omitted, payload=%s", string(payload))
+	if gotCacheWrite.Exists() || gotCachedCreation.Exists() {
+		t.Fatalf("expected cache-write fields to be omitted, payload=%s", string(payload))
 	}
 }
 

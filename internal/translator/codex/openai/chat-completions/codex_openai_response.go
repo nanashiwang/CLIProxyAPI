@@ -116,6 +116,8 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 			template, _ = sjson.SetBytes(template, "usage.prompt_tokens_details.cached_tokens", cachedTokensResult.Int())
 		}
 		if cacheWriteTokensResult := usageResult.Get("input_tokens_details.cache_write_tokens"); cacheWriteTokensResult.Exists() {
+			template, _ = sjson.SetBytes(template, "usage.prompt_tokens_details.cache_write_tokens", cacheWriteTokensResult.Int())
+			// Keep the historical alias for clients that consumed it before the official field was added.
 			template, _ = sjson.SetBytes(template, "usage.prompt_tokens_details.cached_creation_tokens", cacheWriteTokensResult.Int())
 		}
 		if reasoningTokensResult := usageResult.Get("output_tokens_details.reasoning_tokens"); reasoningTokensResult.Exists() {
@@ -416,6 +418,8 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 			template, _ = sjson.SetBytes(template, "usage.prompt_tokens_details.cached_tokens", cachedTokensResult.Int())
 		}
 		if cacheWriteTokensResult := usageResult.Get("input_tokens_details.cache_write_tokens"); cacheWriteTokensResult.Exists() {
+			template, _ = sjson.SetBytes(template, "usage.prompt_tokens_details.cache_write_tokens", cacheWriteTokensResult.Int())
+			// Keep the historical alias for clients that consumed it before the official field was added.
 			template, _ = sjson.SetBytes(template, "usage.prompt_tokens_details.cached_creation_tokens", cacheWriteTokensResult.Int())
 		}
 		if reasoningTokensResult := usageResult.Get("output_tokens_details.reasoning_tokens"); reasoningTokensResult.Exists() {

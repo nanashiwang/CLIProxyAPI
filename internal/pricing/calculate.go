@@ -134,9 +134,16 @@ func (s *Service) CalculateUsageCost(record coreusage.Record) coreusage.Billing 
 	}
 	total := costBreakdown.InputUSD + costBreakdown.OutputUSD + costBreakdown.CacheReadUSD + costBreakdown.CacheWriteUSD
 	estimated := source == "embedded" || inputPrice.estimated || outputPrice.estimated || cacheReadPrice.estimated || cacheWritePrice.estimated
+	reason := ""
 	if providerFamily == "anthropic" && breakdown.Input.CacheWriteTokens > 0 && hasOneHourCachePrice(resolved.entry) {
 		// The canonical usage schema currently has one cache-write bucket and cannot distinguish 5m from 1h writes.
 		estimated = true
+	}
+	if codexOAuthCacheWriteUnreported(record, resolved.name, breakdown) {
+		// The ChatGPT Codex OAuth backend currently reports zero cache-write tokens even
+		// when a later identical request confirms that the cache was populated.
+		estimated = true
+		reason = "cache_write_tokens_unreported"
 	}
 	if resolved.hasOverride {
 		source = "custom+" + source
@@ -146,6 +153,7 @@ func (s *Service) CalculateUsageCost(record coreusage.Record) coreusage.Billing 
 	return coreusage.Billing{
 		Currency:  "USD",
 		Priced:    true,
+		Reason:    reason,
 		TotalUSD:  total,
 		Breakdown: costBreakdown,
 		Pricing: coreusage.PricingSnapshot{
@@ -165,6 +173,21 @@ func (s *Service) CalculateUsageCost(record coreusage.Record) coreusage.Billing 
 			CalculatedAt: calculatedAt,
 		},
 	}
+}
+
+func codexOAuthCacheWriteUnreported(record coreusage.Record, resolvedModelName string, breakdown coreusage.TokenBreakdown) bool {
+	if !strings.EqualFold(strings.TrimSpace(record.Provider), "codex") ||
+		!strings.EqualFold(strings.TrimSpace(record.AuthType), "oauth") ||
+		breakdown.Input.TotalTokens <= 0 ||
+		breakdown.Input.CacheWriteTokens != 0 {
+		return false
+	}
+	for _, model := range []string{resolvedModelName, record.Model, record.Alias} {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-5.6") {
+			return true
+		}
+	}
+	return false
 }
 
 func effectiveServiceTier(record coreusage.Record) string {

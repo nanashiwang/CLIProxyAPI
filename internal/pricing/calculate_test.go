@@ -37,6 +37,42 @@ func TestCalculateUsageCostGPT56Buckets(t *testing.T) {
 	}
 }
 
+func TestCalculateUsageCostMarksCodexOAuthCacheWriteAsUnreported(t *testing.T) {
+	service := NewService()
+	billing := service.CalculateUsageCost(coreusage.Record{
+		Provider: "codex",
+		AuthType: "oauth",
+		Model:    "gpt-5.6-luna",
+		Detail: coreusage.Detail{TokenBreakdown: coreusage.NewSubsetTokenBreakdown(
+			5_347, 0, 0, 5, 0, 5_352,
+		)},
+	})
+	if !billing.Priced || !billing.Pricing.Estimated {
+		t.Fatalf("billing = %+v, want priced estimate", billing)
+	}
+	if billing.Reason != "cache_write_tokens_unreported" {
+		t.Fatalf("reason = %q, want cache_write_tokens_unreported", billing.Reason)
+	}
+	if billing.Breakdown.CacheWriteUSD != 0 {
+		t.Fatalf("cache write cost = %f, want zero without fabricated tokens", billing.Breakdown.CacheWriteUSD)
+	}
+}
+
+func TestCalculateUsageCostDoesNotMarkOpenAIAPIUsageAsUnreported(t *testing.T) {
+	service := NewService()
+	billing := service.CalculateUsageCost(coreusage.Record{
+		Provider: "openai",
+		AuthType: "apikey",
+		Model:    "gpt-5.6",
+		Detail: coreusage.Detail{TokenBreakdown: coreusage.NewSubsetTokenBreakdown(
+			1_000, 0, 0, 100, 0, 1_100,
+		)},
+	})
+	if billing.Reason == "cache_write_tokens_unreported" {
+		t.Fatalf("unexpected reason for OpenAI API usage: %+v", billing)
+	}
+}
+
 func TestCalculateUsageCostGPT56ServiceTiers(t *testing.T) {
 	service := NewService()
 	tests := []struct {
