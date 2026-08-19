@@ -160,6 +160,8 @@ func codexTerminalFailureStatus(body []byte) int {
 	errorType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.type").String()))
 	errorCode := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.code").String()))
 	switch {
+	case isCodexServerOverloadedError(body):
+		return http.StatusServiceUnavailable
 	case errorCode == "cyber_policy":
 		return http.StatusBadRequest
 	case errorType == "invalid_request_error", errorType == "bad_request_error":
@@ -175,6 +177,19 @@ func codexTerminalFailureStatus(body []byte) int {
 	default:
 		return http.StatusBadGateway
 	}
+}
+
+func isCodexServerOverloadedError(errorBody []byte) bool {
+	if len(errorBody) == 0 {
+		return false
+	}
+	errorType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(errorBody, "error.type").String()))
+	errorCode := strings.ToLower(strings.TrimSpace(gjson.GetBytes(errorBody, "error.code").String()))
+	message := strings.ToLower(strings.TrimSpace(gjson.GetBytes(errorBody, "error.message").String()))
+	return errorType == "service_unavailable_error" ||
+		errorCode == "server_is_overloaded" ||
+		strings.Contains(message, "servers are currently overloaded") ||
+		strings.Contains(message, "system cpu overloaded")
 }
 
 func codexTerminalFailureBody(eventData []byte) ([]byte, bool) {
