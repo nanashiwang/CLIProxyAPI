@@ -23,13 +23,12 @@ import (
 )
 
 const (
-	storageSchemaVersion       = 2
-	defaultRetentionDays       = 90
-	defaultMaxRecords          = 200000
-	maximumMaxRecords          = 2000000
-	maximumEventLineSize       = 4 << 20
-	windowCacheRefreshInterval = 15 * time.Second
-	windowCacheMaxAge          = 45 * time.Second
+	storageSchemaVersion    = 2
+	defaultRetentionDays    = 90
+	defaultMaxRecords       = 200000
+	maximumMaxRecords       = 2000000
+	maximumEventLineSize    = 4 << 20
+	windowCacheRefreshAfter = 60 * time.Second
 )
 
 var statisticsEnabled atomic.Bool
@@ -224,6 +223,7 @@ type cachedWindowSnapshot struct {
 	snapshot   StatisticsSnapshot
 	from       time.Time
 	computedAt time.Time
+	updatedAt  time.Time
 }
 
 type RequestStatistics struct {
@@ -232,9 +232,12 @@ type RequestStatistics struct {
 
 	events []storedEvent
 
-	cacheMu      sync.RWMutex
-	windowCache  map[string]cachedWindowSnapshot
-	cacheStarted atomic.Bool
+	cacheMu             sync.RWMutex
+	windowCache         map[string]cachedWindowSnapshot
+	cacheRefreshCh      chan struct{}
+	cacheStarted        atomic.Bool
+	cacheRefreshQueued  atomic.Bool
+	cacheRefreshPending atomic.Bool
 
 	persistMu sync.Mutex
 	options   Options
@@ -251,8 +254,9 @@ func GetRequestStatistics() *RequestStatistics { return defaultRequestStatistics
 // NewRequestStatistics constructs an empty statistics store.
 func NewRequestStatistics() *RequestStatistics {
 	return &RequestStatistics{
-		options:     normalizeOptions(Options{}),
-		windowCache: make(map[string]cachedWindowSnapshot),
+		options:        normalizeOptions(Options{}),
+		windowCache:    make(map[string]cachedWindowSnapshot),
+		cacheRefreshCh: make(chan struct{}, 1),
 	}
 }
 
@@ -321,13 +325,15 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	before := len(s.events)
 	s.events = pruneEvents(s.events, s.options, now)
 	compacted := len(s.events) < before
-	snapshot := append([]storedEvent(nil), s.events...)
+	var snapshot []storedEvent
+	if compacted {
+		snapshot = append([]storedEvent(nil), s.events...)
+	}
 	s.mu.Unlock()
 
-	if compacted {
-		s.rebuildWindowCache(snapshot, now)
-	} else {
-		s.updateCachedWindow(event, now)
+	s.updateCachedWindow(event, now)
+	if compacted || s.cacheNeedsRefresh(now) {
+		s.requestCacheRefresh()
 	}
 
 	s.persistMu.Lock()
@@ -380,18 +386,61 @@ func (s *RequestStatistics) SnapshotRange(from, to time.Time) StatisticsSnapshot
 	return result
 }
 
-// StartBackgroundRefresh keeps the fixed usage windows warm for management pages.
+// StartBackgroundRefresh starts the event-driven cache rebuild worker.
+// It does not run on a timer: the worker wakes only when a cache rebuild is needed.
 func (s *RequestStatistics) StartBackgroundRefresh() {
 	if s == nil || s.cacheStarted.Swap(true) {
 		return
 	}
+	if s.cacheRefreshCh == nil {
+		s.cacheRefreshCh = make(chan struct{}, 1)
+	}
 	go func() {
-		ticker := time.NewTicker(windowCacheRefreshInterval)
-		defer ticker.Stop()
-		for range ticker.C {
+		if s.cacheRefreshPending.Load() {
+			s.requestCacheRefresh()
+		}
+		for range s.cacheRefreshCh {
+			s.cacheRefreshPending.Store(false)
 			s.rebuildCachedWindows()
+			s.cacheRefreshQueued.Store(false)
+			if s.cacheRefreshPending.Load() {
+				s.requestCacheRefresh()
+			}
 		}
 	}()
+}
+
+// requestCacheRefresh schedules one coalesced background rebuild.
+func (s *RequestStatistics) requestCacheRefresh() {
+	if s == nil {
+		return
+	}
+	s.cacheRefreshPending.Store(true)
+	if !s.cacheStarted.Load() || s.cacheRefreshQueued.Swap(true) {
+		return
+	}
+	select {
+	case s.cacheRefreshCh <- struct{}{}:
+	default:
+		s.cacheRefreshQueued.Store(false)
+	}
+}
+
+func (s *RequestStatistics) cacheNeedsRefresh(now time.Time) bool {
+	if s == nil {
+		return false
+	}
+	s.cacheMu.RLock()
+	defer s.cacheMu.RUnlock()
+	for window, cached := range s.windowCache {
+		if window == "all" || cached.computedAt.IsZero() {
+			continue
+		}
+		if now.Sub(cached.computedAt) >= windowCacheRefreshAfter {
+			return true
+		}
+	}
+	return false
 }
 
 // SnapshotWindow returns a precomputed fixed window plus only the latest request details.
@@ -410,14 +459,23 @@ func (s *RequestStatistics) SnapshotWindow(window string, recentLimit int) (Stat
 	s.cacheMu.RLock()
 	cached, ok := s.windowCache[window]
 	s.cacheMu.RUnlock()
-	if !ok || cached.computedAt.IsZero() || now.Sub(cached.computedAt) > windowCacheMaxAge {
-		s.rebuildCachedWindows()
+	if !ok || cached.computedAt.IsZero() {
+		// Configuration normally prewarms the cache. Keep a synchronous fallback
+		// for zero-value/test stores that have not started the worker yet.
+		if !s.cacheStarted.Load() {
+			s.rebuildCachedWindows()
+		} else {
+			s.requestCacheRefresh()
+		}
 		s.cacheMu.RLock()
 		cached, ok = s.windowCache[window]
 		s.cacheMu.RUnlock()
 	}
 	if !ok {
-		return s.SnapshotRange(time.Time{}, time.Time{}), SnapshotCacheStatus{Window: window}
+		return newSnapshot(), SnapshotCacheStatus{Window: window}
+	}
+	if window != "all" && now.Sub(cached.computedAt) >= windowCacheRefreshAfter {
+		s.requestCacheRefresh()
 	}
 
 	from := cached.from
@@ -426,14 +484,18 @@ func (s *RequestStatistics) SnapshotWindow(window string, recentLimit int) (Stat
 	events := append([]storedEvent(nil), s.events...)
 	s.mu.RUnlock()
 	appendRecentDetails(&result, events, from, now, recentLimit)
-	age := now.Sub(cached.computedAt)
+	updatedAt := cached.updatedAt
+	if updatedAt.IsZero() {
+		updatedAt = cached.computedAt
+	}
+	age := now.Sub(updatedAt)
 	if age < 0 {
 		age = 0
 	}
 	return result, SnapshotCacheStatus{
 		Window:      window,
 		Precomputed: true,
-		ComputedAt:  cached.computedAt,
+		ComputedAt:  updatedAt,
 		AgeSeconds:  int64(age / time.Second),
 	}
 }
@@ -475,7 +537,12 @@ func (s *RequestStatistics) rebuildWindowCache(events []storedEvent, now time.Ti
 	}
 	results := make(map[string]cachedWindowSnapshot, len(windows))
 	for window, from := range windows {
-		results[window] = cachedWindowSnapshot{snapshot: newSnapshot(), from: from, computedAt: now}
+		results[window] = cachedWindowSnapshot{
+			snapshot:   newSnapshot(),
+			from:       from,
+			computedAt: now,
+			updatedAt:  now,
+		}
 	}
 	for _, event := range events {
 		for window, cached := range results {
@@ -502,7 +569,7 @@ func (s *RequestStatistics) updateCachedWindow(event storedEvent, now time.Time)
 			continue
 		}
 		addEventToAggregate(&cached.snapshot, event)
-		cached.computedAt = now
+		cached.updatedAt = now
 		s.windowCache[window] = cached
 	}
 }
