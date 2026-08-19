@@ -572,6 +572,16 @@ func TestCodexTerminalFailureErrClassifiesStatus(t *testing.T) {
 			wantStatus: http.StatusTooManyRequests,
 		},
 		{
+			name:       "server overloaded error",
+			event:      `{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`,
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:       "server overloaded response failed",
+			event:      `{"type":"response.failed","response":{"error":{"code":"server_is_overloaded","message":"system cpu overloaded"}}}`,
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
 			name:       "unknown upstream failure",
 			event:      `{"type":"response.failed","response":{"error":{"type":"upstream_error","code":"unknown","message":"Upstream failed."}}}`,
 			wantStatus: http.StatusBadGateway,
