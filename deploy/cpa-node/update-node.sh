@@ -107,11 +107,15 @@ EOF_UPDATE
 update_cpa() {
   log "reloading systemd units before upgrade"
   systemctl daemon-reload
+  log "stopping the system service to avoid a text-file-busy replacement"
+  systemctl stop cliproxyapi
+  trap 'systemctl start cliproxyapi || true' EXIT
   log "upgrading CLIProxyAPI from the personal Release"
   "${INSTALLER_PATH}" upgrade
   systemctl daemon-reload
-  systemctl restart cliproxyapi
+  systemctl start cliproxyapi
   systemctl is-active --quiet cliproxyapi
+  trap - EXIT
 }
 
 verify() {
