@@ -28,5 +28,9 @@ func OptionsFromConfig(cfg config.UsageStatisticsConfig, configPath string) Opti
 
 // ConfigureDefault configures the process-wide usage statistics store.
 func ConfigureDefault(cfg config.UsageStatisticsConfig, configPath string) error {
-	return defaultRequestStatistics.Configure(OptionsFromConfig(cfg, configPath))
+	if err := defaultRequestStatistics.Configure(OptionsFromConfig(cfg, configPath)); err != nil {
+		return err
+	}
+	defaultRequestStatistics.StartBackgroundRefresh()
+	return nil
 }

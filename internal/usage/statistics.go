@@ -23,11 +23,13 @@ import (
 )
 
 const (
-	storageSchemaVersion = 2
-	defaultRetentionDays = 90
-	defaultMaxRecords    = 200000
-	maximumMaxRecords    = 2000000
-	maximumEventLineSize = 4 << 20
+	storageSchemaVersion       = 2
+	defaultRetentionDays       = 90
+	defaultMaxRecords          = 200000
+	maximumMaxRecords          = 2000000
+	maximumEventLineSize       = 4 << 20
+	windowCacheRefreshInterval = 15 * time.Second
+	windowCacheMaxAge          = 45 * time.Second
 )
 
 var statisticsEnabled atomic.Bool
@@ -145,12 +147,14 @@ type AccountUsageRangeSnapshot struct {
 
 // StatisticsSnapshot is an immutable view of retained usage events.
 type StatisticsSnapshot struct {
-	TotalRequests    int64 `json:"total_requests"`
-	SuccessCount     int64 `json:"success_count"`
-	FailureCount     int64 `json:"failure_count"`
-	PricedRequests   int64 `json:"priced_requests"`
-	UnpricedRequests int64 `json:"unpriced_requests"`
-	TotalTokens      int64 `json:"total_tokens"`
+	TotalRequests        int64 `json:"total_requests"`
+	SuccessCount         int64 `json:"success_count"`
+	FailureCount         int64 `json:"failure_count"`
+	PricedRequests       int64 `json:"priced_requests"`
+	UnpricedRequests     int64 `json:"unpriced_requests"`
+	TotalTokens          int64 `json:"total_tokens"`
+	Estimated            bool  `json:"estimated"`
+	CacheWriteUnreported bool  `json:"cache_write_unreported"`
 
 	Tokens       TokenStats `json:"tokens"`
 	TotalCostUSD float64    `json:"total_cost_usd"`
@@ -160,12 +164,15 @@ type StatisticsSnapshot struct {
 	Providers map[string]DimensionSnapshot `json:"providers"`
 	Models    map[string]DimensionSnapshot `json:"models"`
 
-	RequestsByDay  map[string]int64   `json:"requests_by_day"`
-	RequestsByHour map[string]int64   `json:"requests_by_hour"`
-	TokensByDay    map[string]int64   `json:"tokens_by_day"`
-	TokensByHour   map[string]int64   `json:"tokens_by_hour"`
-	CostByDay      map[string]float64 `json:"cost_by_day"`
-	CostByHour     map[string]float64 `json:"cost_by_hour"`
+	RequestsByDay        map[string]int64   `json:"requests_by_day"`
+	RequestsByHour       map[string]int64   `json:"requests_by_hour"`
+	RequestsByHourWindow map[string]int64   `json:"requests_by_hour_window"`
+	TokensByDay          map[string]int64   `json:"tokens_by_day"`
+	TokensByHour         map[string]int64   `json:"tokens_by_hour"`
+	TokensByHourWindow   map[string]int64   `json:"tokens_by_hour_window"`
+	CostByDay            map[string]float64 `json:"cost_by_day"`
+	CostByHour           map[string]float64 `json:"cost_by_hour"`
+	CostByHourWindow     map[string]float64 `json:"cost_by_hour_window"`
 }
 
 // APISnapshot contains totals grouped by client API key fingerprint or endpoint.
@@ -185,6 +192,13 @@ type ModelSnapshot struct {
 }
 
 // StorageStatus describes the active persistent statistics store.
+type SnapshotCacheStatus struct {
+	Window      string    `json:"window"`
+	Precomputed bool      `json:"precomputed"`
+	ComputedAt  time.Time `json:"computed_at,omitempty"`
+	AgeSeconds  int64     `json:"age_seconds"`
+}
+
 type StorageStatus struct {
 	Enabled       bool       `json:"enabled"`
 	StoragePath   string     `json:"storage_path,omitempty"`
@@ -206,11 +220,21 @@ type storedEvent struct {
 }
 
 // RequestStatistics stores retained request events and their JSONL persistence state.
+type cachedWindowSnapshot struct {
+	snapshot   StatisticsSnapshot
+	from       time.Time
+	computedAt time.Time
+}
+
 type RequestStatistics struct {
 	opMu sync.Mutex
 	mu   sync.RWMutex
 
 	events []storedEvent
+
+	cacheMu      sync.RWMutex
+	windowCache  map[string]cachedWindowSnapshot
+	cacheStarted atomic.Bool
 
 	persistMu sync.Mutex
 	options   Options
@@ -226,7 +250,10 @@ func GetRequestStatistics() *RequestStatistics { return defaultRequestStatistics
 
 // NewRequestStatistics constructs an empty statistics store.
 func NewRequestStatistics() *RequestStatistics {
-	return &RequestStatistics{options: normalizeOptions(Options{})}
+	return &RequestStatistics{
+		options:     normalizeOptions(Options{}),
+		windowCache: make(map[string]cachedWindowSnapshot),
+	}
 }
 
 // Configure applies persistence settings and loads retained events from disk.
@@ -262,6 +289,7 @@ func (s *RequestStatistics) Configure(options Options) error {
 	s.mu.Lock()
 	s.events = loaded
 	s.mu.Unlock()
+	s.rebuildWindowCache(loaded, time.Now().UTC())
 	s.options = options
 	s.loadedAt = time.Now().UTC()
 	s.lastError = ""
@@ -283,6 +311,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		return
 	}
 	event := eventFromRecord(ctx, record)
+	now := time.Now().UTC()
 
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
@@ -290,10 +319,16 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	s.mu.Lock()
 	s.events = insertEventSorted(s.events, event)
 	before := len(s.events)
-	s.events = pruneEvents(s.events, s.options, time.Now())
+	s.events = pruneEvents(s.events, s.options, now)
 	compacted := len(s.events) < before
 	snapshot := append([]storedEvent(nil), s.events...)
 	s.mu.Unlock()
+
+	if compacted {
+		s.rebuildWindowCache(snapshot, now)
+	} else {
+		s.updateCachedWindow(event, now)
+	}
 
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
@@ -343,6 +378,209 @@ func (s *RequestStatistics) SnapshotRange(from, to time.Time) StatisticsSnapshot
 		addEventToSnapshot(&result, event)
 	}
 	return result
+}
+
+// StartBackgroundRefresh keeps the fixed usage windows warm for management pages.
+func (s *RequestStatistics) StartBackgroundRefresh() {
+	if s == nil || s.cacheStarted.Swap(true) {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(windowCacheRefreshInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.rebuildCachedWindows()
+		}
+	}()
+}
+
+// SnapshotWindow returns a precomputed fixed window plus only the latest request details.
+// The aggregate totals are maintained in memory and refreshed in the background, so opening
+// the usage page does not trigger a full request-history calculation.
+func (s *RequestStatistics) SnapshotWindow(window string, recentLimit int) (StatisticsSnapshot, SnapshotCacheStatus) {
+	window = normalizeUsageWindow(window)
+	if s == nil {
+		return newSnapshot(), SnapshotCacheStatus{Window: window}
+	}
+	if window == "" {
+		return s.SnapshotRange(time.Time{}, time.Time{}), SnapshotCacheStatus{Window: window}
+	}
+
+	now := time.Now().UTC()
+	s.cacheMu.RLock()
+	cached, ok := s.windowCache[window]
+	s.cacheMu.RUnlock()
+	if !ok || cached.computedAt.IsZero() || now.Sub(cached.computedAt) > windowCacheMaxAge {
+		s.rebuildCachedWindows()
+		s.cacheMu.RLock()
+		cached, ok = s.windowCache[window]
+		s.cacheMu.RUnlock()
+	}
+	if !ok {
+		return s.SnapshotRange(time.Time{}, time.Time{}), SnapshotCacheStatus{Window: window}
+	}
+
+	from := cached.from
+	result := cloneSnapshot(cached.snapshot)
+	s.mu.RLock()
+	events := append([]storedEvent(nil), s.events...)
+	s.mu.RUnlock()
+	appendRecentDetails(&result, events, from, now, recentLimit)
+	age := now.Sub(cached.computedAt)
+	if age < 0 {
+		age = 0
+	}
+	return result, SnapshotCacheStatus{
+		Window:      window,
+		Precomputed: true,
+		ComputedAt:  cached.computedAt,
+		AgeSeconds:  int64(age / time.Second),
+	}
+}
+
+func normalizeUsageWindow(window string) string {
+	switch strings.ToLower(strings.TrimSpace(window)) {
+	case "24h", "today":
+		return "24h"
+	case "7d", "7days":
+		return "7d"
+	case "30d", "30days":
+		return "30d"
+	case "all":
+		return "all"
+	default:
+		return ""
+	}
+}
+
+func (s *RequestStatistics) rebuildCachedWindows() {
+	if s == nil {
+		return
+	}
+	s.mu.RLock()
+	events := append([]storedEvent(nil), s.events...)
+	s.mu.RUnlock()
+	s.rebuildWindowCache(events, time.Now().UTC())
+}
+
+func (s *RequestStatistics) rebuildWindowCache(events []storedEvent, now time.Time) {
+	if s == nil {
+		return
+	}
+	windows := map[string]time.Time{
+		"all": {},
+		"24h": now.Add(-24 * time.Hour),
+		"7d":  now.Add(-7 * 24 * time.Hour),
+		"30d": now.Add(-30 * 24 * time.Hour),
+	}
+	results := make(map[string]cachedWindowSnapshot, len(windows))
+	for window, from := range windows {
+		results[window] = cachedWindowSnapshot{snapshot: newSnapshot(), from: from, computedAt: now}
+	}
+	for _, event := range events {
+		for window, cached := range results {
+			if window != "all" && event.Detail.Timestamp.Before(cached.from) {
+				continue
+			}
+			addEventToAggregate(&cached.snapshot, event)
+			results[window] = cached
+		}
+	}
+	s.cacheMu.Lock()
+	s.windowCache = results
+	s.cacheMu.Unlock()
+}
+
+func (s *RequestStatistics) updateCachedWindow(event storedEvent, now time.Time) {
+	if s == nil {
+		return
+	}
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	for window, cached := range s.windowCache {
+		if cached.computedAt.IsZero() || (window != "all" && event.Detail.Timestamp.Before(cached.from)) {
+			continue
+		}
+		addEventToAggregate(&cached.snapshot, event)
+		cached.computedAt = now
+		s.windowCache[window] = cached
+	}
+}
+
+func cloneSnapshot(source StatisticsSnapshot) StatisticsSnapshot {
+	result := source
+	result.APIs = make(map[string]APISnapshot, len(source.APIs))
+	for key, api := range source.APIs {
+		models := api.Models
+		api.Models = make(map[string]ModelSnapshot, len(models))
+		for model, value := range models {
+			value.Details = append([]RequestDetail(nil), value.Details...)
+			api.Models[model] = value
+		}
+		result.APIs[key] = api
+	}
+	result.Accounts = cloneDimensions(source.Accounts)
+	result.Providers = cloneDimensions(source.Providers)
+	result.Models = cloneDimensions(source.Models)
+	result.RequestsByDay = cloneInt64Map(source.RequestsByDay)
+	result.RequestsByHour = cloneInt64Map(source.RequestsByHour)
+	result.RequestsByHourWindow = cloneInt64Map(source.RequestsByHourWindow)
+	result.TokensByDay = cloneInt64Map(source.TokensByDay)
+	result.TokensByHour = cloneInt64Map(source.TokensByHour)
+	result.TokensByHourWindow = cloneInt64Map(source.TokensByHourWindow)
+	result.CostByDay = cloneFloatMap(source.CostByDay)
+	result.CostByHour = cloneFloatMap(source.CostByHour)
+	result.CostByHourWindow = cloneFloatMap(source.CostByHourWindow)
+	return result
+}
+
+func cloneDimensions(source map[string]DimensionSnapshot) map[string]DimensionSnapshot {
+	result := make(map[string]DimensionSnapshot, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func cloneInt64Map(source map[string]int64) map[string]int64 {
+	result := make(map[string]int64, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func cloneFloatMap(source map[string]float64) map[string]float64 {
+	result := make(map[string]float64, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func appendRecentDetails(snapshot *StatisticsSnapshot, events []storedEvent, from, to time.Time, limit int) {
+	if snapshot == nil || limit <= 0 {
+		return
+	}
+	added := 0
+	for index := len(events) - 1; index >= 0 && added < limit; index-- {
+		event := events[index]
+		if event.Detail.Timestamp.Before(from) || !event.Detail.Timestamp.Before(to) {
+			continue
+		}
+		api, ok := snapshot.APIs[event.API]
+		if !ok {
+			continue
+		}
+		model, ok := api.Models[event.Model]
+		if !ok {
+			continue
+		}
+		model.Details = append(model.Details, event.Detail)
+		api.Models[event.Model] = model
+		snapshot.APIs[event.API] = api
+		added++
+	}
 }
 
 // AccountSnapshotsRange returns lightweight credential totals in the half-open [from, to) range.
@@ -462,6 +700,7 @@ func (s *RequestStatistics) Clear() error {
 	s.mu.Lock()
 	s.events = nil
 	s.mu.Unlock()
+	s.rebuildWindowCache(nil, time.Now().UTC())
 
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
@@ -509,6 +748,7 @@ func (s *RequestStatistics) MergeSnapshot(snapshot StatisticsSnapshot) (MergeRes
 	s.events = pruneEvents(s.events, s.options, time.Now())
 	events := append([]storedEvent(nil), s.events...)
 	s.mu.Unlock()
+	s.rebuildWindowCache(events, time.Now().UTC())
 
 	s.persistMu.Lock()
 	if errRewrite := s.rewriteLocked(events); errRewrite != nil {
@@ -867,20 +1107,33 @@ func normalizeTokens(tokens TokenStats) TokenStats {
 
 func newSnapshot() StatisticsSnapshot {
 	return StatisticsSnapshot{
-		APIs:           make(map[string]APISnapshot),
-		Accounts:       make(map[string]DimensionSnapshot),
-		Providers:      make(map[string]DimensionSnapshot),
-		Models:         make(map[string]DimensionSnapshot),
-		RequestsByDay:  make(map[string]int64),
-		RequestsByHour: make(map[string]int64),
-		TokensByDay:    make(map[string]int64),
-		TokensByHour:   make(map[string]int64),
-		CostByDay:      make(map[string]float64),
-		CostByHour:     make(map[string]float64),
+		APIs:                 make(map[string]APISnapshot),
+		Accounts:             make(map[string]DimensionSnapshot),
+		Providers:            make(map[string]DimensionSnapshot),
+		Models:               make(map[string]DimensionSnapshot),
+		RequestsByDay:        make(map[string]int64),
+		RequestsByHour:       make(map[string]int64),
+		RequestsByHourWindow: make(map[string]int64),
+		TokensByDay:          make(map[string]int64),
+		TokensByHour:         make(map[string]int64),
+		TokensByHourWindow:   make(map[string]int64),
+		CostByDay:            make(map[string]float64),
+		CostByHour:           make(map[string]float64),
+		CostByHourWindow:     make(map[string]float64),
 	}
 }
 
 func addEventToSnapshot(snapshot *StatisticsSnapshot, event storedEvent) {
+	addEventToAggregate(snapshot, event)
+	detail := event.Detail
+	apiSnapshot := snapshot.APIs[event.API]
+	modelSnapshot := apiSnapshot.Models[event.Model]
+	modelSnapshot.Details = append(modelSnapshot.Details, detail)
+	apiSnapshot.Models[event.Model] = modelSnapshot
+	snapshot.APIs[event.API] = apiSnapshot
+}
+
+func addEventToAggregate(snapshot *StatisticsSnapshot, event storedEvent) {
 	detail := event.Detail
 	cost := 0.0
 	if detail.CostUSD != nil {
@@ -897,18 +1150,24 @@ func addEventToSnapshot(snapshot *StatisticsSnapshot, event storedEvent) {
 	} else {
 		snapshot.UnpricedRequests++
 	}
+	snapshot.Estimated = snapshot.Estimated || detail.Billing.Pricing.Estimated
+	snapshot.CacheWriteUnreported = snapshot.CacheWriteUnreported || detail.Billing.Reason == "cache_write_tokens_unreported"
 	snapshot.TotalTokens += detail.Tokens.TotalTokens
 	addTokenStats(&snapshot.Tokens, detail.Tokens)
 	snapshot.TotalCostUSD += cost
 
 	dayKey := detail.Timestamp.Format("2006-01-02")
 	hourKey := fmt.Sprintf("%02d", detail.Timestamp.Hour())
+	hourWindowKey := detail.Timestamp.Format("2006-01-02T15:00:00Z")
 	snapshot.RequestsByDay[dayKey]++
 	snapshot.RequestsByHour[hourKey]++
+	snapshot.RequestsByHourWindow[hourWindowKey]++
 	snapshot.TokensByDay[dayKey] += detail.Tokens.TotalTokens
 	snapshot.TokensByHour[hourKey] += detail.Tokens.TotalTokens
+	snapshot.TokensByHourWindow[hourWindowKey] += detail.Tokens.TotalTokens
 	snapshot.CostByDay[dayKey] += cost
 	snapshot.CostByHour[hourKey] += cost
+	snapshot.CostByHourWindow[hourWindowKey] += cost
 
 	apiSnapshot := snapshot.APIs[event.API]
 	if apiSnapshot.Models == nil {
@@ -921,7 +1180,6 @@ func addEventToSnapshot(snapshot *StatisticsSnapshot, event storedEvent) {
 	modelSnapshot.TotalRequests++
 	modelSnapshot.TotalTokens += detail.Tokens.TotalTokens
 	modelSnapshot.TotalCostUSD += cost
-	modelSnapshot.Details = append(modelSnapshot.Details, detail)
 	apiSnapshot.Models[event.Model] = modelSnapshot
 	snapshot.APIs[event.API] = apiSnapshot
 
@@ -930,7 +1188,6 @@ func addEventToSnapshot(snapshot *StatisticsSnapshot, event storedEvent) {
 	snapshot.Providers[detail.Provider] = addDimension(snapshot.Providers[detail.Provider], detail, cost)
 	snapshot.Models[event.Model] = addDimension(snapshot.Models[event.Model], detail, cost)
 }
-
 func addDimension(value DimensionSnapshot, detail RequestDetail, cost float64) DimensionSnapshot {
 	value.TotalRequests++
 	if detail.Failed {

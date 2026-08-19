@@ -321,3 +321,85 @@ func TestAccountSnapshotsRangesAggregatesMultipleWindowsInOnePass(t *testing.T) 
 		t.Fatalf("empty range = %+v", ranges[2])
 	}
 }
+
+func TestSnapshotWindowUsesPrecomputedAggregatesAndLimitsDetails(t *testing.T) {
+	previousEnabled := StatisticsEnabled()
+	SetStatisticsEnabled(true)
+	t.Cleanup(func() { SetStatisticsEnabled(previousEnabled) })
+
+	stats := NewRequestStatistics()
+	if errConfigure := stats.Configure(Options{StoragePath: filepath.Join(t.TempDir(), "usage.jsonl"), RetentionDays: 365, MaxRecords: 100}); errConfigure != nil {
+		t.Fatalf("Configure() error = %v", errConfigure)
+	}
+
+	now := time.Now().UTC()
+	for _, event := range []struct {
+		at        time.Time
+		cost      float64
+		reason    string
+		estimated bool
+	}{
+		{at: now.Add(-2 * time.Hour), cost: 0.25},
+		{at: now.Add(-2 * 24 * time.Hour), cost: 0.5, reason: "cache_write_tokens_unreported", estimated: true},
+		{at: now.Add(-10 * 24 * time.Hour), cost: 1},
+	} {
+		stats.Record(context.Background(), coreusage.Record{
+			Provider:    "openai",
+			Model:       "gpt-5.6",
+			AuthID:      "account",
+			RequestedAt: event.at,
+			Detail:      coreusage.Detail{InputTokens: 10, TotalTokens: 10},
+			Billing: coreusage.Billing{
+				Currency: "USD",
+				Priced:   true,
+				Reason:   event.reason,
+				TotalUSD: event.cost,
+				Pricing:  coreusage.PricingSnapshot{Estimated: event.estimated},
+			},
+		})
+	}
+
+	snapshot, cache := stats.SnapshotWindow("7d", 1)
+	if !cache.Precomputed || cache.Window != "7d" || cache.AgeSeconds < 0 {
+		t.Fatalf("cache status = %+v", cache)
+	}
+	if snapshot.TotalRequests != 2 || math.Abs(snapshot.TotalCostUSD-0.75) > 1e-12 {
+		t.Fatalf("7d snapshot = requests:%d cost:%f", snapshot.TotalRequests, snapshot.TotalCostUSD)
+	}
+	if !snapshot.Estimated || !snapshot.CacheWriteUnreported {
+		t.Fatalf("estimate flags = estimated:%t cache_write_unreported:%t", snapshot.Estimated, snapshot.CacheWriteUnreported)
+	}
+	if len(snapshot.APIs["openai"].Models["gpt-5.6"].Details) != 1 {
+		t.Fatalf("details count = %d, want 1", len(snapshot.APIs["openai"].Models["gpt-5.6"].Details))
+	}
+	if len(snapshot.CostByDay) != 2 {
+		t.Fatalf("cost_by_day buckets = %d, want 2", len(snapshot.CostByDay))
+	}
+}
+
+func TestSnapshotWindowRefreshesAfterClear(t *testing.T) {
+	previousEnabled := StatisticsEnabled()
+	SetStatisticsEnabled(true)
+	t.Cleanup(func() { SetStatisticsEnabled(previousEnabled) })
+
+	stats := NewRequestStatistics()
+	if errConfigure := stats.Configure(Options{StoragePath: filepath.Join(t.TempDir(), "usage.jsonl"), RetentionDays: 365, MaxRecords: 100}); errConfigure != nil {
+		t.Fatalf("Configure() error = %v", errConfigure)
+	}
+	stats.Record(context.Background(), coreusage.Record{
+		Provider:    "openai",
+		Model:       "gpt-5.6",
+		RequestedAt: time.Now().UTC(),
+		Detail:      coreusage.Detail{InputTokens: 10, TotalTokens: 10},
+		Billing:     coreusage.Billing{Currency: "USD", Priced: true, TotalUSD: 1},
+	})
+	if snapshot, _ := stats.SnapshotWindow("24h", 0); snapshot.TotalRequests != 1 {
+		t.Fatalf("before clear requests = %d", snapshot.TotalRequests)
+	}
+	if errClear := stats.Clear(); errClear != nil {
+		t.Fatalf("Clear() error = %v", errClear)
+	}
+	if snapshot, _ := stats.SnapshotWindow("24h", 0); snapshot.TotalRequests != 0 {
+		t.Fatalf("after clear requests = %d", snapshot.TotalRequests)
+	}
+}

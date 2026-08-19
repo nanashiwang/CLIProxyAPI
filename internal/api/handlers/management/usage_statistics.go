@@ -17,6 +17,8 @@ import (
 const (
 	maximumUsageImportBytes   = 256 << 20
 	maximumUsageAccountRanges = 500
+	defaultUsageDetailsLimit  = 50
+	maximumUsageDetailsLimit  = 200
 )
 
 type usageExportPayload struct {
@@ -44,12 +46,33 @@ type usageAccountRangesPayload struct {
 
 // GetUsageStatistics returns retained persistent usage statistics.
 func (h *Handler) GetUsageStatistics(c *gin.Context) {
+	stats := internalusage.GetRequestStatistics()
+	if rawWindow := strings.TrimSpace(c.Query("range")); rawWindow != "" {
+		window, ok := normalizeUsageWindow(rawWindow)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_usage_range", "message": "range must be 24h, 7d, 30d, or all"})
+			return
+		}
+		detailsLimit, errLimit := parseUsageDetailsLimit(c.Query("details_limit"))
+		if errLimit != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_details_limit", "message": errLimit.Error()})
+			return
+		}
+		snapshot, cache := stats.SnapshotWindow(window, detailsLimit)
+		c.JSON(http.StatusOK, gin.H{
+			"usage":           snapshot,
+			"failed_requests": snapshot.FailureCount,
+			"storage":         stats.Status(),
+			"cache":           cache,
+		})
+		return
+	}
+
 	from, to, errRange := parseUsageTimeRange(c)
 	if errRange != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_time_range", "message": errRange.Error()})
 		return
 	}
-	stats := internalusage.GetRequestStatistics()
 	snapshot := stats.SnapshotRange(from, to)
 	c.JSON(http.StatusOK, gin.H{
 		"usage":           snapshot,
@@ -168,6 +191,33 @@ func (h *Handler) DeleteUsageStatistics(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func normalizeUsageWindow(value string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "24h", "today":
+		return "24h", true
+	case "7d", "7days":
+		return "7d", true
+	case "30d", "30days":
+		return "30d", true
+	case "all":
+		return "all", true
+	default:
+		return "", false
+	}
+}
+
+func parseUsageDetailsLimit(value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultUsageDetailsLimit, nil
+	}
+	limit, errParse := strconv.Atoi(value)
+	if errParse != nil || limit < 0 || limit > maximumUsageDetailsLimit {
+		return 0, fmt.Errorf("details_limit must be between 0 and %d", maximumUsageDetailsLimit)
+	}
+	return limit, nil
 }
 
 func parseUsageTimeRange(c *gin.Context) (time.Time, time.Time, error) {
