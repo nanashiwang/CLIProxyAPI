@@ -13,7 +13,9 @@
 - 默认开启商业模式。
 - CPA 日志总量默认限制为 512 MB，避免磁盘被无限占满。
 - 密钥不写入 Git 仓库。
-- 安装后使用统一命令升级。
+- 安装后使用统一命令升级，升级命令每次都会刷新自身和个人 Release 地址。
+- 管理面板固定从个人仓库 Release 更新，避免误用上游旧版本。
+- 默认开启持久化使用统计。
 
 ## 前置条件
 
@@ -56,13 +58,45 @@ openssl rand -hex 32
 
 不要把真实的 `/root/cpa-node.env` 提交到 Git。
 
-## 更新 CPA
+## 更新 CPA 和管理面板
 
 ```bash
 update-cliproxyapi
 ```
 
-更新命令会从个人 Release 下载最新版并重启服务。
+更新命令会执行以下操作：
+
+1. 刷新个人 Release 安装器，避免服务器保留旧版安装器。
+2. 确保管理面板仓库为 `nanashiwang/Cli-Proxy-API-Management-Center`。
+3. 确保持久化使用统计已开启。
+4. 执行后端升级、`systemctl daemon-reload` 和服务重启。
+5. 服务启动后由 CPA 自动检查并更新 `management.html`。
+
+如果是旧节点，第一次先执行一次迁移命令；执行成功后，以后仍然直接使用 `update-cliproxyapi`：
+
+```bash
+curl --retry 5 --retry-all-errors -fsSL \
+  https://raw.githubusercontent.com/nanashiwang/CLIProxyAPI/main/deploy/cpa-node/update-node.sh | bash
+```
+
+## 批量更新多个节点
+
+建议使用 SSH 密钥，不要在脚本中保存服务器密码。创建一个本地清单，例如 `servers.tsv`：
+
+```text
+# 节点	地址	端口
+cpa025	38.244.50.196	22
+cpa026	203.0.113.26	22
+cpa027	203.0.113.27	22
+```
+
+执行：
+
+```bash
+bash deploy/cpa-node/update-many.sh servers.tsv
+```
+
+脚本会逐台执行更新，单台失败不会中断剩余节点，最后汇总成功和失败数量。
 
 ## 检查
 

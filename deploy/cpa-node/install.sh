@@ -9,6 +9,8 @@ INSTALLER_PATH="/usr/local/sbin/cliproxyapi-installer"
 INSTALL_DIR="/root/cliproxyapi"
 CONFIG_PATH="${INSTALL_DIR}/config.yaml"
 SERVICE_PATH="/etc/systemd/system/cliproxyapi.service"
+PANEL_REPOSITORY="https://github.com/nanashiwang/Cli-Proxy-API-Management-Center"
+UPDATE_SCRIPT_URL="https://raw.githubusercontent.com/nanashiwang/CLIProxyAPI/main/deploy/cpa-node/update-node.sh"
 
 log() {
   printf '[cpa-node] %s\n' "$*"
@@ -81,6 +83,7 @@ configure_cpa() {
   CPA_COMMERCIAL_MODE="${CPA_COMMERCIAL_MODE}" \
   CPA_LOG_LIMIT_MB="${CPA_LOG_LIMIT_MB}" \
   CPA_ERROR_LOG_MAX_FILES="${CPA_ERROR_LOG_MAX_FILES}" \
+  CPA_PANEL_REPOSITORY="${PANEL_REPOSITORY}" \
   python3 - <<'PY'
 import json
 import os
@@ -168,6 +171,7 @@ text = set_top_level(text, "port", int(os.environ["CPA_PORT"]))
 text = set_nested(text, "remote-management", "allow-remote", "true")
 text = set_nested(text, "remote-management", "secret-key", quoted(os.environ["CPA_MANAGEMENT_KEY"]))
 text = set_nested(text, "remote-management", "disable-control-panel", "false")
+text = set_nested(text, "remote-management", "panel-github-repository", quoted(os.environ["CPA_PANEL_REPOSITORY"]))
 text = set_api_keys(text, api_keys)
 text = set_top_level(text, "commercial-mode", os.environ["CPA_COMMERCIAL_MODE"])
 text = set_top_level(text, "logging-to-file", "true")
@@ -362,12 +366,16 @@ EOF_NGINX
 }
 
 install_update_command() {
-  cat >/usr/local/sbin/update-cliproxyapi <<'EOF_UPDATE'
+  cat >/usr/local/sbin/update-cliproxyapi <<EOF_UPDATE
 #!/usr/bin/env bash
 set -Eeuo pipefail
-/usr/local/sbin/cliproxyapi-installer upgrade
-systemctl restart cliproxyapi
-systemctl is-active --quiet cliproxyapi
+UPDATE_SCRIPT_URL="${UPDATE_SCRIPT_URL}"
+tmp_path="\$(mktemp)"
+trap 'rm -f "\${tmp_path}"' EXIT
+curl --retry 5 --retry-all-errors -fsSL "\${UPDATE_SCRIPT_URL}" -o "\${tmp_path}"
+bash -n "\${tmp_path}"
+install -m 0755 "\${tmp_path}" /usr/local/sbin/cpa-node-update
+exec /usr/local/sbin/cpa-node-update
 EOF_UPDATE
   chmod 0755 /usr/local/sbin/update-cliproxyapi
 }
