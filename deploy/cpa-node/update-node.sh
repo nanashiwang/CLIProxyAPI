@@ -9,7 +9,7 @@ INSTALLER_PATH="/usr/local/sbin/cliproxyapi-installer"
 INSTALLER_URL="https://raw.githubusercontent.com/nanashiwang/cliproxyapi-installer/refs/heads/master/cliproxyapi-installer"
 UPDATE_SCRIPT_URL="https://raw.githubusercontent.com/nanashiwang/CLIProxyAPI/main/deploy/cpa-node/update-node.sh"
 PANEL_REPOSITORY="https://github.com/nanashiwang/Cli-Proxy-API-Management-Center"
-RELEASE_API_URL="https://api.github.com/repos/nanashiwang/CLIProxyAPI/releases/latest"
+LATEST_CHECKSUMS_URL="https://github.com/nanashiwang/CLIProxyAPI/releases/latest/download/checksums.txt"
 
 log() {
   printf '[cpa-update] %s\n' "$*"
@@ -40,7 +40,7 @@ refresh_installer() {
 
 
 wait_for_release_asset() {
-  local arch asset_variant asset_suffix expected_pattern metadata result
+  local arch asset_variant asset_suffix expected_pattern checksums result
   case "$(uname -m)" in
     x86_64 | amd64) arch="amd64" ;;
     aarch64 | arm64) arch="aarch64" ;;
@@ -55,23 +55,25 @@ wait_for_release_asset() {
   [[ "${asset_variant}" == "no-plugin" ]] && asset_suffix="_no-plugin"
   expected_pattern="_linux_${arch}${asset_suffix}.tar.gz"
 
-  log "waiting for the latest Release asset matching ${expected_pattern}"
+  log "waiting for the latest published asset matching ${expected_pattern}"
   for attempt in $(seq 1 40); do
-    metadata="$(curl --retry 3 --retry-all-errors -fsSL "${RELEASE_API_URL}" || true)"
-    if [[ -n "${metadata}" ]]; then
+    checksums="$(curl --connect-timeout 10 --max-time 60 --retry 3 -fsSL "${LATEST_CHECKSUMS_URL}" 2>/dev/null || true)"
+    if [[ -n "${checksums}" ]]; then
       result="$(python3 -c '
-import json, sys
+import sys
 pattern = sys.argv[1]
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    raise SystemExit(1)
-tag = str(data.get("tag_name") or "").removeprefix("v")
-assets = [str(item.get("name") or "") for item in data.get("assets") or []]
-matched = next((name for name in assets if name.endswith(pattern)), "")
-if tag and matched:
-    print(f"{tag}|{matched}")
-' "${expected_pattern}" <<<"${metadata}" 2>/dev/null || true)"
+for line in sys.stdin:
+    parts = line.split()
+    if len(parts) < 2:
+        continue
+    filename = parts[-1]
+    prefix = "CLIProxyAPI_"
+    if filename.startswith(prefix) and filename.endswith(pattern):
+        version = filename[len(prefix):-len(pattern)]
+        if version:
+            print(f"{version}|{filename}")
+            break
+' "${expected_pattern}" <<<"${checksums}" 2>/dev/null || true)"
       if [[ -n "${result}" ]]; then
         RELEASE_VERSION="${result%%|*}"
         RELEASE_ASSET="${result#*|}"
@@ -81,7 +83,7 @@ if tag and matched:
       fi
     fi
     if [[ "${attempt}" -eq 40 ]]; then
-      fail "latest Release is incomplete: missing asset matching ${expected_pattern}"
+      fail "latest published Release is incomplete: missing asset matching ${expected_pattern}"
     fi
     sleep 15
   done
