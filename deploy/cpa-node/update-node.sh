@@ -9,6 +9,7 @@ INSTALLER_PATH="/usr/local/sbin/cliproxyapi-installer"
 INSTALLER_URL="https://raw.githubusercontent.com/nanashiwang/cliproxyapi-installer/refs/heads/master/cliproxyapi-installer"
 UPDATE_SCRIPT_URL="https://raw.githubusercontent.com/nanashiwang/CLIProxyAPI/main/deploy/cpa-node/update-node.sh"
 PANEL_REPOSITORY="https://github.com/nanashiwang/Cli-Proxy-API-Management-Center"
+RELEASE_API_URL="https://api.github.com/repos/nanashiwang/CLIProxyAPI/releases/latest"
 
 log() {
   printf '[cpa-update] %s\n' "$*"
@@ -35,6 +36,55 @@ refresh_installer() {
   bash -n "${tmp_path}"
   install -m 0755 "${tmp_path}" "${INSTALLER_PATH}"
   rm -f "${tmp_path}"
+}
+
+
+wait_for_release_asset() {
+  local arch asset_variant asset_suffix expected_pattern metadata result
+  case "$(uname -m)" in
+    x86_64 | amd64) arch="amd64" ;;
+    aarch64 | arm64) arch="aarch64" ;;
+    *) fail "unsupported Linux architecture: $(uname -m)" ;;
+  esac
+
+  asset_variant="default"
+  if [[ -r "${INSTALL_DIR}/asset-variant.txt" ]]; then
+    asset_variant="$(tr -d '[:space:]' < "${INSTALL_DIR}/asset-variant.txt")"
+  fi
+  asset_suffix=""
+  [[ "${asset_variant}" == "no-plugin" ]] && asset_suffix="_no-plugin"
+  expected_pattern="_linux_${arch}${asset_suffix}.tar.gz"
+
+  log "waiting for the latest Release asset matching ${expected_pattern}"
+  for attempt in $(seq 1 40); do
+    metadata="$(curl --retry 3 --retry-all-errors -fsSL "${RELEASE_API_URL}" || true)"
+    if [[ -n "${metadata}" ]]; then
+      result="$(python3 -c '
+import json, sys
+pattern = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+tag = str(data.get("tag_name") or "").removeprefix("v")
+assets = [str(item.get("name") or "") for item in data.get("assets") or []]
+matched = next((name for name in assets if name.endswith(pattern)), "")
+if tag and matched:
+    print(f"{tag}|{matched}")
+' "${expected_pattern}" <<<"${metadata}" 2>/dev/null || true)"
+      if [[ -n "${result}" ]]; then
+        RELEASE_VERSION="${result%%|*}"
+        RELEASE_ASSET="${result#*|}"
+        export RELEASE_VERSION RELEASE_ASSET
+        log "release ready: ${RELEASE_VERSION} (${RELEASE_ASSET})"
+        return 0
+      fi
+    fi
+    if [[ "${attempt}" -eq 40 ]]; then
+      fail "latest Release is incomplete: missing asset matching ${expected_pattern}"
+    fi
+    sleep 15
+  done
 }
 
 set_config_value() {
@@ -112,6 +162,9 @@ update_cpa() {
   trap 'systemctl start cliproxyapi || true' EXIT
   log "upgrading CLIProxyAPI from the personal Release"
   "${INSTALLER_PATH}" upgrade
+  local installed_version="unknown"
+  [[ -r "${INSTALL_DIR}/version.txt" ]] && installed_version="$(tr -d '[:space:]' < "${INSTALL_DIR}/version.txt")"
+  [[ "${installed_version}" == "${RELEASE_VERSION}" ]] || fail "version verification failed: expected ${RELEASE_VERSION}, got ${installed_version}"
   systemctl daemon-reload
   systemctl start cliproxyapi
   systemctl is-active --quiet cliproxyapi
@@ -138,6 +191,7 @@ main() {
   refresh_installer
   set_config_value
   install_self_updating_command
+  wait_for_release_asset
   update_cpa
   verify
 }
