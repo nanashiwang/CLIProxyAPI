@@ -969,5 +969,9 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesStream(c *gin.Context, flush
 			framer.Flush(c.Writer)
 			_, _ = c.Writer.Write([]byte("\n"))
 		},
+		WriteTEEEvent: func(event string, payload []byte) {
+			framer.Flush(c.Writer)
+			_, _ = fmt.Fprintf(c.Writer, "event: tee.%s\ndata: %s\n\n", event, payload)
+		},
 	})
 }

@@ -289,6 +289,9 @@ func antigravityCredentialScope(prefix, secret string) string {
 // The underlying Transport is always shared so keep-alive connections survive across
 // requests instead of forcing a fresh TCP + TLS handshake every time.
 func newAntigravityHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
+	if helps.ContextUsesPoO(ctx) {
+		return helps.NewProxyAwareHTTPClient(ctx, cfg, auth, timeout)
+	}
 	// Native Antigravity reuses one transport across requests. Opt into a
 	// credential-scoped proxy transport only here so other providers keep their
 	// existing lifecycle and different OAuth identities remain isolated.

@@ -157,6 +157,20 @@ redis-usage-queue-retention-seconds: 60
 # Per-entry proxy-url also supports "direct" or "none" to bypass both the global proxy-url and environment proxies explicitly.
 proxy-url: ""
 
+# Route supported HTTPS model traffic through a Proof-of-Observation parent gateway.
+# auth-mode "none" is accepted only for a loopback HTTP gateway; use "mtls" remotely.
+poo-parent-gateway:
+  enabled: false
+  required: true
+  url: "http://127.0.0.1:15005/v1/proof/relay"
+  auth-mode: "none"
+  timeout: "10m"
+  max-body-bytes: 67108864
+  # ca-file: "/path/to/ca.pem"
+  # cert-file: "/path/to/client.pem"
+  # key-file: "/path/to/client-key.pem"
+  # server-name: "poo-gateway.example.com"
+
 # When true, unprefixed model requests only use credentials without a prefix (except when prefix == model name).
 force-model-prefix: false
 

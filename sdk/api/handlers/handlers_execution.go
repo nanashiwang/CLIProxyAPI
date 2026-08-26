@@ -99,6 +99,14 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 	rawResponseHeaders := cloneHeader(resp.Headers)
 	responseHeaders := downstreamHeadersFromExecutor(rawResponseHeaders, PassthroughHeadersEnabled(h.Cfg))
 	body, responseHeaders := h.applyResponseInterceptors(ctx, lifecycle.requestID(), responseProtocol, normalizedModel, originalRequestedModel, executedOpts, rawResponseHeaders, responseHeaders, executedOpts.OriginalRequest, executedReq.Payload, resp.Payload, http.StatusOK, execOptions.SkipInterceptorPluginID)
+	body, proofErr := h.finishPoONonStream(body, rawResponseHeaders)
+	if responseHeaders != nil {
+		responseHeaders.Del("X-CPA-Internal-PoO-Record")
+	}
+	if proofErr != nil {
+		lifecycle.completeError(ctx, proofErr)
+		return nil, nil, proofErr
+	}
 	lifecycle.complete(pluginapi.RequestCompletionSucceeded, http.StatusOK, nil)
 	return body, responseHeaders, nil
 }

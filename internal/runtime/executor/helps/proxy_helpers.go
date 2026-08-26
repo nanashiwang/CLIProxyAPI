@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/poo"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
@@ -29,6 +30,13 @@ func NewProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 	httpClient := &http.Client{}
 	if timeout > 0 {
 		httpClient.Timeout = timeout
+	}
+
+	// PoO must run before local proxy selection. The selected proxy URL is passed
+	// to the Parent Gateway as request metadata instead of being dialed locally.
+	if rt, ok := ctx.Value("cliproxy.roundtripper").(http.RoundTripper); ok && poo.IsPoOTransport(rt) {
+		httpClient.Transport = rt
+		return httpClient
 	}
 
 	// Priority 1: Use auth.ProxyURL if configured
@@ -76,4 +84,13 @@ func buildProxyTransport(proxyURL string) *http.Transport {
 		return nil
 	}
 	return transport
+}
+
+// ContextUsesPoO reports whether the selected execution transport is the PoO relay.
+func ContextUsesPoO(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	rt, _ := ctx.Value("cliproxy.roundtripper").(http.RoundTripper)
+	return poo.IsPoOTransport(rt)
 }

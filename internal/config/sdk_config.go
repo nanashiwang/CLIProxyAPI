@@ -9,6 +9,9 @@ type SDKConfig struct {
 	// ProxyURL is the URL of an optional proxy server to use for outbound requests.
 	ProxyURL string `yaml:"proxy-url" json:"proxy-url"`
 
+	// PoOParentGateway routes supported HTTPS model requests through an AWS Nitro Enclave proof gateway.
+	PoOParentGateway PoOParentGatewayConfig `yaml:"poo-parent-gateway" json:"poo-parent-gateway"`
+
 	// DisableImageGeneration controls whether the built-in image_generation tool is injected/allowed.
 	//
 	// Supported values:
