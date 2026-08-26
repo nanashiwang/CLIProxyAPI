@@ -451,15 +451,36 @@ func (b *frameBody) Read(p []byte) (int, error) {
 }
 
 func (b *frameBody) Close() error {
+	// Executors may stop reading as soon as they observe an application-level
+	// terminal event (for example response.completed). The PoO proof follows that
+	// event in RESP_TRAILER, so drain the framed response before closing instead
+	// of treating a normal early Close as a missing proof.
+	var drainErr error
+	if !b.done && b.source != nil {
+		buffer := make([]byte, 32*1024)
+		for !b.done {
+			_, err := b.Read(buffer)
+			if err == nil {
+				continue
+			}
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			drainErr = err
+			break
+		}
+	}
 	if !b.done {
-		b.record.finish(nil, &Error{Message: "PoO response body closed before proof trailer", Submitted: true})
+		drainErr = &Error{Message: "PoO response body closed before proof trailer", Submitted: true}
+		b.record.finish(nil, drainErr)
 		b.done = true
 	}
 	if b.cancel != nil {
 		b.cancel()
 	}
+	var closeErr error
 	if b.source != nil {
-		return b.source.Close()
+		closeErr = b.source.Close()
 	}
-	return nil
+	return errors.Join(drainErr, closeErr)
 }

@@ -176,3 +176,37 @@ func TestTransportMissingTrailerIsRequestScoped(t *testing.T) {
 		t.Fatalf("AwaitResult error = %v, want PoO error", err)
 	}
 }
+
+func TestTransportCloseDrainsProofTrailer(t *testing.T) {
+	proof := []byte(`{"pcr0":"drained-proof"}`)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _, _ = readFrame(r.Body)
+		_, _, _ = readFrame(r.Body)
+		writeGatewayResponse(t, w, http.StatusOK, []byte("data: terminal-event\n\n"), proof)
+	}))
+	defer gateway.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", bytes.NewReader([]byte(`{}`)))
+	resp, err := NewTransport(gatewayConfig(gateway.URL), "", "", nil).RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordID := TakeRecordID(resp.Header)
+
+	// Simulate an executor that stops after its application-level terminal event
+	// and closes before consuming the framed RESP_TRAILER itself.
+	buffer := make([]byte, 8)
+	if _, err = resp.Body.Read(buffer); err != nil {
+		t.Fatal(err)
+	}
+	if err = resp.Body.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	gotProof, err := AwaitResult(recordID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotProof, proof) {
+		t.Fatalf("proof = %s, want %s", gotProof, proof)
+	}
+}
