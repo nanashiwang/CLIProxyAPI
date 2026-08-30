@@ -99,6 +99,11 @@ func (s *Service) commitConfigUpdate(newCfg *config.Config) configCommit {
 	if newCfg == nil {
 		return configCommit{}
 	}
+	newCfg.SanitizeOpenCode()
+	if errValidate := newCfg.ValidateOpenCode(); errValidate != nil {
+		log.WithError(errValidate).Warn("rejected config update with invalid OpenCode settings")
+		return configCommit{}
+	}
 	if errValidate := newCfg.ValidateCredentialWeights(); errValidate != nil {
 		log.WithError(errValidate).Warn("rejected config update with invalid credential weights")
 		return configCommit{}
@@ -162,6 +167,10 @@ func (s *Service) applyConfigRuntime(ctx context.Context, commit configCommit, s
 	if errContext := ctx.Err(); errContext != nil {
 		return false
 	}
+	s.reconcileOpenCodeConfigAuths(registrationCtx, cfg)
+	if errContext := ctx.Err(); errContext != nil {
+		return false
+	}
 	var auths []*coreauth.Auth
 	if s.coreManager != nil {
 		auths = s.coreManager.List()
@@ -177,6 +186,7 @@ func (s *Service) applyConfigRuntime(ctx context.Context, commit configCommit, s
 	if synthesizeConfigAuths {
 		s.registerConfigAPIKeyAuths(registrationCtx, cfg)
 	}
+	s.syncOpenCodeCatalog(cfg)
 	if errContext := ctx.Err(); errContext != nil {
 		return false
 	}

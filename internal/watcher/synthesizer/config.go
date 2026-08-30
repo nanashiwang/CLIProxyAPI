@@ -54,6 +54,8 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 	out = append(out, s.synthesizeXAIKeys(ctx)...)
 	// OpenAI-compat
 	out = append(out, s.synthesizeOpenAICompat(ctx)...)
+	// OpenCode Zen/Go
+	out = append(out, s.synthesizeOpenCodeKeys(ctx)...)
 	// Vertex-compat
 	out = append(out, s.synthesizeVertexCompat(ctx)...)
 
@@ -377,6 +379,77 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 			}
 			out = append(out, a)
 		}
+	}
+	return out
+}
+
+// synthesizeOpenCodeKeys creates one shared-provider auth per configured key.
+func (s *ConfigSynthesizer) synthesizeOpenCodeKeys(ctx *SynthesisContext) []*coreauth.Auth {
+	cfg := ctx.Config
+	if cfg == nil || !cfg.OpenCode.Enabled {
+		return nil
+	}
+	out := make([]*coreauth.Auth, 0, len(cfg.OpenCode.Zen.APIKeyEntries)+len(cfg.OpenCode.Go.APIKeyEntries)+1)
+	preferredTier := strings.ToLower(strings.TrimSpace(cfg.OpenCode.Prefer))
+	addTier := func(tierName string, tier config.OpenCodeTierConfig) {
+		for i := range tier.APIKeyEntries {
+			entry := tier.APIKeyEntries[i]
+			key := strings.TrimSpace(entry.APIKey)
+			if key == "" {
+				continue
+			}
+			base := strings.TrimSpace(tier.BaseURL)
+			id, token := ctx.IDGenerator.Next("opencode:"+tierName+":apikey", key, base, strings.TrimSpace(entry.ProxyURL))
+			attrs := map[string]string{
+				"source":       fmt.Sprintf("config:opencode-%s[%s]", tierName, token),
+				"provider_key": "opencode",
+				"tier":         tierName,
+				"base_url":     base,
+				"api_key":      key,
+				"config_index": strconv.Itoa(i),
+				"auth_kind":    "apikey",
+			}
+			priority := entry.Priority
+			if priority == 0 && tierName == preferredTier {
+				priority = 1
+			}
+			if priority != 0 {
+				attrs["priority"] = strconv.Itoa(priority)
+			}
+			addWeightToAttrs(entry.Weight, attrs)
+			addConfigHeadersToAttrs(tier.Headers, attrs)
+			addConfigHeadersToAttrs(entry.Headers, attrs)
+			metadata := map[string]any{}
+			if entry.DisableCooling != nil {
+				metadata["disable_cooling"] = *entry.DisableCooling
+			}
+			addRequestRetryToMetadata(entry.RequestRetry, metadata)
+			addRequestScopedErrorsToMetadata(entry.RequestScopedErrors, metadata)
+			a := &coreauth.Auth{ID: id, Provider: "opencode", Label: "opencode-" + tierName, Prefix: "", Status: coreauth.StatusActive, ProxyURL: strings.TrimSpace(entry.ProxyURL), Attributes: attrs, Metadata: metadata, CreatedAt: ctx.Now, UpdatedAt: ctx.Now}
+			ApplyAuthExcludedModelsMeta(a, cfg, nil, "apikey")
+			if len(a.Metadata) == 0 {
+				a.Metadata = nil
+			}
+			out = append(out, a)
+		}
+	}
+	addTier("zen", cfg.OpenCode.Zen)
+	addTier("go", cfg.OpenCode.Go)
+	if cfg.OpenCode.Anonymous {
+		base := strings.TrimSpace(cfg.OpenCode.Zen.BaseURL)
+		id, token := ctx.IDGenerator.Next("opencode:anonymous", base)
+		attrs := map[string]string{
+			"source":       fmt.Sprintf("config:opencode-anonymous[%s]", token),
+			"provider_key": "opencode",
+			"tier":         "zen",
+			"base_url":     base,
+			"api_key":      "public",
+			"anonymous":    "true",
+			"auth_kind":    "apikey",
+		}
+		attrs["priority"] = "-1"
+		a := &coreauth.Auth{ID: id, Provider: "opencode", Label: "opencode-anonymous", Status: coreauth.StatusActive, Attributes: attrs, CreatedAt: ctx.Now, UpdatedAt: ctx.Now}
+		out = append(out, a)
 	}
 	return out
 }

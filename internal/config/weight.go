@@ -46,6 +46,11 @@ func validateCredentialWeightYAML(data []byte) error {
 				return errValidate
 			}
 		}
+		if name == "opencode" {
+			if errValidate := validateOpenCodeWeightNodes(value); errValidate != nil {
+				return errValidate
+			}
+		}
 	}
 	return nil
 }
@@ -141,11 +146,43 @@ func (cfg *Config) ValidateCredentialWeights() error {
 			return fmt.Errorf("xai-api-key[%d].weight: %w", index, errValidate)
 		}
 	}
+	for tierName, tier := range map[string]OpenCodeTierConfig{"zen": cfg.OpenCode.Zen, "go": cfg.OpenCode.Go} {
+		for keyIndex := range tier.APIKeyEntries {
+			if errValidate := ValidateCredentialWeight(tier.APIKeyEntries[keyIndex].Weight); errValidate != nil {
+				return fmt.Errorf("opencode.%s.api-key-entries[%d].weight: %w", tierName, keyIndex, errValidate)
+			}
+		}
+	}
 	for providerIndex := range cfg.OpenAICompatibility {
 		for keyIndex := range cfg.OpenAICompatibility[providerIndex].APIKeyEntries {
 			weight := cfg.OpenAICompatibility[providerIndex].APIKeyEntries[keyIndex].Weight
 			if errValidate := ValidateCredentialWeight(weight); errValidate != nil {
 				return fmt.Errorf("openai-compatibility[%d].api-key-entries[%d].weight: %w", providerIndex, keyIndex, errValidate)
+			}
+		}
+	}
+	return nil
+}
+
+func validateOpenCodeWeightNodes(mapping *yaml.Node) error {
+	if mapping == nil || mapping.Kind != yaml.MappingNode {
+		return nil
+	}
+	for index := 0; index+1 < len(mapping.Content); index += 2 {
+		name := mapping.Content[index].Value
+		if name != "zen" && name != "go" {
+			continue
+		}
+		tier := mapping.Content[index+1]
+		if tier == nil || tier.Kind != yaml.MappingNode {
+			continue
+		}
+		for tierIndex := 0; tierIndex+1 < len(tier.Content); tierIndex += 2 {
+			if tier.Content[tierIndex].Value != "api-key-entries" {
+				continue
+			}
+			if errValidate := validateWeightSequenceNode(tier.Content[tierIndex+1], "opencode."+name+".api-key-entries"); errValidate != nil {
+				return errValidate
 			}
 		}
 	}

@@ -128,7 +128,32 @@ PackyCode 为本软件用户提供了特别优惠：使用<a href="https://www.p
 - 支持 OpenAI Codex 多账户轮询
 - 支持 Grok Build 多账户轮询
 - 通过配置接入上游 OpenAI 兼容提供商（例如 OpenRouter）
+- 原生接入 OpenCode Zen/Go，支持多 Key、优先级、权重、代理、故障转移和动态模型目录
 - 可复用的 Go SDK（见 `docs/sdk-usage_CN.md`）
+
+## OpenCode Zen/Go
+
+CPA 以原生 Provider 方式接入 [OpenCode Zen/Go](https://opencode.ai/)，复用 CPA 的认证、负载均衡、冷却、重试、代理、协议转换和用量统计能力，不嵌入独立的 HTTP Gateway。
+
+在 `config.yaml` 中启用：
+
+```yaml
+opencode:
+  enabled: true
+  prefer: go
+  anonymous: false
+  refresh-seconds: 300
+  zen:
+    base-url: "https://opencode.ai/zen"
+    api-key-entries:
+      - api-key: "..."
+  go:
+    base-url: "https://opencode.ai/zen/go"
+    api-key-entries:
+      - api-key: "..."
+```
+
+支持 `/v1/chat/completions`、`/v1/responses` 和 `/v1/messages`。模型能力来自 OpenCode 公共目录并定期刷新；`anonymous: true` 时仅暴露目录标记为免费的模型。为避免凭据 SSRF，Zen/Go 上游地址固定为上述两个官方端点，不支持自定义域名。
 
 ## 新手入门
 

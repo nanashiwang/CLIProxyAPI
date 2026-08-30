@@ -669,6 +669,49 @@ func (m GeminiModel) GetIsCompat() bool        { return m.IsCompat }
 
 func (m GeminiModel) GetThinking() *registry.ThinkingSupport { return m.Thinking }
 
+// OpenCodeConfig configures the native OpenCode Zen/Go provider.
+// OpenCode credentials are kept in the core auth manager so normal routing,
+// cooldown, proxy, retry, and usage behavior remains shared with other providers.
+type OpenCodeConfig struct {
+	// Enabled enables OpenCode Zen/Go credentials and model discovery.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Prefer selects the first tier to try when both tiers expose a model.
+	Prefer string `yaml:"prefer,omitempty" json:"prefer,omitempty"`
+	// Anonymous allows the public Zen channel to serve free models.
+	Anonymous bool `yaml:"anonymous,omitempty" json:"anonymous,omitempty"`
+	// RefreshSeconds controls the OpenCode model catalog refresh interval.
+	RefreshSeconds int `yaml:"refresh-seconds,omitempty" json:"refresh-seconds,omitempty"`
+	// Zen configures the OpenCode Zen endpoint and its keys.
+	Zen OpenCodeTierConfig `yaml:"zen" json:"zen"`
+	// Go configures the OpenCode Go endpoint and its keys.
+	Go OpenCodeTierConfig `yaml:"go" json:"go"`
+	// ProtocolOverrides maps a model ID, or tier/model ID, to chat, responses, or anthropic.
+	ProtocolOverrides map[string]string `yaml:"protocol-overrides,omitempty" json:"protocol-overrides,omitempty"`
+}
+
+// OpenCodeTierConfig configures one OpenCode service tier.
+type OpenCodeTierConfig struct {
+	BaseURL       string            `yaml:"base-url,omitempty" json:"base-url,omitempty"`
+	APIKeyEntries []OpenCodeAPIKey  `yaml:"api-key-entries,omitempty" json:"api-key-entries,omitempty"`
+	Headers       map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+}
+
+// OpenCodeAPIKey represents an OpenCode key with optional routing and proxy settings.
+type OpenCodeAPIKey struct {
+	APIKey   string            `yaml:"api-key" json:"api-key"`
+	Priority int               `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Weight   *int              `yaml:"weight,omitempty" json:"weight,omitempty"`
+	ProxyURL string            `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
+	Headers  map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	// DisableCooling overrides the global cooling policy for this credential when set.
+	DisableCooling *bool `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
+	// RequestRetry optionally overrides the global request-retry for this credential.
+	// Nil or a negative value means use the global request-retry; zero disables retries.
+	RequestRetry *int `yaml:"request-retry,omitempty" json:"request-retry,omitempty"`
+	// RequestScopedErrors configures custom classification rules for upstream errors.
+	RequestScopedErrors []RequestScopedErrorRule `yaml:"request-scoped-errors,omitempty" json:"request-scoped-errors,omitempty"`
+}
+
 // OpenAICompatibility represents the configuration for OpenAI API compatibility
 // with external providers, allowing model aliases to be routed through OpenAI API format.
 type OpenAICompatibility struct {

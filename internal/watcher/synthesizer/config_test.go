@@ -1095,3 +1095,78 @@ func TestConfigSynthesizer_RequestScopedErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigSynthesizer_OpenCodeKeyOverrides(t *testing.T) {
+	disableCooling := true
+	retry := 0
+	synth := NewConfigSynthesizer()
+	ctx := &SynthesisContext{
+		Config: &config.Config{OpenCode: config.OpenCodeConfig{
+			Enabled: true,
+			Prefer:  "zen",
+			Zen: config.OpenCodeTierConfig{BaseURL: config.DefaultOpenCodeZenURL, APIKeyEntries: []config.OpenCodeAPIKey{{
+				APIKey:         "zen-key",
+				DisableCooling: &disableCooling,
+				RequestRetry:   &retry,
+				RequestScopedErrors: []config.RequestScopedErrorRule{{
+					Status: 429,
+					Action: "continue-and-cooldown",
+					Match:  []string{"rate limit"},
+				}},
+			}}},
+		}},
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	}
+	auths, err := synth.Synthesize(ctx)
+	if err != nil || len(auths) != 1 {
+		t.Fatalf("Synthesize() = %d auths, %v", len(auths), err)
+	}
+	metadata := auths[0].Metadata
+	if metadata["disable_cooling"] != true || metadata["request_retry"] != 0 {
+		t.Fatalf("override metadata = %#v", metadata)
+	}
+	rules, ok := metadata["request_scoped_errors"].([]config.RequestScopedErrorRule)
+	if !ok || len(rules) != 1 || rules[0].Status != 429 {
+		t.Fatalf("request scoped errors = %#v", metadata["request_scoped_errors"])
+	}
+}
+
+func TestConfigSynthesizer_OpenCodeTierAndAnonymousPolicy(t *testing.T) {
+	synth := NewConfigSynthesizer()
+	ctx := &SynthesisContext{
+		Config: &config.Config{OpenCode: config.OpenCodeConfig{
+			Enabled:   true,
+			Prefer:    "go",
+			Anonymous: true,
+			Zen:       config.OpenCodeTierConfig{BaseURL: config.DefaultOpenCodeZenURL, APIKeyEntries: []config.OpenCodeAPIKey{{APIKey: "zen-key"}}},
+			Go:        config.OpenCodeTierConfig{BaseURL: config.DefaultOpenCodeGoURL, APIKeyEntries: []config.OpenCodeAPIKey{{APIKey: "go-key"}}},
+		}},
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	}
+	auths, err := synth.Synthesize(ctx)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	if len(auths) != 3 {
+		t.Fatalf("synthesized auth count = %d, want 3", len(auths))
+	}
+	seen := map[string]*coreauth.Auth{}
+	for _, auth := range auths {
+		seen[auth.Label] = auth
+		if auth.Provider != "opencode" {
+			t.Fatalf("provider = %q, want opencode", auth.Provider)
+		}
+	}
+	if seen["opencode-go"].Attributes["priority"] != "1" {
+		t.Fatalf("preferred Go priority = %q, want 1", seen["opencode-go"].Attributes["priority"])
+	}
+	if seen["opencode-zen"].Attributes["priority"] != "" {
+		t.Fatalf("non-preferred Zen priority = %q, want empty", seen["opencode-zen"].Attributes["priority"])
+	}
+	anonymous := seen["opencode-anonymous"]
+	if anonymous.Attributes["anonymous"] != "true" || anonymous.Attributes["api_key"] != "public" || anonymous.Attributes["priority"] != "-1" {
+		t.Fatalf("anonymous auth attributes = %#v", anonymous.Attributes)
+	}
+}

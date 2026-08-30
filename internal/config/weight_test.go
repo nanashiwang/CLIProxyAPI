@@ -60,3 +60,28 @@ func TestAPIKeyWeightParsingAndZeroPersistence(t *testing.T) {
 		t.Fatalf("saved config does not preserve explicit zero weight:\n%s", saved)
 	}
 }
+
+func TestParseConfigBytesOpenCodeWeightValidation(t *testing.T) {
+	valid := `opencode:
+  enabled: true
+  anonymous: true
+  zen:
+    api-key-entries:
+      - api-key: key
+        weight: 2
+`
+	if _, err := ParseConfigBytes([]byte(valid)); err != nil {
+		t.Fatalf("valid OpenCode weight rejected: %v", err)
+	}
+	invalid := `opencode:
+  enabled: true
+  anonymous: true
+  zen:
+    api-key-entries:
+      - api-key: key
+        weight: not-an-integer
+`
+	if _, err := ParseConfigBytes([]byte(invalid)); err == nil {
+		t.Fatal("invalid OpenCode weight accepted")
+	}
+}

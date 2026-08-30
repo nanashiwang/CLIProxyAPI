@@ -6,15 +6,20 @@ package cliproxy
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 
 	configaccess "github.com/router-for-me/CLIProxyAPI/v7/internal/access/config_access"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/opencode"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
+	log "github.com/sirupsen/logrus"
 )
 
 // Builder constructs a Service instance with customizable providers.
@@ -53,6 +58,9 @@ type Builder struct {
 
 	// pluginHost owns dynamic plugin lifecycle and adapters.
 	pluginHost *pluginhost.Host
+
+	// openCodeCatalog overrides the shared native OpenCode model catalog.
+	openCodeCatalog *opencode.Catalog
 
 	// postAuthHook is called after auth record creation and before persistence.
 	postAuthHook coreauth.PostAuthHook
@@ -161,6 +169,12 @@ func (b *Builder) WithPluginHost(host *pluginhost.Host) *Builder {
 	return b
 }
 
+// WithOpenCodeCatalog overrides the shared native OpenCode model catalog.
+func (b *Builder) WithOpenCodeCatalog(catalog *opencode.Catalog) *Builder {
+	b.openCodeCatalog = catalog
+	return b
+}
+
 // WithServerOptions appends server configuration options used during construction.
 func (b *Builder) WithServerOptions(opts ...api.ServerOption) *Builder {
 	b.serverOptions = append(b.serverOptions, opts...)
@@ -186,6 +200,21 @@ func (b *Builder) WithPostAuthHook(hook coreauth.PostAuthHook) *Builder {
 	return b
 }
 
+func newOpenCodeCatalog(cfg *config.Config) *opencode.Catalog {
+	if cfg == nil || strings.TrimSpace(cfg.ProxyURL) == "" {
+		return opencode.NewCatalog()
+	}
+	proxyURL := strings.TrimSpace(cfg.ProxyURL)
+	transport, _, errBuild := proxyutil.BuildHTTPTransport(proxyURL)
+	if errBuild != nil || transport == nil {
+		if errBuild != nil {
+			log.WithError(errBuild).Warnf("OpenCode catalog proxy is invalid; using the default HTTP transport: %s", proxyutil.Redact(proxyURL))
+		}
+		return opencode.NewCatalog()
+	}
+	return opencode.NewCatalogWithHTTPClient(&http.Client{Transport: transport}, opencode.DefaultCapabilitiesURL)
+}
+
 // Build validates inputs, applies defaults, and returns a ready-to-run service.
 func (b *Builder) Build() (*Service, error) {
 	if b.cfg == nil {
@@ -193,6 +222,10 @@ func (b *Builder) Build() (*Service, error) {
 	}
 	if b.configPath == "" {
 		return nil, fmt.Errorf("cliproxy: configuration path is required")
+	}
+	b.cfg.SanitizeOpenCode()
+	if errValidate := b.cfg.ValidateOpenCode(); errValidate != nil {
+		return nil, fmt.Errorf("cliproxy: validate OpenCode config: %w", errValidate)
 	}
 	if errValidate := b.cfg.ValidateCredentialWeights(); errValidate != nil {
 		return nil, fmt.Errorf("cliproxy: validate credential weights: %w", errValidate)
@@ -264,20 +297,28 @@ func (b *Builder) Build() (*Service, error) {
 		coreManager.SetPluginScheduler(pluginHost)
 	}
 
+	openCodeCatalog := b.openCodeCatalog
+	if openCodeCatalog == nil {
+		openCodeCatalog = newOpenCodeCatalog(b.cfg)
+	}
+
 	service := &Service{
-		cfg:                 b.cfg,
-		configPath:          b.configPath,
-		tokenProvider:       tokenProvider,
-		apiKeyProvider:      apiKeyProvider,
-		watcherFactory:      watcherFactory,
-		hooks:               b.hooks,
-		authManager:         authManager,
-		accessManager:       accessManager,
-		coreManager:         coreManager,
-		cooldownStateStore:  cooldownStateStore,
-		pluginHost:          pluginHost,
-		appliedRoutingState: appliedRoutingState,
-		serverOptions:       append([]api.ServerOption(nil), b.serverOptions...),
+		cfg:                  b.cfg,
+		configPath:           b.configPath,
+		tokenProvider:        tokenProvider,
+		apiKeyProvider:       apiKeyProvider,
+		watcherFactory:       watcherFactory,
+		hooks:                b.hooks,
+		authManager:          authManager,
+		accessManager:        accessManager,
+		coreManager:          coreManager,
+		cooldownStateStore:   cooldownStateStore,
+		pluginHost:           pluginHost,
+		openCodeCatalog:      openCodeCatalog,
+		openCodeCatalogOwned: b.openCodeCatalog == nil,
+		openCodeCatalogProxy: strings.TrimSpace(b.cfg.ProxyURL),
+		appliedRoutingState:  appliedRoutingState,
+		serverOptions:        append([]api.ServerOption(nil), b.serverOptions...),
 	}
 	if b.postAuthHook != nil {
 		service.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))

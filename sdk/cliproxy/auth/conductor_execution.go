@@ -1157,6 +1157,11 @@ func publishSelectedAuthMetadata(meta map[string]any, auth *Auth) {
 			callback(authIndex)
 		}
 	}
+	if auth.Attributes != nil {
+		if tier := strings.TrimSpace(auth.Attributes["tier"]); tier != "" {
+			meta[cliproxyexecutor.SelectedAuthTierMetadataKey] = tier
+		}
+	}
 }
 
 func (m *Manager) executorFor(provider string) ProviderExecutor {

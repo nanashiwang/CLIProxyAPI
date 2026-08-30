@@ -256,6 +256,26 @@ routing:
   # How long session-to-auth bindings are retained. Default: 1h
   session-affinity-ttl: "1h"
 
+# Native OpenCode Zen/Go provider. Disabled by default.
+# Only the fixed OpenCode endpoints below are accepted; arbitrary upstream URLs are rejected.
+# The model catalog is refreshed periodically and failed refreshes keep the last good snapshot.
+# opencode:
+#   enabled: false
+#   prefer: go # zen or go
+#   anonymous: false # expose only catalog models marked free on the public Zen channel
+#   refresh-seconds: 300
+#   zen:
+#     base-url: "https://opencode.ai/zen"
+#     api-key-entries:
+#       - api-key: "..."
+#         proxy-url: ""
+#   go:
+#     base-url: "https://opencode.ai/zen/go"
+#     api-key-entries:
+#       - api-key: "..."
+#         proxy-url: ""
+#   protocol-overrides: {} # model or tier/model -> chat, responses, anthropic
+
 # Codex provider behavior.
 codex:
   # When true, and routing.strategy is fill-first or routing.session-affinity is true,

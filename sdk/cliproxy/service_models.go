@@ -8,6 +8,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/modelconfig"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/opencode"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
@@ -144,6 +145,9 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	case "kimi":
 		models = registry.GetKimiModels()
 		models = applyExcludedModels(models, excluded)
+	case "opencode":
+		models = s.openCodeModelsForAuth(a)
+		models = applyExcludedModels(models, excluded)
 	case "xai":
 		models = registry.GetXAIModels()
 		if entry := s.resolveConfigXAIKey(a); entry != nil {
@@ -277,6 +281,56 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	}
 
 	GlobalModelRegistry().UnregisterClient(a.ID)
+}
+
+func (s *Service) openCodeModelsForAuth(auth *coreauth.Auth) []*ModelInfo {
+	if s == nil || auth == nil {
+		return nil
+	}
+	catalog := s.currentOpenCodeCatalog()
+	if catalog == nil {
+		return nil
+	}
+	tier := opencode.TierZen
+	if auth.Attributes != nil && strings.EqualFold(strings.TrimSpace(auth.Attributes["tier"]), string(opencode.TierGo)) {
+		tier = opencode.TierGo
+	}
+	anonymous := auth.Attributes != nil && strings.EqualFold(strings.TrimSpace(auth.Attributes["anonymous"]), "true")
+	now := time.Now().Unix()
+	models := catalog.Models(tier)
+	out := make([]*ModelInfo, 0, len(models))
+	for _, item := range models {
+		modelID := strings.TrimSpace(item.ID)
+		if modelID == "" || (anonymous && !item.AnonymousAllowed) {
+			continue
+		}
+		created := item.Created
+		if created <= 0 {
+			created = now
+		}
+		info := &ModelInfo{
+			ID:                        modelID,
+			Object:                    "model",
+			Created:                   created,
+			OwnedBy:                   "opencode",
+			Type:                      "opencode",
+			Name:                      strings.TrimSpace(item.Name),
+			DisplayName:               strings.TrimSpace(item.Name),
+			Description:               strings.TrimSpace(item.Description),
+			ContextLength:             item.ContextLength,
+			MaxCompletionTokens:       item.MaxCompletionTokens,
+			SupportedInputModalities:  append([]string(nil), item.InputModalities...),
+			SupportedOutputModalities: append([]string(nil), item.OutputModalities...),
+		}
+		if info.DisplayName == "" {
+			info.DisplayName = modelID
+		}
+		if item.Reasoning {
+			info.Thinking = modelconfig.NormalizeThinkingSupport(&registry.ThinkingSupport{Levels: []string{"low", "medium", "high"}})
+		}
+		out = append(out, info)
+	}
+	return out
 }
 
 // refreshModelRegistrationForAuth re-applies the latest model registration for
