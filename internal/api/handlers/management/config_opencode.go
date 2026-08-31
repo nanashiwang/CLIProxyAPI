@@ -93,6 +93,7 @@ func maskOpenCodeTier(tier config.OpenCodeTierConfig) config.OpenCodeTierConfig 
 func maskOpenCodeKey(entry config.OpenCodeAPIKey, index int) config.OpenCodeAPIKey {
 	apiKey := strings.TrimSpace(entry.APIKey)
 	entry.APIKey = ""
+	entry.Note = strings.TrimSpace(entry.Note)
 	entry.APIKeyConfigured = apiKey != ""
 	entry.APIKeyPreview = util.HideAPIKey(apiKey)
 	entry.SourceIndex = &index

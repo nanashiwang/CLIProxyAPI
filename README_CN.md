@@ -147,13 +147,17 @@ opencode:
     base-url: "https://opencode.ai/zen"
     api-key-entries:
       - api-key: "..."
+        note: "团队 A 主账号"
   go:
     base-url: "https://opencode.ai/zen/go"
     api-key-entries:
       - api-key: "..."
+        note: "备用账号 01"
 ```
 
 支持 `/v1/chat/completions`、`/v1/responses` 和 `/v1/messages`。模型能力来自 OpenCode 公共目录并定期刷新；`anonymous: true` 时仅暴露目录标记为免费的模型。为避免凭据 SSRF，Zen/Go 上游地址固定为上述两个官方端点，不支持自定义域名。
+
+同一通道可以配置多个密钥，用于多账号轮询、权重分流和故障切换；`note` 仅用于标记账号归属或用途，便于在管理中心排查问题。
 
 ## 新手入门
 

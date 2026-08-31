@@ -699,6 +699,8 @@ type OpenCodeTierConfig struct {
 // OpenCodeAPIKey represents an OpenCode key with optional routing and proxy settings.
 type OpenCodeAPIKey struct {
 	APIKey string `yaml:"api-key" json:"api-key"`
+	// Note identifies the account or purpose of this credential for operators.
+	Note string `yaml:"note,omitempty" json:"note,omitempty"`
 	// The following fields are management API metadata and must never be persisted.
 	APIKeyConfigured bool              `yaml:"-" json:"api-key-configured,omitempty"`
 	APIKeyPreview    string            `yaml:"-" json:"api-key-preview,omitempty"`

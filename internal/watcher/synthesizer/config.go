@@ -409,6 +409,9 @@ func (s *ConfigSynthesizer) synthesizeOpenCodeKeys(ctx *SynthesisContext) []*cor
 				"config_index": strconv.Itoa(i),
 				"auth_kind":    "apikey",
 			}
+			if note := strings.TrimSpace(entry.Note); note != "" {
+				attrs["note"] = note
+			}
 			priority := entry.Priority
 			if priority == 0 && tierName == preferredTier {
 				priority = 1

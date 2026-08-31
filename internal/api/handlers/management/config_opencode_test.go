@@ -20,7 +20,7 @@ func TestGetOpenCodeMasksCredentials(t *testing.T) {
 			Prefer:  "zen",
 			Zen: config.OpenCodeTierConfig{
 				BaseURL:       config.DefaultOpenCodeZenURL,
-				APIKeyEntries: []config.OpenCodeAPIKey{{APIKey: "zen-secret-key"}},
+				APIKeyEntries: []config.OpenCodeAPIKey{{APIKey: "zen-secret-key", Note: "  张三账号  "}},
 				Headers: map[string]string{
 					"Authorization": "Bearer header-secret",
 					"X-Region":      "cn",
@@ -47,6 +47,9 @@ func TestGetOpenCodeMasksCredentials(t *testing.T) {
 	entry := body.OpenCode.Zen.APIKeyEntries[0]
 	if entry.APIKey != "" || !entry.APIKeyConfigured || entry.APIKeyPreview == "" || entry.SourceIndex == nil {
 		t.Fatalf("unexpected masked OpenCode response: %#v", entry)
+	}
+	if entry.Note != "张三账号" {
+		t.Fatalf("unexpected OpenCode note: %q", entry.Note)
 	}
 	if strings.Contains(rec.Body.String(), "zen-secret-key") || strings.Contains(rec.Body.String(), "header-secret") {
 		t.Fatalf("response leaked OpenCode credential: %s", rec.Body.String())
@@ -96,7 +99,7 @@ func TestPutOpenCodeRetainsMaskedCredentialsBySourceIndex(t *testing.T) {
 		},
 		Go: config.OpenCodeTierConfig{BaseURL: config.DefaultOpenCodeGoURL},
 	}}, path, nil)
-	payload := []byte(`{"opencode":{"enabled":true,"prefer":"zen","zen":{"base-url":"https://opencode.ai/zen","api-key-entries":[{"api-key":"","api-key-configured":true,"source-index":1}]},"go":{"base-url":"https://opencode.ai/zen/go","api-key-entries":[]}}}`)
+	payload := []byte(`{"opencode":{"enabled":true,"prefer":"zen","zen":{"base-url":"https://opencode.ai/zen","api-key-entries":[{"api-key":"","api-key-configured":true,"source-index":1,"note":"第二个账号"}]},"go":{"base-url":"https://opencode.ai/zen/go","api-key-entries":[]}}}`)
 
 	rec := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(rec)
@@ -110,6 +113,9 @@ func TestPutOpenCodeRetainsMaskedCredentialsBySourceIndex(t *testing.T) {
 	if len(entries) != 1 || entries[0].APIKey != "second-key" {
 		t.Fatalf("masked credential was not retained by source index: %#v", entries)
 	}
+	if entries[0].Note != "第二个账号" {
+		t.Fatalf("note was not updated while retaining masked credential: %q", entries[0].Note)
+	}
 }
 
 func TestPutOpenCodeSanitizesAndPersists(t *testing.T) {
@@ -118,7 +124,7 @@ func TestPutOpenCodeSanitizesAndPersists(t *testing.T) {
 		t.Fatalf("create config: %v", err)
 	}
 	h := NewHandler(&config.Config{}, path, nil)
-	payload := []byte(`{"opencode":{"enabled":true,"prefer":"ZEN","anonymous":false,"zen":{"base-url":"","api-key-entries":[{"api-key":" zen-key ","weight":2}]},"go":{"base-url":""}}}`)
+	payload := []byte(`{"opencode":{"enabled":true,"prefer":"ZEN","anonymous":false,"zen":{"base-url":"","api-key-entries":[{"api-key":" zen-key ","note":"  备用账号  ","weight":2}]},"go":{"base-url":""}}}`)
 
 	rec := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(rec)
@@ -136,6 +142,9 @@ func TestPutOpenCodeSanitizesAndPersists(t *testing.T) {
 	}
 	if len(h.cfg.OpenCode.Zen.APIKeyEntries) != 1 || h.cfg.OpenCode.Zen.APIKeyEntries[0].APIKey != "zen-key" {
 		t.Fatalf("unexpected keys: %#v", h.cfg.OpenCode.Zen.APIKeyEntries)
+	}
+	if h.cfg.OpenCode.Zen.APIKeyEntries[0].Note != "备用账号" {
+		t.Fatalf("unexpected note: %q", h.cfg.OpenCode.Zen.APIKeyEntries[0].Note)
 	}
 }
 

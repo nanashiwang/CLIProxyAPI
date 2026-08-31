@@ -268,11 +268,13 @@ routing:
 #     base-url: "https://opencode.ai/zen"
 #     api-key-entries:
 #       - api-key: "..."
+#         note: "team A account"
 #         proxy-url: ""
 #   go:
 #     base-url: "https://opencode.ai/zen/go"
 #     api-key-entries:
 #       - api-key: "..."
+#         note: "backup account 01"
 #         proxy-url: ""
 #   protocol-overrides: {} # model or tier/model -> chat, responses, anthropic
 

@@ -109,6 +109,7 @@ func sanitizeOpenCodeTier(tier OpenCodeTierConfig, fallback string) OpenCodeTier
 	entries := make([]OpenCodeAPIKey, 0, len(tier.APIKeyEntries))
 	for _, entry := range tier.APIKeyEntries {
 		entry.APIKey = strings.TrimSpace(entry.APIKey)
+		entry.Note = strings.TrimSpace(entry.Note)
 		entry.APIKeyConfigured = false
 		entry.APIKeyPreview = ""
 		entry.SourceIndex = nil

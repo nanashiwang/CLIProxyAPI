@@ -1106,6 +1106,7 @@ func TestConfigSynthesizer_OpenCodeKeyOverrides(t *testing.T) {
 			Prefer:  "zen",
 			Zen: config.OpenCodeTierConfig{BaseURL: config.DefaultOpenCodeZenURL, APIKeyEntries: []config.OpenCodeAPIKey{{
 				APIKey:         "zen-key",
+				Note:           "张三账号",
 				DisableCooling: &disableCooling,
 				RequestRetry:   &retry,
 				RequestScopedErrors: []config.RequestScopedErrorRule{{
@@ -1121,6 +1122,9 @@ func TestConfigSynthesizer_OpenCodeKeyOverrides(t *testing.T) {
 	auths, err := synth.Synthesize(ctx)
 	if err != nil || len(auths) != 1 {
 		t.Fatalf("Synthesize() = %d auths, %v", len(auths), err)
+	}
+	if auths[0].Attributes["note"] != "张三账号" {
+		t.Fatalf("note attribute = %q", auths[0].Attributes["note"])
 	}
 	metadata := auths[0].Metadata
 	if metadata["disable_cooling"] != true || metadata["request_retry"] != 0 {
