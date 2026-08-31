@@ -698,11 +698,15 @@ type OpenCodeTierConfig struct {
 
 // OpenCodeAPIKey represents an OpenCode key with optional routing and proxy settings.
 type OpenCodeAPIKey struct {
-	APIKey   string            `yaml:"api-key" json:"api-key"`
-	Priority int               `yaml:"priority,omitempty" json:"priority,omitempty"`
-	Weight   *int              `yaml:"weight,omitempty" json:"weight,omitempty"`
-	ProxyURL string            `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
-	Headers  map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	APIKey string `yaml:"api-key" json:"api-key"`
+	// The following fields are management API metadata and must never be persisted.
+	APIKeyConfigured bool              `yaml:"-" json:"api-key-configured,omitempty"`
+	APIKeyPreview    string            `yaml:"-" json:"api-key-preview,omitempty"`
+	SourceIndex      *int              `yaml:"-" json:"source-index,omitempty"`
+	Priority         int               `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Weight           *int              `yaml:"weight,omitempty" json:"weight,omitempty"`
+	ProxyURL         string            `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
+	Headers          map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 	// DisableCooling overrides the global cooling policy for this credential when set.
 	DisableCooling *bool `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
 	// RequestRetry optionally overrides the global request-retry for this credential.
