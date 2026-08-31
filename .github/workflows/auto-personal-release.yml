@@ -1,9 +1,10 @@
 name: auto-personal-release
 
 on:
+  # Publish a personal release for every branch push; [skip release] remains the opt-out.
   push:
     branches:
-      - main
+      - '**'
 
 permissions:
   actions: write
