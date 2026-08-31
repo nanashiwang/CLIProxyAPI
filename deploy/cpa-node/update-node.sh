@@ -11,7 +11,8 @@ CONFIG_PATH="${INSTALL_DIR}/config.yaml"
 METADATA_DIR="${INSTALL_DIR}"
 INSTALLER_PATH="/usr/local/sbin/cliproxyapi-installer"
 INSTALLER_URL="https://raw.githubusercontent.com/nanashiwang/cliproxyapi-installer/refs/heads/master/cliproxyapi-installer"
-UPDATE_SCRIPT_URL="https://raw.githubusercontent.com/nanashiwang/CLIProxyAPI/main/deploy/cpa-node/update-node.sh"
+# Keep the updater on the personal deployment branch that publishes the personal Release.
+UPDATE_SCRIPT_URL="https://raw.githubusercontent.com/nanashiwang/CLIProxyAPI/feat/poo-gateway/deploy/cpa-node/update-node.sh"
 PANEL_REPOSITORY="https://github.com/nanashiwang/Cli-Proxy-API-Management-Center"
 LATEST_CHECKSUMS_URL="https://github.com/nanashiwang/CLIProxyAPI/releases/latest/download/checksums.txt"
 

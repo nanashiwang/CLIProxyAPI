@@ -10,7 +10,8 @@ INSTALL_DIR="/root/cliproxyapi"
 CONFIG_PATH="${INSTALL_DIR}/config.yaml"
 SERVICE_PATH="/etc/systemd/system/cliproxyapi.service"
 PANEL_REPOSITORY="https://github.com/nanashiwang/Cli-Proxy-API-Management-Center"
-UPDATE_SCRIPT_URL="https://raw.githubusercontent.com/nanashiwang/CLIProxyAPI/main/deploy/cpa-node/update-node.sh"
+# Keep the updater on the personal deployment branch that publishes the personal Release.
+UPDATE_SCRIPT_URL="https://raw.githubusercontent.com/nanashiwang/CLIProxyAPI/feat/poo-gateway/deploy/cpa-node/update-node.sh"
 
 log() {
   printf '[cpa-node] %s\n' "$*"
