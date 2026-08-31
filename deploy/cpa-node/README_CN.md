@@ -64,19 +64,27 @@ openssl rand -hex 32
 update-cliproxyapi
 ```
 
+更新命令会自动识别两种部署方式：
+
+- systemd 节点：`/root/cliproxyapi` + `cliproxyapi.service`。
+- Docker 节点：默认识别 `/opt/cpa` 下的 `cli-proxy-api` 容器；可通过 `CPA_DOCKER_DIR`、`CPA_DOCKER_CONTAINER` 覆盖。
+
 更新命令会执行以下操作：
 
-1. 刷新个人 Release 安装器，避免服务器保留旧版安装器。
+1. 等待个人 Release 的目标架构资产完整发布，并校验 SHA-256。
 2. 确保管理面板仓库为 `nanashiwang/Cli-Proxy-API-Management-Center`。
 3. 确保持久化使用统计已开启。
-4. 执行后端升级、`systemctl daemon-reload` 和服务重启。
-5. 服务启动后由 CPA 自动检查并更新 `management.html`。
+4. systemd 节点使用个人安装器升级；Docker 节点停止容器后替换二进制，并保存旧二进制备份。
+5. 重启服务后等待管理面板端口就绪，避免启动瞬间误报。
+6. 非 root 用户调用 `update-cliproxyapi` 时会自动通过 `sudo` 执行。
 
 如果是旧节点，第一次先执行一次迁移命令；执行成功后，以后仍然直接使用 `update-cliproxyapi`：
 
 ```bash
 curl --retry 5 --retry-all-errors -fsSL \
-  https://raw.githubusercontent.com/nanashiwang/CLIProxyAPI/main/deploy/cpa-node/update-node.sh | bash
+  https://raw.githubusercontent.com/nanashiwang/CLIProxyAPI/main/deploy/cpa-node/update-node.sh \
+  -o /tmp/cpa-node-update.sh
+sudo bash /tmp/cpa-node-update.sh
 ```
 
 ## 批量更新多个节点
