@@ -160,3 +160,27 @@ func TestEnsureTokenBreakdownDoesNotOverrideCanonicalZeroCacheRead(t *testing.T)
 		t.Fatalf("detail = %+v", detail)
 	}
 }
+
+func TestEnsureTokenBreakdownNormalizesLegacyCacheCreationAlias(t *testing.T) {
+	detail := EnsureTokenBreakdownForProvider(Detail{InputTokens: 10, OutputTokens: 2, CacheCreationTokens: 4}, "openai", "")
+	if detail.CacheWriteTokens != 4 || detail.CacheCreationTokens != 4 {
+		t.Fatalf("detail = %+v", detail)
+	}
+	if detail.TokenBreakdown.Input.CacheWriteTokens != 4 {
+		t.Fatalf("token breakdown = %+v", detail.TokenBreakdown)
+	}
+}
+
+func TestEnsureTokenBreakdownSynchronizesCanonicalCacheWriteField(t *testing.T) {
+	detail := EnsureTokenBreakdownForProvider(Detail{InputTokens: 10, OutputTokens: 2, CacheWriteTokens: 4}, "openai", "")
+	if detail.CacheWriteTokens != 4 || detail.CacheCreationTokens != 4 {
+		t.Fatalf("detail = %+v", detail)
+	}
+}
+
+func TestNormalizeCacheWriteTokensPrefersCanonicalField(t *testing.T) {
+	detail := NormalizeCacheWriteTokens(Detail{CacheWriteTokens: 4, CacheCreationTokens: 3})
+	if detail.CacheWriteTokens != 4 || detail.CacheCreationTokens != 4 {
+		t.Fatalf("detail = %+v", detail)
+	}
+}

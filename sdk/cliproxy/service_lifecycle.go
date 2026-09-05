@@ -9,8 +9,10 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/pricing"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	internalusage "github.com/router-for-me/CLIProxyAPI/v7/internal/usage"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -49,6 +51,14 @@ func (s *Service) Run(ctx context.Context) error {
 		s.homeMu.Unlock()
 	}()
 
+	if s.cfg != nil {
+		pricing.ConfigureDefault(s.cfg.Pricing, s.configPath)
+		internalusage.SetStatisticsEnabled(s.cfg.UsageStatisticsEnabled)
+		if errUsage := internalusage.ConfigureDefault(s.cfg.UsageStatistics, s.configPath); errUsage != nil {
+			log.WithError(errUsage).Warn("failed to configure persistent usage statistics")
+		}
+	}
+	pricing.StartDefaultUpdater(ctx)
 	usage.StartDefault(ctx)
 	homeEnabled := s.cfg != nil && s.cfg.Home.Enabled
 	if homeEnabled {

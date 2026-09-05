@@ -5,6 +5,7 @@ on:
     # run only against tags
     tags:
       - '*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -86,9 +87,9 @@ jobs:
           } > "$updated_notes_file"
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$updated_notes_file"
+            gh release edit "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes-file "$updated_notes_file"
           else
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$updated_notes_file"
+            gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes-file "$updated_notes_file"
           fi
 
   build-hosted:
@@ -643,7 +644,12 @@ jobs:
 
   publish-checksums:
     runs-on: ubuntu-latest
-    if: always()
+    if: >-
+      always() &&
+      needs.build-hosted.result == 'success' &&
+      needs.build-linux-glibc.result == 'success' &&
+      needs.build-linux-no-plugin.result == 'success' &&
+      needs.build-freebsd.result == 'success'
     needs:
       - build-hosted
       - build-linux-glibc
@@ -667,4 +673,19 @@ jobs:
             exit 0
           fi
           sha256sum "${archives[@]}" | sort -k2 > checksums.txt
-          gh release upload "$GITHUB_REF_NAME" checksums.txt --clobber
+          uploaded=0
+          for attempt in 1 2 3 4 5; do
+            if gh release upload "$GITHUB_REF_NAME" checksums.txt --clobber; then
+              uploaded=1
+              break
+            fi
+            if [[ "$attempt" -eq 5 ]]; then
+              echo "Failed to upload final checksums after ${attempt} attempts" >&2
+              exit 1
+            fi
+            sleep_seconds=$((attempt * 5))
+            echo "Checksum upload failed; retrying in ${sleep_seconds}s"
+            sleep "$sleep_seconds"
+          done
+          [[ "$uploaded" -eq 1 ]]
+          gh release edit "$GITHUB_REF_NAME" --draft=false

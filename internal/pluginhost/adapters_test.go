@@ -19,6 +19,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
@@ -1691,6 +1692,84 @@ func TestHasStreamInterceptorsReflectsActiveStreamInterceptors(t *testing.T) {
 	}
 }
 
+func TestStreamChunkRequestBodyPolicyBySchemaVersion(t *testing.T) {
+	var legacyGot, modernGot pluginapi.StreamChunkInterceptRequest
+	host := newHostWithRecords(
+		capabilityRecord{
+			id: "legacy",
+			plugin: pluginapi.Plugin{
+				SchemaVersion: 2,
+				Capabilities: pluginapi.Capabilities{
+					StreamChunkInterceptor: responseInterceptorFunc{
+						interceptStreamChunk: func(ctx context.Context, req pluginapi.StreamChunkInterceptRequest) (pluginapi.StreamChunkInterceptResponse, error) {
+							legacyGot = req
+							return pluginapi.StreamChunkInterceptResponse{Body: req.Body}, nil
+						},
+					},
+				},
+			},
+		},
+		capabilityRecord{
+			id: "modern",
+			plugin: pluginapi.Plugin{
+				SchemaVersion: pluginabi.SchemaVersionStreamChunkOmitRequestBody,
+				Capabilities: pluginapi.Capabilities{
+					StreamChunkInterceptor: responseInterceptorFunc{
+						interceptStreamChunk: func(ctx context.Context, req pluginapi.StreamChunkInterceptRequest) (pluginapi.StreamChunkInterceptResponse, error) {
+							modernGot = req
+							return pluginapi.StreamChunkInterceptResponse{Body: req.Body}, nil
+						},
+					},
+				},
+			},
+		},
+	)
+	if !host.StreamChunkPayloadIncludesRequestBody() {
+		t.Fatal("StreamChunkPayloadIncludesRequestBody() = false, want true when legacy stream interceptor is active")
+	}
+
+	_ = host.InterceptStreamChunk(context.Background(), pluginapi.StreamChunkInterceptRequest{
+		OriginalRequest: []byte("original"),
+		RequestBody:     []byte("request"),
+		Body:            []byte("chunk"),
+		ChunkIndex:      0,
+	})
+	if string(legacyGot.OriginalRequest) != "original" || string(legacyGot.RequestBody) != "request" {
+		t.Fatalf("legacy payload bodies = original:%q body:%q, want preserved", legacyGot.OriginalRequest, legacyGot.RequestBody)
+	}
+	if len(modernGot.OriginalRequest) != 0 || len(modernGot.RequestBody) != 0 {
+		t.Fatalf("modern payload bodies = original:%q body:%q, want omitted", modernGot.OriginalRequest, modernGot.RequestBody)
+	}
+
+	legacyGot = pluginapi.StreamChunkInterceptRequest{}
+	modernGot = pluginapi.StreamChunkInterceptRequest{}
+	_ = host.InterceptStreamChunk(context.Background(), pluginapi.StreamChunkInterceptRequest{
+		OriginalRequest: []byte("original"),
+		RequestBody:     []byte("request"),
+		ChunkIndex:      pluginapi.StreamChunkHeaderInitIndex,
+	})
+	if string(legacyGot.OriginalRequest) != "original" || string(modernGot.OriginalRequest) != "original" {
+		t.Fatalf("header-init bodies not preserved: legacy=%q modern=%q", legacyGot.OriginalRequest, modernGot.OriginalRequest)
+	}
+
+	modernOnly := newHostWithRecords(capabilityRecord{
+		id: "modern-only",
+		plugin: pluginapi.Plugin{
+			SchemaVersion: pluginabi.SchemaVersionStreamChunkOmitRequestBody,
+			Capabilities: pluginapi.Capabilities{
+				StreamChunkInterceptor: responseInterceptorFunc{
+					interceptStreamChunk: func(ctx context.Context, req pluginapi.StreamChunkInterceptRequest) (pluginapi.StreamChunkInterceptResponse, error) {
+						return pluginapi.StreamChunkInterceptResponse{}, nil
+					},
+				},
+			},
+		},
+	})
+	if modernOnly.StreamChunkPayloadIncludesRequestBody() {
+		t.Fatal("StreamChunkPayloadIncludesRequestBody() = true, want false for schema v3+ only")
+	}
+}
+
 func TestHasRequestInterceptorsReflectsActiveRequestInterceptors(t *testing.T) {
 	responseOnly := newHostWithRecords(capabilityRecord{
 		id: "response",
@@ -2175,6 +2254,90 @@ func TestUsageAdapterNormalizesOmittedGenerateToTrue(t *testing.T) {
 	adapter.HandleUsage(context.Background(), coreusage.Record{Provider: "provider", Model: "gpt-5.4"})
 	if !gotGenerate {
 		t.Fatalf("plugin Generate = %v, want true for omitted field", gotGenerate)
+	}
+}
+
+func TestUsageAdapterExposesCanonicalCacheWriteTokens(t *testing.T) {
+	var gotDetail pluginapi.UsageDetail
+	plugin := usagePluginFunc(func(ctx context.Context, record pluginapi.UsageRecord) {
+		gotDetail = record.Detail
+	})
+	host := newHostWithRecords(capabilityRecord{
+		id: "usage-cache-write",
+		plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{
+			UsagePlugin: plugin,
+		}},
+	})
+	adapter := &usageAdapter{
+		host:     host,
+		pluginID: "usage-cache-write",
+	}
+
+	adapter.HandleUsage(context.Background(), coreusage.Record{
+		Provider: "openai",
+		Detail: coreusage.Detail{
+			InputTokens:         10,
+			OutputTokens:        2,
+			CacheCreationTokens: 4,
+		},
+	})
+	if gotDetail.CacheWriteTokens != 4 || gotDetail.CacheCreationTokens != 4 {
+		t.Fatalf("plugin cache write aliases = (%d, %d), want (4, 4)", gotDetail.CacheWriteTokens, gotDetail.CacheCreationTokens)
+	}
+}
+
+func TestUsageAdapterExposesBillingSnapshot(t *testing.T) {
+	var got pluginapi.UsageRecord
+	plugin := usagePluginFunc(func(ctx context.Context, record pluginapi.UsageRecord) {
+		got = record
+	})
+	host := newHostWithRecords(capabilityRecord{
+		id: "usage-billing",
+		plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{
+			UsagePlugin: plugin,
+		}},
+	})
+	adapter := &usageAdapter{
+		host:     host,
+		pluginID: "usage-billing",
+	}
+	calculatedAt := time.Date(2026, 8, 17, 1, 2, 3, 0, time.UTC)
+
+	adapter.HandleUsage(context.Background(), coreusage.Record{
+		Provider:            "openai",
+		Model:               "gpt-5.6",
+		ServiceTier:         "auto",
+		ResponseServiceTier: "priority",
+		Billing: coreusage.Billing{
+			Currency: "USD",
+			Priced:   true,
+			TotalUSD: 0.25,
+			Breakdown: coreusage.CostBreakdown{
+				InputUSD:      0.1,
+				OutputUSD:     0.12,
+				CacheReadUSD:  0.01,
+				CacheWriteUSD: 0.02,
+			},
+			Pricing: coreusage.PricingSnapshot{
+				Version:                 "sha256:test",
+				Source:                  "test",
+				MatchedModel:            "gpt-5.6",
+				MatchedProvider:         "openai",
+				ServiceTier:             "priority",
+				ContextThresholdTokens:  272_000,
+				UnitPricesUSDPerMillion: coreusage.UnitPrices{Input: 10, Output: 60, CacheRead: 1, CacheWrite: 12.5},
+				Estimated:               true,
+				CalculatedAt:            calculatedAt,
+			},
+		},
+	})
+
+	if got.ResponseServiceTier != "priority" || !got.Billing.Priced || got.Billing.TotalUSD != 0.25 {
+		t.Fatalf("usage record = %+v", got)
+	}
+	if got.Billing.Breakdown.CacheWriteUSD != 0.02 || got.Billing.Pricing.Version != "sha256:test" ||
+		got.Billing.Pricing.UnitPricesUSDPerMillion.Output != 60 || !got.Billing.Pricing.CalculatedAt.Equal(calculatedAt) {
+		t.Fatalf("billing = %+v", got.Billing)
 	}
 }
 

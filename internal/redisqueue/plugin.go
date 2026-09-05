@@ -65,6 +65,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 	}
 	responseServiceTier := strings.TrimSpace(record.ResponseServiceTier)
 	clientRequestMetadata := internallogging.GetClientRequestMetadata(ctx)
+	costUSD, costBreakdown, pricingSnapshot := pricedUsageFields(record.Billing)
 
 	usageDetail := coreusage.EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType)
 	tokens := tokenStats{
@@ -74,6 +75,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		CachedTokens:           usageDetail.CachedTokens,
 		CacheReadTokens:        usageDetail.CacheReadTokens,
 		CacheReadTokensPresent: true,
+		CacheWriteTokens:       usageDetail.CacheWriteTokens,
 		CacheCreationTokens:    usageDetail.CacheCreationTokens,
 		TotalTokens:            usageDetail.TotalTokens,
 	}
@@ -90,6 +92,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		TTFTMs:          record.TTFT.Milliseconds(),
 		Source:          record.Source,
 		AuthIndex:       record.AuthIndex,
+		AccessTokenHash: record.AccessTokenSHA256,
 		ClientIP:        clientRequestMetadata.ClientIP,
 		XForwardedFor:   clientRequestMetadata.XForwardedFor,
 		UserAgent:       clientRequestMetadata.UserAgent,
@@ -110,11 +113,16 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		Alias:               aliasName,
 		Endpoint:            resolveEndpoint(ctx),
 		AuthType:            authType,
+		AuthID:              strings.TrimSpace(record.AuthID),
 		APIKey:              apiKey,
 		RequestID:           requestID,
 		ReasoningEffort:     reasoningEffort,
 		ServiceTier:         serviceTier,
 		ResponseServiceTier: responseServiceTier,
+		Billing:             record.Billing,
+		CostUSD:             costUSD,
+		CostBreakdown:       costBreakdown,
+		Pricing:             pricingSnapshot,
 	})
 	if err != nil {
 		return
@@ -124,19 +132,34 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 
 type queuedUsageDetail struct {
 	requestDetail
-	AccountingVersion   int                      `json:"accounting_version"`
-	TokenBreakdown      coreusage.TokenBreakdown `json:"token_breakdown"`
-	Provider            string                   `json:"provider"`
-	ExecutorType        string                   `json:"executor_type"`
-	Model               string                   `json:"model"`
-	Alias               string                   `json:"alias"`
-	Endpoint            string                   `json:"endpoint"`
-	AuthType            string                   `json:"auth_type"`
-	APIKey              string                   `json:"api_key"`
-	RequestID           string                   `json:"request_id"`
-	ReasoningEffort     string                   `json:"reasoning_effort"`
-	ServiceTier         string                   `json:"service_tier"`
-	ResponseServiceTier string                   `json:"response_service_tier,omitempty"`
+	AccountingVersion   int                        `json:"accounting_version"`
+	TokenBreakdown      coreusage.TokenBreakdown   `json:"token_breakdown"`
+	Provider            string                     `json:"provider"`
+	ExecutorType        string                     `json:"executor_type"`
+	Model               string                     `json:"model"`
+	Alias               string                     `json:"alias"`
+	Endpoint            string                     `json:"endpoint"`
+	AuthType            string                     `json:"auth_type"`
+	AuthID              string                     `json:"auth_id"`
+	APIKey              string                     `json:"api_key"`
+	RequestID           string                     `json:"request_id"`
+	ReasoningEffort     string                     `json:"reasoning_effort"`
+	ServiceTier         string                     `json:"service_tier"`
+	ResponseServiceTier string                     `json:"response_service_tier,omitempty"`
+	Billing             coreusage.Billing          `json:"billing"`
+	CostUSD             *float64                   `json:"cost_usd,omitempty"`
+	CostBreakdown       *coreusage.CostBreakdown   `json:"cost_breakdown,omitempty"`
+	Pricing             *coreusage.PricingSnapshot `json:"pricing,omitempty"`
+}
+
+func pricedUsageFields(billing coreusage.Billing) (*float64, *coreusage.CostBreakdown, *coreusage.PricingSnapshot) {
+	if !billing.Priced {
+		return nil, nil, nil
+	}
+	total := billing.TotalUSD
+	breakdown := billing.Breakdown
+	pricing := billing.Pricing
+	return &total, &breakdown, &pricing
 }
 
 type requestDetail struct {
@@ -145,6 +168,7 @@ type requestDetail struct {
 	TTFTMs          int64       `json:"ttft_ms"`
 	Source          string      `json:"source"`
 	AuthIndex       string      `json:"auth_index"`
+	AccessTokenHash string      `json:"access_token_sha256,omitempty"`
 	ClientIP        string      `json:"client_ip"`
 	XForwardedFor   string      `json:"x_forwarded_for"`
 	UserAgent       string      `json:"user_agent"`
@@ -162,8 +186,10 @@ type tokenStats struct {
 	CachedTokens           int64 `json:"cached_tokens"`
 	CacheReadTokens        int64 `json:"cache_read_tokens"`
 	CacheReadTokensPresent bool  `json:"cache_read_tokens_present"`
-	CacheCreationTokens    int64 `json:"cache_creation_tokens"`
-	TotalTokens            int64 `json:"total_tokens"`
+	CacheWriteTokens       int64 `json:"cache_write_tokens"`
+	// CacheCreationTokens is retained for older usage consumers.
+	CacheCreationTokens int64 `json:"cache_creation_tokens"`
+	TotalTokens         int64 `json:"total_tokens"`
 }
 
 type failDetail struct {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,8 +45,39 @@ func collectCodexOutputItemDone(eventData []byte, outputItemsByIndex map[int64][
 	*outputItemsFallback = append(*outputItemsFallback, []byte(itemResult.Raw))
 }
 
+func hydrateCodexCompletedOutputItemIDs(eventData []byte, outputItems []gjson.Result, outputItemsByIndex map[int64][]byte) []byte {
+	patchedData := eventData
+	for outputIndex, outputItem := range outputItems {
+		itemData := []byte(outputItem.Raw)
+		itemID := gjson.GetBytes(itemData, "id")
+		if itemID.Exists() && itemID.Type != gjson.Null && (itemID.Type != gjson.String || strings.TrimSpace(itemID.String()) != "") {
+			continue
+		}
+
+		completedItem, ok := outputItemsByIndex[int64(outputIndex)]
+		if !ok {
+			continue
+		}
+		completedID := gjson.GetBytes(completedItem, "id")
+		if completedID.Type != gjson.String || strings.TrimSpace(completedID.String()) == "" {
+			continue
+		}
+
+		updatedData, errSet := sjson.SetRawBytes(patchedData, "response.output."+strconv.Itoa(outputIndex)+".id", []byte(completedID.Raw))
+		if errSet != nil {
+			continue
+		}
+		patchedData = updatedData
+	}
+	return patchedData
+}
+
 func patchCodexCompletedOutput(eventData []byte, outputItemsByIndex map[int64][]byte, outputItemsFallback [][]byte) []byte {
 	outputResult := gjson.GetBytes(eventData, "response.output")
+	if outputResult.Exists() && outputResult.IsArray() && len(outputResult.Array()) > 0 {
+		return hydrateCodexCompletedOutputItemIDs(eventData, outputResult.Array(), outputItemsByIndex)
+	}
+
 	shouldPatchOutput := (!outputResult.Exists() || !outputResult.IsArray() || len(outputResult.Array()) == 0) && (len(outputItemsByIndex) > 0 || len(outputItemsFallback) > 0)
 	if !shouldPatchOutput {
 		return eventData
@@ -128,6 +160,10 @@ func codexTerminalFailureStatus(body []byte) int {
 	errorType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.type").String()))
 	errorCode := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.code").String()))
 	switch {
+	case isCodexServerOverloadedError(body):
+		return http.StatusServiceUnavailable
+	case errorCode == "cyber_policy":
+		return http.StatusBadRequest
 	case errorType == "invalid_request_error", errorType == "bad_request_error":
 		return http.StatusBadRequest
 	case errorType == "authentication_error", errorCode == "invalid_api_key", errorCode == "unauthorized":
@@ -141,6 +177,19 @@ func codexTerminalFailureStatus(body []byte) int {
 	default:
 		return http.StatusBadGateway
 	}
+}
+
+func isCodexServerOverloadedError(errorBody []byte) bool {
+	if len(errorBody) == 0 {
+		return false
+	}
+	errorType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(errorBody, "error.type").String()))
+	errorCode := strings.ToLower(strings.TrimSpace(gjson.GetBytes(errorBody, "error.code").String()))
+	message := strings.ToLower(strings.TrimSpace(gjson.GetBytes(errorBody, "error.message").String()))
+	return errorType == "service_unavailable_error" ||
+		errorCode == "server_is_overloaded" ||
+		strings.Contains(message, "servers are currently overloaded") ||
+		strings.Contains(message, "system cpu overloaded")
 }
 
 func codexTerminalFailureBody(eventData []byte) ([]byte, bool) {

@@ -28,8 +28,10 @@ type Record struct {
 	APIKey       string
 	AuthID       string
 	AuthIndex    string
-	AuthType     string
-	Source       string
+	// AccessTokenSHA256 identifies the OAuth token version without exposing the token.
+	AccessTokenSHA256 string
+	AuthType          string
+	Source            string
 	// ReasoningEffort stores the translated upstream thinking level for request event logs.
 	ReasoningEffort string
 	// ServiceTier stores the client-requested service tier.
@@ -49,6 +51,8 @@ type Record struct {
 	Failed      bool
 	Fail        Failure
 	Detail      Detail
+	// Billing stores the request-time USD cost and pricing snapshot when pricing is enabled.
+	Billing Billing
 	// ResponseHeaders stores a snapshot of upstream response headers for usage sinks.
 	ResponseHeaders http.Header
 }
@@ -61,11 +65,13 @@ type Failure struct {
 
 // Detail holds the token usage breakdown.
 type Detail struct {
-	InputTokens         int64
-	OutputTokens        int64
-	ReasoningTokens     int64
-	CachedTokens        int64
-	CacheReadTokens     int64
+	InputTokens      int64
+	OutputTokens     int64
+	ReasoningTokens  int64
+	CachedTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	// CacheCreationTokens is a deprecated alias for CacheWriteTokens.
 	CacheCreationTokens int64
 	TotalTokens         int64
 	TokenBreakdown      TokenBreakdown
@@ -311,6 +317,24 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 	if m == nil {
 		return
 	}
+	// Normalize accounting and calculate billing before the record enters the async queue.
+	normalizedDetail := EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType)
+	if strings.TrimSpace(record.ServiceTier) == "" {
+		record.ServiceTier = strings.TrimSpace(record.RequestServiceTier)
+		if record.ServiceTier == "" {
+			record.ServiceTier = ServiceTierFromContext(ctx)
+		}
+	}
+	if strings.TrimSpace(record.ResponseServiceTier) == "" {
+		record.ResponseServiceTier = strings.TrimSpace(normalizedDetail.ResponseServiceTier)
+	}
+	billingRecord := record
+	billingRecord.Detail = normalizedDetail
+	record.Billing = calculateBilling(billingRecord)
+	if hasReportedTokenUsage(record.Detail) {
+		record.Detail = normalizedDetail
+	}
+
 	// ensure worker is running even if Start was not called explicitly
 	m.Start(context.Background())
 	m.mu.Lock()
@@ -321,6 +345,15 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 	m.queue = append(m.queue, queueItem{ctx: ctx, record: record})
 	m.mu.Unlock()
 	m.cond.Signal()
+}
+
+func hasReportedTokenUsage(detail Detail) bool {
+	if detail.InputTokens != 0 || detail.OutputTokens != 0 || detail.ReasoningTokens != 0 ||
+		detail.CachedTokens != 0 || detail.CacheReadTokens != 0 || detail.CacheWriteTokens != 0 ||
+		detail.CacheCreationTokens != 0 || detail.TotalTokens != 0 {
+		return true
+	}
+	return detail.TokenBreakdown.Valid() && detail.TokenBreakdown.TotalTokens != 0
 }
 
 func (m *Manager) run(ctx context.Context) {

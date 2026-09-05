@@ -324,6 +324,52 @@ func TestConvertCodexResponseToOpenAI_ToolCallOutputItemDoneFallbacks(t *testing
 	})
 }
 
+func TestConvertCodexResponseToOpenAI_ToolCallStateFallsBackFromUnknownItemID(t *testing.T) {
+	ctx := context.Background()
+	var param any
+
+	added := ConvertCodexResponseToOpenAI(
+		ctx,
+		"gpt-5.6-terra",
+		nil,
+		nil,
+		[]byte(`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"TaskCreate","arguments":""}}`),
+		&param,
+	)
+	if len(added) != 1 {
+		t.Fatalf("added chunks = %d, want 1", len(added))
+	}
+
+	done := ConvertCodexResponseToOpenAI(
+		ctx,
+		"gpt-5.6-terra",
+		nil,
+		nil,
+		[]byte(`data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"TaskCreate","arguments":"{\"subject\":\"test\"}"}}`),
+		&param,
+	)
+	if len(done) != 1 {
+		t.Fatalf("done chunks = %d, want 1", len(done))
+	}
+
+	addedName := gjson.GetBytes(added[0], "choices.0.delta.tool_calls.0.function.name").String()
+	doneName := gjson.GetBytes(done[0], "choices.0.delta.tool_calls.0.function.name").String()
+	if got := addedName + doneName; got != "TaskCreate" {
+		t.Fatalf("assembled tool name = %q, want %q", got, "TaskCreate")
+	}
+
+	toolCall := gjson.GetBytes(done[0], "choices.0.delta.tool_calls.0")
+	if toolCall.Get("id").Exists() || toolCall.Get("function.name").Exists() {
+		t.Fatalf("done chunk repeated tool identity: %s", toolCall.Raw)
+	}
+	if got := toolCall.Get("index").Int(); got != 0 {
+		t.Fatalf("done tool index = %d, want 0", got)
+	}
+	if got := toolCall.Get("function.arguments").String(); got != `{"subject":"test"}` {
+		t.Fatalf("done arguments = %q", got)
+	}
+}
+
 func TestConvertCodexResponseToOpenAINonStream_CustomToolCall(t *testing.T) {
 	ctx := context.Background()
 	raw := []byte(`{"type":"response.completed","response":{"id":"resp_123","created_at":1700000000,"model":"gpt-5.5","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[{"type":"custom_tool_call","call_id":"call_apply","name":"ApplyPatch","input":"full patch"}]}}`)
@@ -498,18 +544,19 @@ func assertUsageMapping(t *testing.T, payload []byte, wantCachedCreation int64, 
 		t.Fatalf("expected reasoning_tokens=5, got %d; payload=%s", got, string(payload))
 	}
 
+	gotCacheWrite := gjson.GetBytes(payload, "usage.prompt_tokens_details.cache_write_tokens")
 	gotCachedCreation := gjson.GetBytes(payload, "usage.prompt_tokens_details.cached_creation_tokens")
 	if expectCachedCreation {
-		if !gotCachedCreation.Exists() {
-			t.Fatalf("expected cached_creation_tokens to exist, payload=%s", string(payload))
+		if !gotCacheWrite.Exists() || !gotCachedCreation.Exists() {
+			t.Fatalf("expected cache-write fields to exist, payload=%s", string(payload))
 		}
-		if gotCachedCreation.Int() != wantCachedCreation {
-			t.Fatalf("expected cached_creation_tokens=%d, got %d; payload=%s", wantCachedCreation, gotCachedCreation.Int(), string(payload))
+		if gotCacheWrite.Int() != wantCachedCreation || gotCachedCreation.Int() != wantCachedCreation {
+			t.Fatalf("expected cache-write fields=%d, got official=%d legacy=%d; payload=%s", wantCachedCreation, gotCacheWrite.Int(), gotCachedCreation.Int(), string(payload))
 		}
 		return
 	}
-	if gotCachedCreation.Exists() {
-		t.Fatalf("expected cached_creation_tokens to be omitted, payload=%s", string(payload))
+	if gotCacheWrite.Exists() || gotCachedCreation.Exists() {
+		t.Fatalf("expected cache-write fields to be omitted, payload=%s", string(payload))
 	}
 }
 
