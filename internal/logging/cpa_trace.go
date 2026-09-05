@@ -1,11 +1,14 @@
 package logging
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
 )
 
 // CPATraceIDHeader is the downstream response header used to correlate requests with selected credentials.
@@ -24,17 +27,29 @@ func FormatCPATraceID(selectedAt time.Time, authIndex, requestID string) string 
 }
 
 type cpaTraceState struct {
-	mu      sync.RWMutex
-	traceID string
+	mu          sync.RWMutex
+	traceID     string
+	executionID string
+	selection   uint64
 }
 
-func (s *cpaTraceState) set(traceID string) {
+func (s *cpaTraceState) set(traceID string) (string, uint64) {
 	if s == nil {
-		return
+		return "", 0
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.executionID == "" {
+		if id, err := uuid.NewRandom(); err == nil {
+			s.executionID = id.String()
+		} else {
+			// Tracing must not panic or fail the model request if entropy is unavailable.
+			s.executionID = fmt.Sprintf("%d-%s", time.Now().UnixNano(), GenerateRequestID())
+		}
+	}
+	s.selection++
 	s.traceID = strings.TrimSpace(traceID)
-	s.mu.Unlock()
+	return s.executionID, s.selection
 }
 
 func (s *cpaTraceState) get() string {
@@ -76,8 +91,20 @@ func GinCPATraceIDCallback(c *gin.Context) func(string) {
 		return nil
 	}
 	return func(authIndex string) {
+		authIndex = strings.TrimSpace(authIndex)
 		if traceID := FormatCPATraceID(time.Now(), authIndex, requestID); traceID != "" {
-			state.set(traceID)
+			executionID, selection := state.set(traceID)
+			// Selection is not proof of an upstream attempt or successful completion.
+			// Do not include credential names, request bodies, or authentication material.
+			if validCorrelationID(requestID) && validCorrelationID(authIndex) {
+				log.WithFields(log.Fields{
+					"request_id":       requestID,
+					"cpa_execution_id": executionID,
+					"selection_seq":    selection,
+					"auth_index":       authIndex,
+					"state":            "selected",
+				}).Info("credential selected")
+			}
 		}
 	}
 }

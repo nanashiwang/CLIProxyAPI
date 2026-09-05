@@ -1,12 +1,18 @@
 package logging
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	log "github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 )
 
 func TestFormatCPATraceID(t *testing.T) {
@@ -31,6 +37,138 @@ func TestFormatCPATraceID(t *testing.T) {
 				t.Fatalf("FormatCPATraceID() = %q, want empty", gotEmpty)
 			}
 		})
+	}
+}
+
+func captureSelectionLogs(t *testing.T) *logtest.Hook {
+	t.Helper()
+	logger := log.StandardLogger()
+	oldOutput, oldLevel := logger.Out, logger.GetLevel()
+	oldHooks := logger.ReplaceHooks(make(log.LevelHooks))
+	logger.SetOutput(io.Discard)
+	logger.SetLevel(log.InfoLevel)
+	hook := logtest.NewGlobal()
+	t.Cleanup(func() {
+		logger.ReplaceHooks(oldHooks)
+		logger.SetOutput(oldOutput)
+		logger.SetLevel(oldLevel)
+	})
+	return hook
+}
+
+func TestCredentialSelectionLogsAtInfoWithNANID(t *testing.T) {
+	hook := captureSelectionLogs(t)
+	engine := gin.New()
+	engine.Use(GinLogrusLogger(), CPATraceIDMiddleware())
+	engine.POST("/v1/responses", func(c *gin.Context) {
+		callback := GinCPATraceIDCallback(c)
+		callback("index-a")
+		c.Writer.WriteHeaderNow()
+		// Later selections must still be logged after SSE headers are committed.
+		callback("index-b")
+		GinCPATraceIDCallback(c)("index-b")
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses",
+		strings.NewReader(`{"prompt":"private-prompt"}`))
+	request.Header.Set("X-NewAPI-Request-ID", "nan-request-123")
+	request.Header.Set("Authorization", "Bearer private-token")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+
+	var selected []*log.Entry
+	var formatted bytes.Buffer
+	for _, entry := range hook.AllEntries() {
+		if entry.Message != "credential selected" {
+			continue
+		}
+		selected = append(selected, entry)
+		line, err := (&LogFormatter{}).Format(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		formatted.Write(line)
+	}
+	if len(selected) != 3 {
+		t.Fatalf("selection records = %d, want 3", len(selected))
+	}
+	for i, entry := range selected {
+		if entry.Data["request_id"] != "nan-request-123" ||
+			entry.Data["selection_seq"] != uint64(i+1) ||
+			entry.Data["state"] != "selected" ||
+			entry.Level != log.InfoLevel {
+			t.Fatalf("unexpected selection record: %#v", entry)
+		}
+		if entry.Data["cpa_execution_id"] == "" ||
+			entry.Data["cpa_execution_id"] != selected[0].Data["cpa_execution_id"] {
+			t.Fatal("callbacks did not share execution ID")
+		}
+	}
+	if selected[0].Data["auth_index"] != "index-a" || selected[1].Data["auth_index"] != "index-b" {
+		t.Fatal("lost earlier selected account")
+	}
+	for _, want := range []string{"nan-request-123", `auth_index="index-a"`, "selection_seq=3", "cpa_execution_id="} {
+		if !strings.Contains(formatted.String(), want) {
+			t.Fatalf("missing %q in rendered logs", want)
+		}
+	}
+	for _, secret := range []string{"private-token", "private-prompt", "Authorization"} {
+		if strings.Contains(formatted.String(), secret) {
+			t.Fatalf("logs exposed %q", secret)
+		}
+	}
+	if !strings.Contains(recorder.Header().Get(CPATraceIDHeader), "-index-a-nan-request-123") {
+		t.Fatal("changed response header semantics")
+	}
+}
+
+func TestSelectionLogsConcurrentCallbacksAndSeparateExecutions(t *testing.T) {
+	hook := captureSelectionLogs(t)
+	newCallback := func() func(string) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		SetGinRequestID(c, "same-nan-id")
+		return GinCPATraceIDCallback(c)
+	}
+	callback := newCallback()
+	var wg sync.WaitGroup
+	for range 40 {
+		wg.Add(1)
+		go func() { defer wg.Done(); callback("index-a") }()
+	}
+	wg.Wait()
+	entries := hook.AllEntries()
+	if len(entries) != 40 {
+		t.Fatalf("records = %d", len(entries))
+	}
+	seqs := make(map[uint64]bool)
+	for _, entry := range entries {
+		seqs[entry.Data["selection_seq"].(uint64)] = true
+	}
+	if len(seqs) != 40 || !seqs[1] || !seqs[40] {
+		t.Fatal("non-unique selection sequence")
+	}
+	newCallback()("index-b")
+	last := hook.LastEntry()
+	if last.Data["cpa_execution_id"] == entries[0].Data["cpa_execution_id"] {
+		t.Fatal("NAN retries into the same pool must have distinct execution IDs")
+	}
+	if last.Data["selection_seq"] != uint64(1) {
+		t.Fatal("new execution did not restart sequence")
+	}
+}
+
+func TestSelectionLogsSkipMissingOrUnsafeIdentifiers(t *testing.T) {
+	hook := captureSelectionLogs(t)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	if GinCPATraceIDCallback(c) != nil {
+		t.Fatal("missing request ID must not create callback")
+	}
+	SetGinRequestID(c, "nan-id")
+	callback := GinCPATraceIDCallback(c)
+	for _, value := range []string{"", "account@example.com", "bad\nindex", strings.Repeat("a", 129)} {
+		callback(value)
+	}
+	if len(hook.AllEntries()) != 0 {
+		t.Fatal("unsafe identifiers leaked into selection logs")
 	}
 }
 

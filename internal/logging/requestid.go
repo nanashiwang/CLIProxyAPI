@@ -11,6 +11,22 @@ import (
 // requestIDKey is the context key for storing/retrieving request IDs.
 type requestIDKey struct{}
 
+// validCorrelationID bounds externally supplied identifiers to a log-safe alphabet.
+// IDs are for correlation only; they never establish caller identity or authorization.
+func validCorrelationID(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for _, c := range value {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // ginRequestIDKey is the Gin context key for request IDs.
 const ginRequestIDKey = "__request_id__"
 

@@ -48,10 +48,10 @@ func GinLogrusLogger() gin.HandlerFunc {
 		var requestID string
 		if isAIAPIPath(path) {
 			requestID = strings.TrimSpace(c.GetHeader("X-NewAPI-Request-ID"))
-			if requestID == "" {
+			if !validCorrelationID(requestID) {
 				requestID = strings.TrimSpace(c.GetHeader("X-NAN-REQUEST-ID"))
 			}
-			if requestID == "" {
+			if !validCorrelationID(requestID) {
 				requestID = GenerateRequestID()
 			}
 			SetGinRequestID(c, requestID)
