@@ -47,7 +47,13 @@ func GinLogrusLogger() gin.HandlerFunc {
 		// Only generate request ID for AI API paths
 		var requestID string
 		if isAIAPIPath(path) {
-			requestID = GenerateRequestID()
+			requestID = strings.TrimSpace(c.GetHeader("X-NewAPI-Request-ID"))
+			if requestID == "" {
+				requestID = strings.TrimSpace(c.GetHeader("X-NAN-REQUEST-ID"))
+			}
+			if requestID == "" {
+				requestID = GenerateRequestID()
+			}
 			SetGinRequestID(c, requestID)
 			ctx := WithRequestID(c.Request.Context(), requestID)
 			c.Request = c.Request.WithContext(ctx)
