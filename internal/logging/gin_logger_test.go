@@ -4,10 +4,47 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 )
+
+func TestGinLogrusLoggerValidatesIncomingCorrelationIDs(t *testing.T) {
+	for _, tc := range []struct{ name, primary, alias, want string }{
+		{"primary", " nan.123-ABC_456 ", "alias-id", "nan.123-ABC_456"},
+		{"alias", "", "alias-id", "alias-id"},
+		{"invalid primary", "bad\nid", "alias-id", "alias-id"},
+		{"oversized", strings.Repeat("x", 129), "", ""},
+		{"email", "account@example.com", "", ""},
+		{"missing", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := gin.New()
+			engine.Use(GinLogrusLogger())
+			engine.POST("/v1/responses", func(c *gin.Context) {
+				got := GetGinRequestID(c)
+				if tc.want != "" && got != tc.want {
+					t.Fatalf("ID = %q, want %q", got, tc.want)
+				}
+				if !validCorrelationID(got) {
+					t.Fatal("unsafe generated ID")
+				}
+				if tc.want == "" && len(got) != 8 {
+					t.Fatalf("expected local fallback, got %q", got)
+				}
+				if GetRequestID(c.Request.Context()) != got {
+					t.Fatal("context IDs disagree")
+				}
+				c.Status(http.StatusOK)
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			request.Header.Set("X-NewAPI-Request-ID", tc.primary)
+			request.Header.Set("X-NAN-REQUEST-ID", tc.alias)
+			engine.ServeHTTP(httptest.NewRecorder(), request)
+		})
+	}
+}
 
 func TestGinLogrusRecoveryRepanicsErrAbortHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -146,5 +183,26 @@ func TestGinLogrusLoggerAddsRequestIDForCodexBackend(t *testing.T) {
 	}
 	if requestIDFromGin != requestIDFromContext {
 		t.Fatalf("expected Gin request ID %q to match context request ID %q", requestIDFromGin, requestIDFromContext)
+	}
+}
+
+func TestGinLogrusLoggerReusesNANRequestID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.Use(GinLogrusLogger())
+	engine.POST("/v1/responses", func(c *gin.Context) {
+		if got := GetGinRequestID(c); got != "nan-request-123" {
+			t.Fatalf("request ID = %q, want %q", got, "nan-request-123")
+		}
+		c.Status(http.StatusOK)
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	request.Header.Set("X-NewAPI-Request-ID", "nan-request-123")
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 }
