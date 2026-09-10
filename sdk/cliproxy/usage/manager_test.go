@@ -125,3 +125,38 @@ func withBillingCalculator(t *testing.T, calculator BillingCalculator) {
 	SetBillingCalculator(calculator)
 	t.Cleanup(func() { SetBillingCalculator(previous) })
 }
+
+func TestManagerReleasesConsumedQueueReferences(t *testing.T) {
+	manager := NewManager(2)
+	backing := []queueItem{
+		{ctx: context.Background(), record: Record{Model: "first"}},
+		{ctx: context.Background(), record: Record{Model: "second"}},
+	}
+	manager.queue = backing
+	delivered := make(chan string, 2)
+	manager.Register(pluginFuncForManagerTest(func(_ context.Context, record Record) {
+		delivered <- record.Model
+	}))
+	manager.Start(context.Background())
+	defer manager.Stop()
+	for _, want := range []string{"first", "second"} {
+		select {
+		case got := <-delivered:
+			if got != want {
+				t.Fatalf("delivered %q, want %q", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("queued record was not delivered")
+		}
+	}
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if manager.queue != nil {
+		t.Fatal("empty queue retains its backing array")
+	}
+	for _, item := range backing {
+		if item.ctx != nil || item.record.Model != "" {
+			t.Fatal("consumed queue slot retains a record or context")
+		}
+	}
+}

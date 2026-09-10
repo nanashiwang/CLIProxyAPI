@@ -29,6 +29,8 @@ const (
 	maximumMaxRecords       = 2000000
 	maximumEventLineSize    = 4 << 20
 	windowCacheRefreshAfter = 60 * time.Second
+	storageCompactAfter     = 5 * time.Minute
+	maximumCompactRecords   = 10000
 )
 
 var statisticsEnabled atomic.Bool
@@ -220,10 +222,11 @@ type storedEvent struct {
 
 // RequestStatistics stores retained request events and their JSONL persistence state.
 type cachedWindowSnapshot struct {
-	snapshot   StatisticsSnapshot
-	from       time.Time
-	computedAt time.Time
-	updatedAt  time.Time
+	snapshot       StatisticsSnapshot
+	from           time.Time
+	computedAt     time.Time
+	updatedAt      time.Time
+	retentionStale bool
 }
 
 type RequestStatistics struct {
@@ -239,11 +242,13 @@ type RequestStatistics struct {
 	cacheRefreshQueued  atomic.Bool
 	cacheRefreshPending atomic.Bool
 
-	persistMu sync.Mutex
-	options   Options
-	file      *os.File
-	loadedAt  time.Time
-	lastError string
+	persistMu       sync.Mutex
+	options         Options
+	file            *os.File
+	loadedAt        time.Time
+	lastError       string
+	diskRecords     int
+	lastCompactedAt time.Time
 }
 
 var defaultRequestStatistics = NewRequestStatistics()
@@ -324,15 +329,13 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	s.events = insertEventSorted(s.events, event)
 	before := len(s.events)
 	s.events = pruneEvents(s.events, s.options, now)
-	compacted := len(s.events) < before
-	var snapshot []storedEvent
-	if compacted {
-		snapshot = append([]storedEvent(nil), s.events...)
-	}
+	pruned := len(s.events) < before
+	// opMu keeps this slice stable until persistence finishes.
+	events := s.events
 	s.mu.Unlock()
 
-	s.updateCachedWindow(event, now)
-	if compacted || s.cacheNeedsRefresh(now) {
+	s.updateCachedWindow(event, now, pruned)
+	if s.cacheNeedsRefresh(now) {
 		s.requestCacheRefresh()
 	}
 
@@ -344,18 +347,31 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 			return
 		}
 	}
-	var errPersist error
-	if compacted {
-		errPersist = s.rewriteLocked(snapshot)
-	} else {
-		errPersist = appendEvent(s.file, event)
-	}
-	if errPersist != nil {
+	// Append before compaction so a failed rewrite cannot lose the new event.
+	if errPersist := appendEvent(s.file, event); errPersist != nil {
 		s.lastError = errPersist.Error()
 		log.WithError(errPersist).Warn("usage: failed to persist statistics event")
 		return
 	}
+	if s.file != nil {
+		s.diskRecords++
+		if s.compactionDue(len(events), now) {
+			if errCompact := s.rewriteLocked(events); errCompact != nil {
+				s.lastError = errCompact.Error()
+				log.WithError(errCompact).Warn("usage: failed to compact statistics file")
+				return
+			}
+		}
+	}
 	s.lastError = ""
+}
+
+// compactionDue bounds obsolete disk records while amortizing full-file rewrites.
+// Callers hold persistMu; memory retention is enforced independently on every record.
+func (s *RequestStatistics) compactionDue(retained int, now time.Time) bool {
+	obsolete := s.diskRecords - retained
+	threshold := max(1, min(s.options.MaxRecords/10, maximumCompactRecords))
+	return obsolete > 0 && (obsolete >= threshold || now.Sub(s.lastCompactedAt) >= storageCompactAfter)
 }
 
 // Snapshot returns aggregate statistics for all retained events.
@@ -403,7 +419,7 @@ func (s *RequestStatistics) StartBackgroundRefresh() {
 			s.cacheRefreshPending.Store(false)
 			s.rebuildCachedWindows()
 			s.cacheRefreshQueued.Store(false)
-			if s.cacheRefreshPending.Load() {
+			if s.cacheRefreshPending.Load() && s.cacheNeedsRefresh(time.Now().UTC()) {
 				s.requestCacheRefresh()
 			}
 		}
@@ -433,7 +449,7 @@ func (s *RequestStatistics) cacheNeedsRefresh(now time.Time) bool {
 	s.cacheMu.RLock()
 	defer s.cacheMu.RUnlock()
 	for window, cached := range s.windowCache {
-		if window == "all" || cached.computedAt.IsZero() {
+		if (window == "all" && !cached.retentionStale) || cached.computedAt.IsZero() {
 			continue
 		}
 		if now.Sub(cached.computedAt) >= windowCacheRefreshAfter {
@@ -474,16 +490,19 @@ func (s *RequestStatistics) SnapshotWindow(window string, recentLimit int) (Stat
 	if !ok {
 		return newSnapshot(), SnapshotCacheStatus{Window: window}
 	}
-	if window != "all" && now.Sub(cached.computedAt) >= windowCacheRefreshAfter {
+	if (window != "all" || cached.retentionStale) && now.Sub(cached.computedAt) >= windowCacheRefreshAfter {
 		s.requestCacheRefresh()
 	}
 
-	from := cached.from
+	s.cacheMu.RLock()
+	cached = s.windowCache[window]
 	result := cloneSnapshot(cached.snapshot)
-	s.mu.RLock()
-	events := append([]storedEvent(nil), s.events...)
-	s.mu.RUnlock()
-	appendRecentDetails(&result, events, from, now, recentLimit)
+	s.cacheMu.RUnlock()
+	if recentLimit > 0 {
+		s.mu.RLock()
+		appendRecentDetails(&result, s.events, cached.from, now, recentLimit)
+		s.mu.RUnlock()
+	}
 	updatedAt := cached.updatedAt
 	if updatedAt.IsZero() {
 		updatedAt = cached.computedAt
@@ -519,10 +538,11 @@ func (s *RequestStatistics) rebuildCachedWindows() {
 	if s == nil {
 		return
 	}
-	s.mu.RLock()
-	events := append([]storedEvent(nil), s.events...)
-	s.mu.RUnlock()
-	s.rebuildWindowCache(events, time.Now().UTC())
+	// Serialize with Record/Clear/Configure so rebuilding cannot overwrite newer
+	// incremental updates. Readers remain available and no history copy is needed.
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	s.rebuildWindowCache(s.events, time.Now().UTC())
 }
 
 func (s *RequestStatistics) rebuildWindowCache(events []storedEvent, now time.Time) {
@@ -558,13 +578,20 @@ func (s *RequestStatistics) rebuildWindowCache(events []storedEvent, now time.Ti
 	s.cacheMu.Unlock()
 }
 
-func (s *RequestStatistics) updateCachedWindow(event storedEvent, now time.Time) {
+func (s *RequestStatistics) updateCachedWindow(event storedEvent, now time.Time, pruned bool) {
 	if s == nil {
 		return
 	}
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	for window, cached := range s.windowCache {
+		if pruned || cached.retentionStale {
+			// Keep the last consistent aggregate until the throttled rebuild.
+			// Adding new usage without subtracting evictions would inflate totals.
+			cached.retentionStale = true
+			s.windowCache[window] = cached
+			continue
+		}
 		if cached.computedAt.IsZero() || (window != "all" && event.Detail.Timestamp.Before(cached.from)) {
 			continue
 		}
@@ -902,12 +929,6 @@ func (s *RequestStatistics) rewriteLocked(events []storedEvent) error {
 	if s.options.StoragePath == "" {
 		return nil
 	}
-	if s.file != nil {
-		if errClose := s.file.Close(); errClose != nil {
-			log.WithError(errClose).Debug("usage: failed to close statistics file before rewrite")
-		}
-		s.file = nil
-	}
 	if errMkdir := os.MkdirAll(filepath.Dir(s.options.StoragePath), 0o700); errMkdir != nil {
 		return fmt.Errorf("create usage statistics directory: %w", errMkdir)
 	}
@@ -917,15 +938,11 @@ func (s *RequestStatistics) rewriteLocked(events []storedEvent) error {
 		return fmt.Errorf("create usage statistics temp file: %w", errCreate)
 	}
 	writer := bufio.NewWriterSize(file, 64<<10)
+	encoder := json.NewEncoder(writer)
 	var writeErr error
 	for _, event := range events {
-		raw, errMarshal := json.Marshal(event)
-		if errMarshal != nil {
-			writeErr = fmt.Errorf("marshal usage statistics event: %w", errMarshal)
-			break
-		}
-		if _, errWrite := writer.Write(append(raw, '\n')); errWrite != nil {
-			writeErr = fmt.Errorf("write usage statistics event: %w", errWrite)
+		if errEncode := encoder.Encode(event); errEncode != nil {
+			writeErr = fmt.Errorf("encode usage statistics event: %w", errEncode)
 			break
 		}
 	}
@@ -933,6 +950,9 @@ func (s *RequestStatistics) rewriteLocked(events []storedEvent) error {
 		if errFlush := writer.Flush(); errFlush != nil {
 			writeErr = fmt.Errorf("flush usage statistics file: %w", errFlush)
 		}
+	}
+	if writeErr == nil {
+		writeErr = file.Sync()
 	}
 	if errClose := file.Close(); writeErr == nil && errClose != nil {
 		writeErr = fmt.Errorf("close usage statistics temp file: %w", errClose)
@@ -945,6 +965,15 @@ func (s *RequestStatistics) rewriteLocked(events []storedEvent) error {
 		_ = os.Remove(tempPath)
 		return fmt.Errorf("replace usage statistics file: %w", errRename)
 	}
+	// Keep the append descriptor usable until the atomic replacement succeeds.
+	if s.file != nil {
+		if errClose := s.file.Close(); errClose != nil {
+			log.WithError(errClose).Debug("usage: failed to close replaced statistics file")
+		}
+		s.file = nil
+	}
+	s.diskRecords = len(events)
+	s.lastCompactedAt = time.Now().UTC()
 	return s.openFileLocked()
 }
 
@@ -1009,11 +1038,10 @@ func insertEventSorted(events []storedEvent, event storedEvent) []storedEvent {
 	index := sort.Search(len(events), func(i int) bool {
 		return events[i].Detail.Timestamp.After(event.Detail.Timestamp)
 	})
-	sortedEvents := make([]storedEvent, 0, len(events)+1)
-	sortedEvents = append(sortedEvents, events[:index]...)
-	sortedEvents = append(sortedEvents, event)
-	sortedEvents = append(sortedEvents, events[index:]...)
-	return sortedEvents
+	events = append(events, storedEvent{})
+	copy(events[index+1:], events[index:])
+	events[index] = event
+	return events
 }
 
 func pruneEvents(events []storedEvent, options Options, now time.Time) []storedEvent {
@@ -1033,7 +1061,16 @@ func pruneEvents(events []storedEvent, options Options, now time.Time) []storedE
 	if start == 0 {
 		return events
 	}
-	return append([]storedEvent(nil), events[start:]...)
+	clear(events[:start])
+	retained := events[start:]
+	if len(retained) == 0 {
+		return nil
+	}
+	// Reclaim unusually large backing arrays, but avoid an O(N) copy per eviction.
+	if cap(events) > 2*len(retained) {
+		return append([]storedEvent(nil), retained...)
+	}
+	return retained
 }
 
 func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {

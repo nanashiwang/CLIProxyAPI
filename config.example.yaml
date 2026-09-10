@@ -143,6 +143,11 @@ usage-statistics-enabled: false
 
 # Persistent request-level usage statistics.
 # The JSONL file retains request-time token and USD billing snapshots.
+# Retention is applied to in-memory queries immediately. Disk writes append events;
+# obsolete lines are compacted on a subsequent write after 5 minutes or when they
+# reach 10% of max-records (at least 1, at most 10000). Reload applies retention too.
+# After eviction, dashboard aggregates retain their last consistent snapshot until
+# the next background refresh (normally within 60 seconds while requests continue).
 usage-statistics:
   # storage-file: "data/usage_statistics.jsonl"
   retention-days: 90

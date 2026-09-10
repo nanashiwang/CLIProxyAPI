@@ -442,3 +442,18 @@ func TestOpenCodeHistoricalUsageImportAndReloadHideSource(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkSnapshotWindowRecentDetails(b *testing.B) {
+	stats := NewRequestStatistics()
+	now := time.Now().UTC()
+	stats.events = make([]storedEvent, 200000)
+	for i := range stats.events {
+		stats.events[i] = storedEvent{API: "test", Model: "test", Detail: RequestDetail{Timestamp: now.Add(-time.Second)}}
+	}
+	stats.rebuildWindowCache(stats.events, now)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		stats.SnapshotWindow("7d", 20)
+	}
+}
