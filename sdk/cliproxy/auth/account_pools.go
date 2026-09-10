@@ -23,7 +23,14 @@ func (m *Manager) AccountPoolsEnabled() bool {
 // Missing identity or invalid policy must never revert to unrestricted routing.
 func (m *Manager) AccountPoolScope(ctx context.Context) (*config.AccountPoolScope, error) {
 	cfg := m.runtimeConfigSnapshot()
-	if cfg == nil || !cfg.AccountPools.Enabled {
+	if cfg == nil {
+		return nil, nil
+	}
+	store, err := m.checkLeaseConfiguration(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.AccountPools.Enabled {
 		return nil, nil
 	}
 	if cfg.Home.Enabled {
@@ -33,7 +40,7 @@ func (m *Manager) AccountPoolScope(ctx context.Context) (*config.AccountPoolScop
 	if !ok {
 		return nil, &Error{Code: "pool_access_denied", Message: "client key has no valid account group policy", HTTPStatus: http.StatusForbidden}
 	}
-	return scope, nil
+	return m.scopeWithLease(ctx, cfg, scope, store)
 }
 
 func (m *Manager) preparePoolSelection(ctx context.Context, opts coreexecutor.Options) (context.Context, error) {
@@ -92,7 +99,7 @@ func (m *Manager) FilterAccountPoolModels(ctx context.Context, models []map[stri
 	allowed := make([]*Auth, 0)
 	m.mu.RLock()
 	for _, a := range m.auths {
-		if a != nil && !a.Disabled && scope.Allows(a.ID) {
+		if a != nil && !a.Disabled && (scope.Allows(a.ID) || (scope.LeaseInstance() != "" && scope.AuthorizesCredential(a.ID))) {
 			allowed = append(allowed, a.Clone())
 		}
 	}

@@ -106,6 +106,7 @@ func (NoopHook) OnResult(context.Context, Result) {}
 
 // Manager orchestrates auth lifecycle, selection, execution, and persistence.
 type Manager struct {
+	poolLeaseRuntime          poolLeaseRuntime
 	store                     Store
 	cooldownStore             CooldownStateStore
 	pendingCooldownStateStore CooldownStateStore

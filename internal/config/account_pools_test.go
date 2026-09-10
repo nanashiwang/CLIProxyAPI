@@ -83,3 +83,21 @@ func TestAccountPoolConfigRejectsAmbiguousBindings(t *testing.T) {
 		})
 	}
 }
+
+func TestLeaseRevisionIgnoresNamesButProtectsMembership(t *testing.T) {
+	c := &Config{SDKConfig: SDKConfig{AccountPools: AccountPoolsConfig{Enabled: true, Groups: []AccountPoolGroup{{ID: "default", Name: "Default"}, {ID: "a", Name: "A", Lease: true, CredentialIDs: []string{"one", "two"}}}}}}
+	original := c.PoolLeaseRevision()
+	c.AccountPools.Groups[1].Name = "Renamed"
+	c.AccountPools.Groups[1].Disabled = true
+	if c.PoolLeaseRevision() != original {
+		t.Fatal("rename/disable changes membership signature")
+	}
+	c.AccountPools.Groups[1].CredentialIDs = []string{"two", "one"}
+	if c.PoolLeaseRevision() != original {
+		t.Fatal("ordering changes membership signature")
+	}
+	c.AccountPools.Groups[1].CredentialIDs = []string{"one"}
+	if c.PoolLeaseRevision() == original {
+		t.Fatal("membership change not detected")
+	}
+}

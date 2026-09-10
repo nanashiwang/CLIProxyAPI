@@ -68,7 +68,7 @@ func (h *Handler) GetAccountPools(c *gin.Context) {
 		if !ok {
 			rule = config.AccountPoolKeyRule{KeyHash: hash, Scope: "selected", GroupIDs: []string{config.DefaultAccountPoolID}}
 		}
-		keys = append(keys, gin.H{"key-hash": hash, "preview": util.HideAPIKey(key), "index": i + 1, "name": rule.Name, "scope": rule.Scope, "group-ids": rule.GroupIDs})
+		keys = append(keys, gin.H{"key-hash": hash, "preview": util.HideAPIKey(key), "index": i + 1, "name": rule.Name, "scope": rule.Scope, "group-ids": rule.GroupIDs, "lease-instance": rule.LeaseInstance})
 	}
 	members := make(map[string]string)
 	for _, group := range pools.Groups {
@@ -109,7 +109,18 @@ func (h *Handler) GetAccountPools(c *gin.Context) {
 		}
 	}
 	sort.Slice(credentials, func(i, j int) bool { return credentials[i]["id"].(string) < credentials[j]["id"].(string) })
-	c.JSON(http.StatusOK, gin.H{"config": pools, "keys": keys, "credentials": credentials, "revision": poolConfigRevision(cfg), "home-enabled": cfg.Home.Enabled})
+	leases := []gin.H{}
+	leaseError := ""
+	if h.authManager != nil {
+		rows, err := h.authManager.AccountPoolLeases()
+		if err != nil {
+			leaseError = "lease state unavailable"
+		}
+		for _, l := range rows {
+			leases = append(leases, gin.H{"id": l.ID, "group-id": l.Group, "owner": l.Owner, "expires-at": l.Expires, "active": l.Active})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"leases": leases, "lease-error": leaseError, "config": pools, "keys": keys, "credentials": credentials, "revision": poolConfigRevision(cfg), "home-enabled": cfg.Home.Enabled})
 }
 
 // PutAccountPools publishes membership and key authorization as one versioned change.
@@ -169,6 +180,13 @@ func (h *Handler) PutAccountPools(c *gin.Context) {
 				c.JSON(400, gin.H{"error": "credential no longer exists; reload before saving"})
 				return
 			}
+		}
+	}
+	if h.authManager != nil {
+		if err := h.authManager.ValidateAccountPoolLeaseChange(next); err != nil {
+			h.mu.Unlock()
+			c.JSON(http.StatusConflict, gin.H{"error": "active leases prevent group membership changes"})
+			return
 		}
 	}
 	previous := h.cfg.AccountPools

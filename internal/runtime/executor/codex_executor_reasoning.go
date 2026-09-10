@@ -83,6 +83,14 @@ func codexClaudeCodeReplaySessionKey(ctx context.Context, payload []byte, header
 }
 
 func codexReasoningReplaySessionKey(ctx context.Context, from sdktranslator.Format, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, body []byte) string {
+	key := codexReasoningReplayUnscopedSessionKey(ctx, from, req, opts, body)
+	if namespace := metadataString(opts.Metadata, cliproxyexecutor.AccountPoolNamespaceMetadataKey); namespace != "" && key != "" {
+		return "pool:" + namespace + ":" + key
+	}
+	return key
+}
+
+func codexReasoningReplayUnscopedSessionKey(ctx context.Context, from sdktranslator.Format, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, body []byte) string {
 	if ctx == nil {
 		ctx = context.Background()
 	}

@@ -40,6 +40,12 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 		return cliproxyexecutor.Response{}, errPool
 	}
 
+	ctx, releaseLease, errLease := m.beginPoolLease(ctx, providers, req, opts)
+	if errLease != nil {
+		return cliproxyexecutor.Response{}, errLease
+	}
+	defer releaseLease()
+
 	req, opts = cliproxysession.Enrich(req, opts)
 	normalized := m.normalizeProviders(providers)
 	if len(normalized) == 0 {
@@ -91,6 +97,12 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 		return cliproxyexecutor.Response{}, errPool
 	}
 
+	ctx, releaseLease, errLease := m.beginPoolLease(ctx, providers, req, opts)
+	if errLease != nil {
+		return cliproxyexecutor.Response{}, errLease
+	}
+	defer releaseLease()
+
 	req, opts = cliproxysession.Enrich(req, opts)
 	normalized := m.normalizeProviders(providers)
 	if len(normalized) == 0 {
@@ -135,6 +147,17 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 		return nil, errPool
 	}
 
+	ctx, releaseLease, errLease := m.beginPoolLease(ctx, providers, req, opts)
+	if errLease != nil {
+		return nil, errLease
+	}
+	transferredLease := false
+	defer func() {
+		if !transferredLease {
+			releaseLease()
+		}
+	}()
+
 	req, opts = cliproxysession.Enrich(req, opts)
 	if m.HomeEnabled() {
 		if unlockSession := m.lockHomeWebsocketSession(ctx, opts); unlockSession != nil {
@@ -153,7 +176,8 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 	for attempt := 0; ; attempt++ {
 		result, errStream := m.executeStreamMixedOnce(ctx, normalized, req, opts, maxRetryCredentials)
 		if errStream == nil {
-			return result, nil
+			transferredLease = true
+			return holdPoolLeaseStream(ctx, result, releaseLease), nil
 		}
 		if isRequestTerminatedError(errStream) || isRequestStopError(errStream) {
 			return nil, unwrapRequestStopError(errStream)
@@ -173,7 +197,8 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 			if result, ok, errCredits := m.tryAntigravityCreditsExecuteStream(ctx, req, opts); errCredits != nil {
 				return nil, errCredits
 			} else if ok {
-				return result, nil
+				transferredLease = true
+				return holdPoolLeaseStream(ctx, result, releaseLease), nil
 			}
 		}
 		var bootstrapErr *streamBootstrapError
