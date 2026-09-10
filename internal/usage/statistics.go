@@ -81,6 +81,8 @@ type TokenStats struct {
 
 // RequestDetail stores one persisted request event without secrets or failure bodies.
 type RequestDetail struct {
+	ClientKeyID         string            `json:"client_key_id,omitempty"`
+	PoolID              string            `json:"pool_id,omitempty"`
 	Timestamp           time.Time         `json:"timestamp"`
 	LatencyMs           int64             `json:"latency_ms"`
 	TTFTMs              int64             `json:"ttft_ms"`
@@ -1074,6 +1076,7 @@ func pruneEvents(events []storedEvent, options Options, now time.Time) []storedE
 }
 
 func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
+	attribution := coreusage.AccountPoolAttributionFromContext(ctx)
 	timestamp := record.RequestedAt
 	if timestamp.IsZero() {
 		timestamp = time.Now()
@@ -1149,6 +1152,8 @@ func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
 			Source:              strings.TrimSpace(record.Source),
 			AuthID:              strings.TrimSpace(record.AuthID),
 			AuthIndex:           strings.TrimSpace(record.AuthIndex),
+			ClientKeyID:         attribution.ClientKeyID,
+			PoolID:              attribution.PoolID,
 			AuthType:            valueOrUnknown(record.AuthType),
 			RequestID:           strings.TrimSpace(internallogging.GetRequestID(ctx)),
 			ServiceTier:         serviceTier,

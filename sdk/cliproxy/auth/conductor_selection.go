@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -57,6 +58,7 @@ type authSelectionEligibility struct {
 	requiredKind     string
 	credentialPolicy string
 	disallowFreeAuth bool
+	poolScope        *config.AccountPoolScope
 }
 
 func withRequiredAuthKind(ctx context.Context, requiredKind string) context.Context {
@@ -78,6 +80,7 @@ func credentialPolicyFromContext(ctx context.Context) string {
 func authSelectionEligibilityForRequest(ctx context.Context, opts cliproxyexecutor.Options) authSelectionEligibility {
 	eligibility := authSelectionEligibility{disallowFreeAuth: disallowFreeAuthFromMetadata(opts.Metadata)}
 	if ctx != nil {
+		eligibility.poolScope, _ = ctx.Value(accountPoolScopeContextKey{}).(*config.AccountPoolScope)
 		eligibility.requiredKind, _ = ctx.Value(requiredAuthKindContextKey{}).(string)
 		eligibility.credentialPolicy, _ = ctx.Value(credentialPolicyContextKey{}).(string)
 	}
@@ -85,7 +88,7 @@ func authSelectionEligibilityForRequest(ctx context.Context, opts cliproxyexecut
 }
 
 func (e authSelectionEligibility) allows(auth *Auth) bool {
-	if auth == nil {
+	if auth == nil || !e.poolScope.Allows(auth.ID) {
 		return false
 	}
 	if e.requiredKind != "" && auth.AuthKind() != e.requiredKind {
@@ -1023,6 +1026,13 @@ func (m *Manager) routeAwareSelectionRequired(auth *Auth, routeModel string) boo
 }
 
 func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, error) {
+	opts.EnsureMetadata()
+	var errPool error
+	ctx, errPool = m.preparePoolSelection(ctx, opts)
+	if errPool != nil {
+		return nil, nil, errPool
+	}
+
 	if m.HomeEnabled() {
 		auth, exec, _, err := m.pickNextViaHome(ctx, model, opts, tried)
 		return auth, exec, err
@@ -1073,7 +1083,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 	}
 	if len(candidates) == 0 {
 		m.mu.RUnlock()
-		return nil, nil, &Error{Code: "auth_not_found", Message: "no auth available"}
+		return nil, nil, poolUnavailable(ctx)
 	}
 	available, selectorAuths, errAvailable := m.availableAuthsForSelector(selector, candidates, provider, model, time.Now())
 	if errAvailable != nil {
@@ -1098,6 +1108,9 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 	}
 	if selected == nil {
 		return nil, nil, &Error{Code: "auth_not_found", Message: "selector returned no auth"}
+	}
+	if errPool := m.CheckAccountPoolAccess(ctx, selected.ID); errPool != nil {
+		return nil, nil, errPool
 	}
 	authCopy := selected.Clone()
 	if !selected.indexAssigned {
@@ -1283,7 +1296,7 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cli
 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = provider
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = model
 
-	if m.hasPluginScheduler() || !m.useSchedulerFastPath() {
+	if m.AccountPoolsEnabled() || m.hasPluginScheduler() || !m.useSchedulerFastPath() {
 		return m.pickNextLegacy(ctx, provider, model, opts, tried)
 	}
 	eligibility := authSelectionEligibilityForRequest(ctx, opts)
@@ -1334,6 +1347,13 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cli
 }
 
 func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, string, error) {
+	opts.EnsureMetadata()
+	var errPool error
+	ctx, errPool = m.preparePoolSelection(ctx, opts)
+	if errPool != nil {
+		return nil, nil, "", errPool
+	}
+
 	if m.HomeEnabled() {
 		return m.pickNextViaHome(ctx, model, opts, tried)
 	}
@@ -1400,7 +1420,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 	}
 	if len(candidates) == 0 {
 		m.mu.RUnlock()
-		return nil, nil, "", &Error{Code: "auth_not_found", Message: "no auth available"}
+		return nil, nil, "", poolUnavailable(ctx)
 	}
 	available, selectorAuths, errAvailable := m.availableAuthsForSelector(selector, candidates, "mixed", model, time.Now())
 	if errAvailable != nil {
@@ -1431,6 +1451,9 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 	if !okExecutor {
 		return nil, nil, "", &Error{Code: "executor_not_found", Message: "executor not registered"}
 	}
+	if errPool := m.CheckAccountPoolAccess(ctx, selected.ID); errPool != nil {
+		return nil, nil, "", errPool
+	}
 	authCopy := selected.Clone()
 	if !selected.indexAssigned {
 		m.mu.Lock()
@@ -1451,7 +1474,7 @@ func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model s
 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = "mixed"
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = model
 
-	if m.hasPluginScheduler() || !m.useSchedulerFastPath() {
+	if m.AccountPoolsEnabled() || m.hasPluginScheduler() || !m.useSchedulerFastPath() {
 		return m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
 	}
 

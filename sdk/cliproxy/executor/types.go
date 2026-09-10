@@ -48,6 +48,8 @@ const (
 	ExecutionSessionMetadataKey = "execution_session_id"
 	// DerivedSessionIDMetadataKey stores a stable session identity inferred from request context.
 	DerivedSessionIDMetadataKey = "derived_session_id"
+	// AccountPoolNamespaceMetadataKey isolates sessions by trusted key and policy revision.
+	AccountPoolNamespaceMetadataKey = "account_pool_namespace"
 	// CallerScopeMetadataKey isolates inferred session identities between downstream callers.
 	CallerScopeMetadataKey = "caller_scope"
 	// SessionAffinityProviderMetadataKey carries the affinity selection namespace

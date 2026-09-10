@@ -863,6 +863,19 @@ func ExtractSessionID(headers http.Header, payload []byte, metadata map[string]a
 // fallbackID preserves an earlier binding when a stronger body identifier appears
 // later, and lets callers bind both identifiers when both are present.
 func extractSessionIDs(headers http.Header, payload []byte, metadata map[string]any) (string, string) {
+	primary, fallback := extractUnscopedSessionIDs(headers, payload, metadata)
+	if namespace, _ := metadata[cliproxyexecutor.AccountPoolNamespaceMetadataKey].(string); namespace != "" {
+		if primary != "" {
+			primary = namespace + "::" + primary
+		}
+		if fallback != "" {
+			fallback = namespace + "::" + fallback
+		}
+	}
+	return primary, fallback
+}
+
+func extractUnscopedSessionIDs(headers http.Header, payload []byte, metadata map[string]any) (string, string) {
 	if sid := sessionHeaderValue(headers, "X-Claude-Code-Session-Id"); sid != "" {
 		return "claude:" + sid, ""
 	}

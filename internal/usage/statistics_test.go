@@ -457,3 +457,15 @@ func BenchmarkSnapshotWindowRecentDetails(b *testing.B) {
 		stats.SnapshotWindow("7d", 20)
 	}
 }
+
+func TestAccountPoolAttributionIsPersistedWithoutChangingBilling(t *testing.T) {
+	ctx := coreusage.WithAccountPoolAttribution(context.Background(), "key-fingerprint", "group-a")
+	event := eventFromRecord(ctx, coreusage.Record{Provider: "codex", Model: "test", Billing: coreusage.Billing{Currency: "USD", Priced: true, TotalUSD: 2}})
+	if event.Detail.ClientKeyID != "key-fingerprint" || event.Detail.PoolID != "group-a" || event.Detail.CostUSD == nil || *event.Detail.CostUSD != 2 {
+		t.Fatalf("wrong attribution or billing: %+v", event.Detail)
+	}
+	legacy := eventFromRecord(context.Background(), coreusage.Record{Provider: "codex"})
+	if legacy.Detail.ClientKeyID != "" || legacy.Detail.PoolID != "" {
+		t.Fatal("legacy records were assigned a current group")
+	}
+}

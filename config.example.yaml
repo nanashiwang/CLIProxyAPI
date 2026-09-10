@@ -41,6 +41,27 @@ api-keys:
   - "your-api-key-2"
   - "your-api-key-3"
 
+# Optional account groups. Manage membership and key scopes in the Account groups page.
+# Unassigned credentials and keys without a rule use the default group.
+# Explicit scope "all" includes current and future enabled groups; an empty selected
+# group list grants no credential access. Group names are editable; IDs are stable.
+# Home, Realtime/Live, direct plugin executors and the legacy WebSocket relay
+# are not supported while enabled.
+# account-pools:
+#   enabled: false
+#   groups:
+#     - id: default
+#       name: Default
+#       credential-ids: []
+#     - id: work
+#       name: My work accounts
+#       credential-ids: ["credential-id-from-management"]
+#   key-rules:
+#     - key-hash: "sha256-of-the-client-key"
+#       name: Work key
+#       scope: selected
+#       group-ids: [work]
+
 # Enable debug logging
 debug: false
 

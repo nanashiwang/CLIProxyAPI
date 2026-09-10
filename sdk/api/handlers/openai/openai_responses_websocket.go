@@ -259,6 +259,11 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 	writer := newResponsesWebsocketWriter(conn)
 	passthroughSessionID := uuid.NewString()
 	downstreamSessionKey := websocketDownstreamSessionKey(c.Request)
+	if h != nil && h.AuthManager != nil {
+		if scope, errPool := h.AuthManager.AccountPoolScope(c.Request.Context()); errPool == nil && scope != nil {
+			downstreamSessionKey = scope.Namespace() + "::" + downstreamSessionKey
+		}
+	}
 	retainResponsesWebsocketToolCaches(downstreamSessionKey)
 	clientIP := websocketClientAddress(c)
 	log.Infof("responses websocket: client connected id=%s remote=%s", passthroughSessionID, clientIP)
@@ -325,6 +330,9 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 	upstreamWebsocketAuthID := ""
 	sessionAuthByIDWithSource := func(authID string) (*coreauth.Auth, bool, bool) {
 		if h == nil || h.AuthManager == nil {
+			return nil, false, false
+		}
+		if errPool := h.AuthManager.CheckAccountPoolAccess(c.Request.Context(), authID); errPool != nil {
 			return nil, false, false
 		}
 		// Prefer the current manager view so hot-reloaded transport eligibility is
@@ -396,6 +404,13 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		wsTimelineLog.BeginRequest()
 		wsTimelineLog.Append("request", payload, time.Now())
 
+		if h != nil && h.AuthManager != nil {
+			if _, errPool := h.AuthManager.AccountPoolScope(c.Request.Context()); errPool != nil {
+				_, _ = writeResponsesWebsocketError(writer, wsTimelineLog, &interfaces.ErrorMessage{StatusCode: http.StatusForbidden, Error: errPool})
+				wsTerminateErr = errPool
+				return
+			}
+		}
 		explicitRequestModelName := strings.TrimSpace(gjson.GetBytes(payload, "model").String())
 		requestModelName := explicitRequestModelName
 		if requestModelName == "" {
