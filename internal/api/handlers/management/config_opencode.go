@@ -1,6 +1,7 @@
 package management
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -38,16 +39,25 @@ func (h *Handler) PutOpenCode(c *gin.Context) {
 		return
 	}
 
-	var envelope struct {
-		OpenCode *config.OpenCodeConfig `json:"opencode"`
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil || len(object) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
 	}
-	if err := json.Unmarshal(data, &envelope); err != nil || envelope.OpenCode == nil {
-		var value config.OpenCodeConfig
-		if unmarshalErr := json.Unmarshal(data, &value); unmarshalErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
-			return
-		}
-		envelope.OpenCode = &value
+	valueData := data
+	if wrapped, exists := object["opencode"]; exists {
+		valueData = wrapped
+	}
+	var value *config.OpenCodeConfig
+	if err := json.Unmarshal(valueData, &value); err != nil || value == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid opencode config"})
+		return
+	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(valueData, &fields)
+	if enabled := string(fields["enabled"]); enabled != "true" && enabled != "false" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "opencode.enabled is required"})
+		return
 	}
 
 	if h == nil || h.cfg == nil {
@@ -59,7 +69,7 @@ func (h *Handler) PutOpenCode(c *gin.Context) {
 	defer h.mu.Unlock()
 
 	previous := h.cfg.OpenCode
-	candidate := &config.Config{OpenCode: *envelope.OpenCode}
+	candidate := &config.Config{OpenCode: *value}
 	if errMerge := mergeOpenCodeCredentialSecrets(&candidate.OpenCode, &previous); errMerge != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": errMerge.Error()})
 		return
@@ -96,6 +106,7 @@ func maskOpenCodeKey(entry config.OpenCodeAPIKey, index int) config.OpenCodeAPIK
 	entry.Note = strings.TrimSpace(entry.Note)
 	entry.APIKeyConfigured = apiKey != ""
 	entry.APIKeyPreview = util.HideAPIKey(apiKey)
+	entry.APIKeyRevision = fmt.Sprintf("%x", sha256.Sum256([]byte(apiKey)))
 	entry.SourceIndex = &index
 	return entry
 }
@@ -177,7 +188,8 @@ func mergeOpenCodeTierKeys(
 			return nil, fmt.Errorf("opencode.%s.api-key-entries[%d] refers to a stale credential; reload and try again", tierName, index)
 		}
 		previousKey := strings.TrimSpace(previous[sourceIndex].APIKey)
-		if entry.APIKeyPreview != "" && entry.APIKeyPreview != util.HideAPIKey(previousKey) {
+		if (entry.APIKeyRevision != "" && entry.APIKeyRevision != fmt.Sprintf("%x", sha256.Sum256([]byte(previousKey)))) ||
+			(entry.APIKeyPreview != "" && entry.APIKeyPreview != util.HideAPIKey(previousKey)) {
 			return nil, fmt.Errorf("opencode.%s.api-key-entries[%d] refers to a changed credential; reload and try again", tierName, index)
 		}
 		entry.APIKey = previous[sourceIndex].APIKey

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -138,5 +139,53 @@ func TestGetAPIKeyUsage_GroupsOpenAICompatibleByCompatName(t *testing.T) {
 	vastEntry := vastBucket["https://www.vastnum.com/v1|vast-key"]
 	if vastEntry.Success != 1 || vastEntry.Failed != 0 {
 		t.Fatalf("vast totals = %d/%d, want 1/0", vastEntry.Success, vastEntry.Failed)
+	}
+}
+
+func TestOpenCodeUsageAndAuthEntriesHideSecrets(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	for _, id := range []string{"zen-auth", "go-auth", "anonymous-auth"} {
+		key := "same-prefix-secret-suffix"
+		if id == "anonymous-auth" {
+			key = "public"
+		}
+		_, err := manager.Register(context.Background(), &coreauth.Auth{ID: id, Provider: "opencode", Attributes: map[string]string{"api_key": key, "base_url": config.DefaultOpenCodeZenURL, "runtime_only": "true", "note": "account note"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		manager.MarkResult(context.Background(), coreauth.Result{AuthID: id, Provider: "opencode", Model: "test", Success: id != "go-auth"})
+	}
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, manager)
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	h.GetAPIKeyUsage(ctx)
+	if strings.Contains(rec.Body.String(), "same-prefix-secret-suffix") {
+		t.Fatal("usage leaked secret")
+	}
+	var payload map[string]map[string]apiKeyUsageEntry
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload["opencode"]) != 3 {
+		t.Fatalf("lost runtime entries: %s", rec.Body.String())
+	}
+	var success, failed int64
+	for _, entry := range payload["opencode"] {
+		success += entry.Success
+		failed += entry.Failed
+	}
+	if success != 2 || failed != 1 {
+		t.Fatalf("wrong totals: %d/%d", success, failed)
+	}
+	for _, auth := range manager.List() {
+		auth.Attributes["path"] = "/test/auth.json"
+		entry := h.buildAuthFileEntry(auth)
+		data, err := json.Marshal(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entry == nil || entry["note"] != "account note" || strings.Contains(string(data), "same-prefix-secret-suffix") {
+			t.Fatalf("unsafe auth entry: %s", data)
+		}
 	}
 }

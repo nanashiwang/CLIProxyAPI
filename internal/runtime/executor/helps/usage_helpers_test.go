@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/clienterror"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
@@ -754,4 +755,11 @@ type TestUsageExecutor struct{}
 
 func (TestUsageExecutor) Identifier() string {
 	return "test-provider"
+}
+
+func TestOpenCodeUsageSourceDoesNotExposeCredential(t *testing.T) {
+	auth := &cliproxyauth.Auth{ID: "opencode-stable-id", Provider: "opencode", Attributes: map[string]string{"api_key": "secret-key"}}
+	if got := resolveUsageSource(auth, "client-secret"); got != auth.ID {
+		t.Fatalf("unsafe usage source: %s", got)
+	}
 }

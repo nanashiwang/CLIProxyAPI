@@ -112,6 +112,7 @@ func sanitizeOpenCodeTier(tier OpenCodeTierConfig, fallback string) OpenCodeTier
 		entry.Note = strings.TrimSpace(entry.Note)
 		entry.APIKeyConfigured = false
 		entry.APIKeyPreview = ""
+		entry.APIKeyRevision = ""
 		entry.SourceIndex = nil
 		entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
 		entry.Headers = normalizeOpenCodeHeaders(entry.Headers)

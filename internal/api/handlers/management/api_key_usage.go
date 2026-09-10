@@ -54,7 +54,8 @@ func apiKeyUsageProviderKey(auth *coreauth.Auth) string {
 }
 
 // GetAPIKeyUsage returns recent request buckets for all in-memory api_key auths,
-// grouped by provider and keyed by "base_url|api_key".
+// grouped by provider and keyed by "base_url|api_key". OpenCode uses auth IDs
+// because its management configuration deliberately hides credentials.
 func (h *Handler) GetAPIKeyUsage(c *gin.Context) {
 	if h == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "handler not initialized"})
@@ -92,6 +93,9 @@ func (h *Handler) GetAPIKeyUsage(c *gin.Context) {
 		}
 		compositeKey := baseURL + "|" + apiKey
 		provider := apiKeyUsageProviderKey(auth)
+		if strings.EqualFold(strings.TrimSpace(auth.Provider), "opencode") {
+			compositeKey = baseURL + "|" + auth.ID
+		}
 
 		recent := auth.RecentRequestsSnapshot(now)
 		providerBucket, ok := out[provider]

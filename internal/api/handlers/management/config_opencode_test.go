@@ -248,3 +248,45 @@ func TestPutOpenCodeRestoresConfigWhenPersistenceFails(t *testing.T) {
 		t.Fatalf("config changed after failed persistence: %#v", h.cfg.OpenCode)
 	}
 }
+
+func TestPutOpenCodeRejectsMalformedReplacement(t *testing.T) {
+	for _, body := range []string{`null`, `[]`, `{}`, `{"opencode":null}`, `{"opencode":{}}`, `{"unrelated":true}`, `{"opencode":{"enabled":"yes"}}`} {
+		t.Run(body, func(t *testing.T) {
+			h := NewHandlerWithoutConfigFilePath(&config.Config{OpenCode: config.OpenCodeConfig{Enabled: true, Zen: config.OpenCodeTierConfig{APIKeyEntries: []config.OpenCodeAPIKey{{APIKey: "preserved"}}}}}, nil)
+			rec := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(rec)
+			ctx.Request = httptest.NewRequest(http.MethodPut, "/v0/management/opencode", strings.NewReader(body))
+			h.PutOpenCode(ctx)
+			if rec.Code != http.StatusBadRequest || !h.cfg.OpenCode.Enabled || h.cfg.OpenCode.Zen.APIKeyEntries[0].APIKey != "preserved" {
+				t.Fatalf("invalid replacement changed config: %d", rec.Code)
+			}
+		})
+	}
+}
+
+func TestOpenCodeShortSecretsAndRuntimeNote(t *testing.T) {
+	entry := maskOpenCodeKey(config.OpenCodeAPIKey{APIKey: "xy", Note: "account note"}, 0)
+	if entry.APIKeyPreview == "xy" || entry.Note != "account note" {
+		t.Fatal("short credential leaked or note lost")
+	}
+	headers := maskOpenCodeHeaders(map[string]string{"Authorization": "Bearer xy", "X-Api-Key": "z"})
+	if headers["Authorization"] == "Bearer xy" || headers["X-Api-Key"] == "z" {
+		t.Fatal("short header leaked")
+	}
+}
+
+func TestOpenCodeRejectsChangedKeyWithSamePreview(t *testing.T) {
+	old := config.OpenCodeAPIKey{APIKey: "same-old-secret-tail"}
+	current := config.OpenCodeAPIKey{APIKey: "same-new-secret-tail"}
+	masked := maskOpenCodeKey(old, 0)
+	if masked.APIKeyPreview != maskOpenCodeKey(current, 0).APIKeyPreview {
+		t.Fatal("test requires matching previews")
+	}
+	if _, err := mergeOpenCodeTierKeys([]config.OpenCodeAPIKey{masked}, []config.OpenCodeAPIKey{current}, "zen"); err == nil {
+		t.Fatal("changed credential with matching preview accepted")
+	}
+	merged, err := mergeOpenCodeTierKeys([]config.OpenCodeAPIKey{masked}, []config.OpenCodeAPIKey{old}, "zen")
+	if err != nil || merged[0].APIKey != old.APIKey {
+		t.Fatalf("unchanged credential rejected: %v", err)
+	}
+}

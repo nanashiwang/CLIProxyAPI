@@ -403,3 +403,42 @@ func TestSnapshotWindowRefreshesAfterClear(t *testing.T) {
 		t.Fatalf("after clear requests = %d", snapshot.TotalRequests)
 	}
 }
+
+func TestOpenCodeHistoricalUsageImportAndReloadHideSource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	stats := NewRequestStatistics()
+	options := Options{StoragePath: path, RetentionDays: 30, MaxRecords: 100}
+	if err := stats.Configure(options); err != nil {
+		t.Fatal(err)
+	}
+	detail := RequestDetail{Timestamp: time.Now().UTC(), Provider: "opencode", AuthID: "stable-id", AuthIndex: "index-1", Source: "historical-secret", Tokens: TokenStats{InputTokens: 3, OutputTokens: 2, TotalTokens: 5}}
+	snapshot := StatisticsSnapshot{APIs: map[string]APISnapshot{"client": {Models: map[string]ModelSnapshot{"model": {Details: []RequestDetail{detail}}}}}}
+	if _, err := stats.MergeSnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := NewRequestStatistics()
+	if err := reloaded.Configure(options); err != nil {
+		t.Fatal(err)
+	}
+	for _, current := range []*RequestStatistics{stats, reloaded} {
+		got := current.Snapshot()
+		if got.TotalRequests != 1 || got.TotalTokens != 5 {
+			t.Fatalf("totals changed: %+v", got)
+		}
+		data, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "historical-secret") {
+			t.Fatal("snapshot leaked imported source")
+		}
+		accounts := current.AccountSnapshotsRange(time.Time{}, time.Time{})
+		data, err = json.Marshal(accounts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "historical-secret") || !strings.Contains(string(data), "stable-id") {
+			t.Fatalf("unsafe or missing account identity: %s", data)
+		}
+	}
+}

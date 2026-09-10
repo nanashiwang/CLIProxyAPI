@@ -1127,6 +1127,10 @@ func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
 }
 
 func normalizeStoredEvent(event storedEvent) storedEvent {
+	// Also sanitize historical records loaded from disk or imported snapshots.
+	if strings.EqualFold(strings.TrimSpace(event.Detail.Provider), "opencode") {
+		event.Detail.Source = event.Detail.AuthID
+	}
 	event.Version = storageSchemaVersion
 	event.API = strings.TrimSpace(event.API)
 	if event.API == "" {

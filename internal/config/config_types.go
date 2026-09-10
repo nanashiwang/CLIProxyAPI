@@ -702,6 +702,7 @@ type OpenCodeAPIKey struct {
 	// Note identifies the account or purpose of this credential for operators.
 	Note string `yaml:"note,omitempty" json:"note,omitempty"`
 	// The following fields are management API metadata and must never be persisted.
+	APIKeyRevision   string            `yaml:"-" json:"api-key-revision,omitempty"`
 	APIKeyConfigured bool              `yaml:"-" json:"api-key-configured,omitempty"`
 	APIKeyPreview    string            `yaml:"-" json:"api-key-preview,omitempty"`
 	SourceIndex      *int              `yaml:"-" json:"source-index,omitempty"`
