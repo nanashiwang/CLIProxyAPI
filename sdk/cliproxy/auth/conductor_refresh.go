@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -613,4 +614,67 @@ func (m *Manager) refreshAuthForRequest(ctx context.Context, id, failedAccessTok
 		registry.GetGlobalRegistry().ApplyClientModelProjections(id, regEpoch, targetAuth.Generation, projections)
 	}
 	return saved.Clone(), nil
+}
+
+// ForceRefreshAuth triggers an immediate synchronous refresh for the credential.
+func (m *Manager) ForceRefreshAuth(ctx context.Context, id string) (*Auth, error) {
+	if m == nil {
+		return nil, errors.New("auth manager is nil")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("auth id is empty")
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return m.refreshAuthForRequest(ctx, id, "")
+}
+
+// ForceRefreshResult records the outcome of a forced refresh for one credential.
+type ForceRefreshResult struct {
+	ID      string `json:"id"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
+// ForceRefreshAll triggers an immediate refresh for all credentials that have refresh tokens or custom refresh evaluators.
+func (m *Manager) ForceRefreshAll(ctx context.Context) []ForceRefreshResult {
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	ids := make([]string, 0, len(m.auths))
+	for id, auth := range m.auths {
+		if auth != nil && !auth.Disabled && (authHasRefreshCredential(auth) || auth.Runtime != nil) {
+			ids = append(ids, id)
+		}
+	}
+	m.mu.RUnlock()
+
+	sort.Strings(ids)
+	results := make([]ForceRefreshResult, len(ids))
+	jobs := make(chan int, len(ids))
+	for i := range ids {
+		jobs <- i
+	}
+	close(jobs)
+	var wg sync.WaitGroup
+	for range min(8, len(ids)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				id := ids[index]
+				_, err := m.ForceRefreshAuth(ctx, id)
+				res := ForceRefreshResult{ID: id, Success: err == nil}
+				if err != nil {
+					res.Error = SanitizeUpstreamErrorSummary(err.Error())
+				}
+				results[index] = res
+			}
+		}()
+	}
+	wg.Wait()
+	return results
 }
