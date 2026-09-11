@@ -51,6 +51,12 @@ func tryRefreshCodexClientModels(ctx context.Context, label string) {
 		return
 	}
 
+	if err := ValidateCodexClientModelsJSON(data); err != nil {
+		log.Warnf("%s: fetched catalog rejected, keeping current data: %v", label, err)
+		return
+	}
+	current, _ := GetCodexClientModelsSnapshot()
+	data = retainCompatibilityClientModels(data, current)
 	changed, err := loadCodexClientModelsFromBytes(data, sourceURL)
 	if err != nil {
 		log.Warnf("%s: fetched catalog rejected, keeping current data: %v", label, err)
