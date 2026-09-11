@@ -2,6 +2,7 @@ package executor
 
 import (
 	"bytes"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"net/http"
 	"sort"
 	"strconv"
@@ -26,6 +27,21 @@ func newCodexIncompleteStreamError() codexIncompleteStreamError {
 }
 
 func (codexIncompleteStreamError) IsRequestScoped() bool {
+	return true
+}
+
+type codexEmptyIncompleteStreamError struct {
+	statusErr
+}
+
+func newCodexEmptyIncompleteStreamError() codexEmptyIncompleteStreamError {
+	return codexEmptyIncompleteStreamError{statusErr: statusErr{
+		code: http.StatusBadGateway,
+		msg:  helps.CodexEmptyIncompleteStreamMessage,
+	}}
+}
+
+func (codexEmptyIncompleteStreamError) IsRequestScoped() bool {
 	return true
 }
 
@@ -370,8 +386,10 @@ func isCodexModelCapacityError(errorBody []byte) bool {
 		if lower == "" {
 			continue
 		}
-		if strings.Contains(lower, "selected model is at capacity") ||
-			strings.Contains(lower, "model is at capacity. please try a different model") {
+		if strings.Contains(lower, "model is at capacity") ||
+			strings.Contains(lower, "model_at_capacity") ||
+			strings.Contains(lower, "model_is_at_capacity") ||
+			(strings.Contains(lower, "model") && strings.Contains(lower, "at capacity")) {
 			return true
 		}
 	}
@@ -419,4 +437,61 @@ func parseCodexRetryAfter(statusCode int, errorBody []byte, now time.Time) *time
 		return &retryAfter
 	}
 	return nil
+}
+
+// codexBootstrapMaxBufferedEvents bounds how many handshake metadata events may be held
+// back while probing for an upstream rejection embedded in an HTTP 200 stream. The websocket
+// transport prefixes response events with codex.response.metadata and codex.rate_limits frames,
+// so the limit must comfortably exceed the four handshake frames observed in practice. Once the
+// limit is reached the stream is released and the original unbuffered semantics apply.
+const codexBootstrapMaxBufferedEvents = 16
+
+// isCodexHandshakeMetadataEvent reports whether an event carries no generated output and is
+// therefore safe to hold back before the downstream response headers are committed. Keeping a type
+// allow-list rather than a fixed event count matters for the websocket transport, where the
+// handshake frames arrive before response.created and would otherwise exhaust a small counter
+// before the rejection event is seen.
+func isCodexHandshakeMetadataEvent(eventType string) bool {
+	switch eventType {
+	case "response.created", "response.in_progress", "codex.rate_limits", "codex.response.metadata":
+		return true
+	default:
+		return false
+	}
+}
+
+// newCodexBootstrapOverloadErr reports a buffered overload rejection with its real status.
+//
+// The status is deliberately produced here instead of in codexTerminalFailureStatus: that mapping
+// is shared with the unbuffered path, where the rejection is delivered in-stream and a status
+// change would alter cooldown classification and retry-after parsing for everyone. Keeping 503
+// scoped to this path means disabling the feature restores the previous behaviour exactly.
+func newCodexBootstrapOverloadErr(body []byte) statusErr {
+	return newCodexStatusErr(http.StatusServiceUnavailable, body)
+}
+
+// isCodexOverloadBootstrapFailure reports whether a terminal failure delivered inside an HTTP 200
+// stream is a transient capacity rejection that a different credential may be able to serve.
+// Only these failures justify replacing the whole attempt during bootstrap; every other terminal
+// failure keeps the original in-stream delivery semantics so downstream behaviour is unchanged.
+func isCodexOverloadBootstrapFailure(body []byte) bool {
+	if isCodexModelCapacityError(body) {
+		return true
+	}
+	errorType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.type").String()))
+	errorCode := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.code").String()))
+	errorMessage := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.message").String()))
+	if errorMessage == "" {
+		errorMessage = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "message").String()))
+	}
+	switch {
+	case errorType == "service_unavailable_error", errorCode == "server_is_overloaded":
+		return true
+	case errorType == "rate_limit_error", errorCode == "rate_limit_exceeded":
+		return true
+	case (errorType == "server_error" || errorCode == "server_error") && strings.Contains(errorMessage, "you can retry your request"):
+		return true
+	default:
+		return false
+	}
 }

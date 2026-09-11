@@ -586,6 +586,12 @@ func TestCodexTerminalFailureErrClassifiesStatus(t *testing.T) {
 			event:      `{"type":"response.failed","response":{"error":{"type":"upstream_error","code":"unknown","message":"Upstream failed."}}}`,
 			wantStatus: http.StatusBadGateway,
 		},
+		// Preserve the existing overload status independently of bootstrap buffering.
+		{
+			name:       "overload preserves service unavailable without buffering",
+			event:      `{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`,
+			wantStatus: http.StatusServiceUnavailable,
+		},
 	}
 
 	for _, tc := range tests {
