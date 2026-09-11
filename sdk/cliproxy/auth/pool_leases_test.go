@@ -116,3 +116,37 @@ func TestExpiredContinuationDoesNotAllocateAnotherPool(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLeaseStreamFailoverAfterTargetedCooldownCannotEscape(t *testing.T) {
+	m, c, e := leaseManager(t)
+	ctx := leaseCaller("key-all", "1")
+	req := coreexecutor.Request{Model: "pool-model"}
+	result, err := m.ExecuteStream(ctx, []string{"pool-test"}, req, coreexecutor.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			t.Fatal(chunk.Err)
+		}
+	}
+	group := m.runtimeConfigSnapshot().AccountPoolPolicy.GroupForCredential(e.ids[0])
+	for _, candidateGroup := range c.AccountPools.Groups {
+		if candidateGroup.ID == group {
+			for _, id := range candidateGroup.CredentialIDs {
+				e.failures[id] = true
+			}
+		}
+	}
+	result, err = m.ExecuteStream(ctx, []string{"pool-test"}, req, coreexecutor.Options{})
+	if err == nil {
+		for range result.Chunks {
+		}
+		t.Fatal("stream retry escaped the exhausted lease")
+	}
+	for _, id := range e.ids {
+		if m.runtimeConfigSnapshot().AccountPoolPolicy.GroupForCredential(id) != group {
+			t.Fatalf("retry escaped lease: %s", id)
+		}
+	}
+}

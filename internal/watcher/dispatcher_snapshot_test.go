@@ -395,7 +395,7 @@ func TestRefreshAuthStatePreservesConcurrentProxyUpdate(t *testing.T) {
 			base, _ := manager.GetByID(initial.ID)
 			refreshed := base.Clone()
 			refreshed.Metadata["access_token"] = "new-token"
-			if _, errRefresh := manager.Update(context.Background(), refreshed); errRefresh != nil {
+			if _, errRefresh := manager.UpdateRefreshedAuth(context.Background(), base, refreshed); errRefresh != nil {
 				t.Fatal(errRefresh)
 			}
 			current, _ := manager.GetByID(initial.ID)
