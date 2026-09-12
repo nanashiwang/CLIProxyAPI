@@ -41,6 +41,27 @@ api-keys:
   - "your-api-key-2"
   - "your-api-key-3"
 
+# Optional account groups. Manage membership and key scopes in the Account groups page.
+# Unassigned credentials and keys without a rule use the default group.
+# Explicit scope "all" includes current and future enabled groups; an empty selected
+# group list grants no credential access. Group names are editable; IDs are stable.
+# Home, Realtime/Live, direct plugin executors and the legacy WebSocket relay
+# are not supported while enabled.
+# account-pools:
+#   enabled: false
+#   groups:
+#     - id: default
+#       name: Default
+#       credential-ids: []
+#     - id: work
+#       name: My work accounts
+#       credential-ids: ["credential-id-from-management"]
+#   key-rules:
+#     - key-hash: "sha256-of-the-client-key"
+#       name: Work key
+#       scope: selected
+#       group-ids: [work]
+
 # Enable debug logging
 debug: false
 
@@ -143,6 +164,11 @@ usage-statistics-enabled: false
 
 # Persistent request-level usage statistics.
 # The JSONL file retains request-time token and USD billing snapshots.
+# Retention is applied to in-memory queries immediately. Disk writes append events;
+# obsolete lines are compacted on a subsequent write after 5 minutes or when they
+# reach 10% of max-records (at least 1, at most 10000). Reload applies retention too.
+# After eviction, dashboard aggregates retain their last consistent snapshot until
+# the next background refresh (normally within 60 seconds while requests continue).
 usage-statistics:
   # storage-file: "data/usage_statistics.jsonl"
   retention-days: 90
@@ -156,6 +182,20 @@ redis-usage-queue-retention-seconds: 60
 # Proxy URL. Supports socks5/http/https protocols. Example: socks5://user:pass@192.168.1.1:1080/
 # Per-entry proxy-url also supports "direct" or "none" to bypass both the global proxy-url and environment proxies explicitly.
 proxy-url: ""
+
+# Route supported HTTPS model traffic through a Proof-of-Observation parent gateway.
+# auth-mode "none" is accepted only for a loopback HTTP gateway; use "mtls" remotely.
+poo-parent-gateway:
+  enabled: false
+  required: true
+  url: "http://127.0.0.1:15005/v1/proof/relay"
+  auth-mode: "none"
+  timeout: "10m"
+  max-body-bytes: 67108864
+  # ca-file: "/path/to/ca.pem"
+  # cert-file: "/path/to/client.pem"
+  # key-file: "/path/to/client-key.pem"
+  # server-name: "poo-gateway.example.com"
 
 # When true, unprefixed model requests only use credentials without a prefix (except when prefix == model name).
 force-model-prefix: false
@@ -242,6 +282,28 @@ routing:
   # How long session-to-auth bindings are retained. Default: 1h
   session-affinity-ttl: "1h"
 
+# Native OpenCode Zen/Go provider. Disabled by default.
+# Only the fixed OpenCode endpoints below are accepted; arbitrary upstream URLs are rejected.
+# The model catalog is refreshed periodically and failed refreshes keep the last good snapshot.
+# opencode:
+#   enabled: false
+#   prefer: go # zen or go
+#   anonymous: false # expose only catalog models marked free on the public Zen channel
+#   refresh-seconds: 300
+#   zen:
+#     base-url: "https://opencode.ai/zen"
+#     api-key-entries:
+#       - api-key: "..."
+#         note: "team A account"
+#         proxy-url: ""
+#   go:
+#     base-url: "https://opencode.ai/zen/go"
+#     api-key-entries:
+#       - api-key: "..."
+#         note: "backup account 01"
+#         proxy-url: ""
+#   protocol-overrides: {} # model or tier/model -> chat, responses, anthropic
+
 # Codex provider behavior.
 codex:
   # When true, and routing.strategy is fill-first or routing.session-affinity is true,
@@ -251,11 +313,26 @@ codex:
   identity-confuse: false
   # Disable forcing the official Codex User-Agent and Originator headers on HTTP/SSE and WebSocket requests.
   disable-codex-cloaking: false
+  # Hold back the initial handshake events (response.created, response.in_progress and the
+  # websocket metadata frames) until the upstream emits its first generated event.
+  # Why: the upstream smuggles `server_is_overloaded` rejections *inside* an HTTP 200 stream,
+  # right after those handshake events, instead of returning 503 on the wire. Buffering them
+  # keeps the downstream response headers uncommitted long enough to transparently retry on
+  # another credential. Only overload/rate-limit rejections trigger failover; every other
+  # terminal failure is still delivered in-stream exactly as before.
+  # Trade-off: response headers are delayed until generation starts, which can trip client or
+  # reverse-proxy read timeouts (e.g. nginx proxy_read_timeout) on long reasoning requests.
+  # Default: false
+  stream-bootstrap-buffering: false
   # When true, optimize Codex Desktop, codex-tui, and codex_cli_rs requests for multi-agent v2.
   # This refreshes Codex spawn_agent model details, removes message parameter encryption,
   # normalizes encrypted agent_message content for Codex, and converts agent_message input
   # into standard user messages for non-Codex upstream protocols.
   optimize-multi-agent-v2: false
+  # When true, scope Codex usage_limit_reached quota cooldowns to the requested model rather
+  # than cooling down the entire credential across all sibling models.
+  # Default: false
+  model-level-cooling: false
   # Terminate and relay Codex Live WebRTC audio and DataChannel traffic in this process.
   # This requires inbound UDP reachability. Keep disabled to preserve direct media behavior.
   live-media-relay:
@@ -484,8 +561,8 @@ nonstream-keepalive-interval: 0
 #       - "*-thinking"               # wildcard matching suffix (e.g. claude-opus-4-5-thinking)
 #       - "*haiku*"                  # wildcard matching substring (e.g. claude-3-5-haiku-20241022)
 #     rebuild-mid-system-message: false # optional: default is false; when true, move messages with role "system" into the top-level Claude system field
-#     cloak:                         # optional: request cloaking for non-Claude-Code clients
-#       mode: "auto"                 # "auto" (default): cloak only when client is not Claude Code
+#     cloak:                         # optional: explicitly enable request cloaking for non-Claude-Code clients
+#       mode: "auto"                 # "auto" (default inside this block): cloak only when client is not Claude Code
 #                                    # "always": cloak every unconfirmed client; confirmed native Claude Code still passes through
 #                                    # "never": never apply cloaking
 #       # This "cloak" block applies to this claude-api-key entry only. For Claude OAuth
@@ -500,8 +577,62 @@ nonstream-keepalive-interval: 0
 #         - "proxy"
 #       cache-user-id: true          # optional: default is false; set true to reuse cached user_id per API key instead of generating a random one each request
 #       # Every custom tool on a cloaked OAuth request automatically uses a caller-stable opaque mcp__<server>__<tool> alias.
+#
+#     # fingerprint-profile (optional, top-level on this claude-api-key entry; not a cloak sub-field):
+#     # OAuth and API-key fingerprints are different contracts.
+#     #   - Real Claude OAuth stays on the strict Claude Code CLI wire fingerprint.
+#     #   - API keys (official Anthropic, custom gateways, Kimi) stay loose and
+#     #     caller-owned unless this field is set.
+#     #
+#     # Default (omit / empty): keep the caller request fingerprint and headers.
+#     # Official api.anthropic.com API keys do not add extra CLI betas/identity unless
+#     # this field is set. Custom gateways and delegated providers are the same.
+#     #
+#     # Controls request fingerprint only on /v1/messages (and related Claude executor paths).
+#     # Auth scheme stays API key (x-api-key on api.anthropic.com; Bearer on custom base-url).
+#     # Does NOT enable OAuth refresh, profile fetch, or OAuth-cancellation semantics.
+#     #
+#     # Values:
+#     #   omit / empty        = caller-owned API-key fingerprint (respects caller)
+#     #   "claude-code-cli"   = same Messages fingerprint as Claude Code OAuth CLI,
+#     #                         including official Anthropic API keys: OAuth Anthropic-Beta
+#     #                         set, CCH signing on api.anthropic.com, stable CLI
+#     #                         metadata.user_id / session_id / device identity.
+#     #                         API keys seed identity from the key;
+#     #                         delegated OAuth providers use stable auth ID instead of
+#     #                         rotating access tokens. "oauth-cli" is a legacy alias.
+#     #
+#     # count_tokens keeps the native model/messages/tools shape for every origin, including
+#     # Kimi opt-in. It does not send billing/CCH, currentDate, metadata, or diagnostics.
+#     #
+#     # CCH: the billing block may carry a per-request cch hash. CPA emits it exactly where
+#     # Claude Code does, which is api.anthropic.com (first-party) and Vertex only. An opt-in
+#     # on any other gateway (including Kimi) still sends the billing block, but without cch,
+#     # so a per-request hash cannot bust that gateway's prompt cache. api.anthropic.com
+#     # strips the block itself (0 tokens, no cache impact). Kimi drops the whole block by
+#     # default and keeps it, unsigned, after an explicit fingerprint-profile opt-in.
+#     # A real Claude OAuth credential always signs, on every upstream: a downstream Claude
+#     # Code pointed at CPA cannot produce that value itself.
+#     #
+#     # Example (official Anthropic or a custom Messages gateway):
+#     #   - api-key: "your-key"
+#     #     # base-url: "https://gateway.example"   # omit for api.anthropic.com
+#     #     fingerprint-profile: "claude-code-cli"
+#     #     cloak:
+#     #       mode: "always"   # recommended when upstream rejects non-CLI clients
+#     #
+#     # Delegated Anthropic Messages OAuth files (Kimi, etc.) use the same field in the
+#     # auth JSON. Refresh keeps it. Example:
+#     #   {
+#     #     "type": "kimi",
+#     #     "access_token": "...",
+#     #     "refresh_token": "...",
+#     #     "fingerprint-profile": "claude-code-cli"
+#     #   }
+#     # fingerprint-profile: "claude-code-cli" # optional: default is empty (caller-owned); uncomment to opt into Claude Code CLI Messages fingerprinting
 #     experimental-cch-signing: false # deprecated compatibility field; CCH is generated automatically
-#                                     # all Claude OAuth requests sign, including custom gateways; direct Anthropic/Vertex paths also sign
+#                                     # for real Claude OAuth on any upstream, and for claude-code-cli profiles
+#                                     # only on api.anthropic.com; Vertex keeps provider-native signing
 
 # Anthropic-Beta is assembled per request rather than sent as a fixed list, matching
 # Claude Code: context-1m sits right after claude-code, mid-conversation-system

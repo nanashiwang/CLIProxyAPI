@@ -115,6 +115,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if oldCfg.Codex.DisableCodexCloaking != newCfg.Codex.DisableCodexCloaking {
 		changes = append(changes, fmt.Sprintf("codex.disable-codex-cloaking: %t -> %t", oldCfg.Codex.DisableCodexCloaking, newCfg.Codex.DisableCodexCloaking))
 	}
+	if oldCfg.Codex.StreamBootstrapBuffering != newCfg.Codex.StreamBootstrapBuffering {
+		changes = append(changes, fmt.Sprintf("codex.stream-bootstrap-buffering: %t -> %t", oldCfg.Codex.StreamBootstrapBuffering, newCfg.Codex.StreamBootstrapBuffering))
+	}
 	if oldCfg.Codex.OptimizeMultiAgentV2 != newCfg.Codex.OptimizeMultiAgentV2 {
 		changes = append(changes, fmt.Sprintf("codex.optimize-multi-agent-v2: %t -> %t", oldCfg.Codex.OptimizeMultiAgentV2, newCfg.Codex.OptimizeMultiAgentV2))
 	}
@@ -153,6 +156,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	}
 
 	// API keys (redacted) and counts
+	if !reflect.DeepEqual(oldCfg.AccountPools, newCfg.AccountPools) {
+		changes = append(changes, "account group policy updated")
+	}
 	if len(oldCfg.APIKeys) != len(newCfg.APIKeys) {
 		changes = append(changes, fmt.Sprintf("api-keys count: %d -> %d", len(oldCfg.APIKeys), len(newCfg.APIKeys)))
 	} else if !reflect.DeepEqual(trimStrings(oldCfg.APIKeys), trimStrings(newCfg.APIKeys)) {
@@ -264,6 +270,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 			}
 			if o.RebuildMidSystemMessage != n.RebuildMidSystemMessage {
 				changes = append(changes, fmt.Sprintf("claude[%d].rebuild-mid-system-message: %t -> %t", i, o.RebuildMidSystemMessage, n.RebuildMidSystemMessage))
+			}
+			if strings.TrimSpace(o.FingerprintProfile) != strings.TrimSpace(n.FingerprintProfile) {
+				changes = append(changes, fmt.Sprintf("claude[%d].fingerprint-profile: %s -> %s", i, strings.TrimSpace(o.FingerprintProfile), strings.TrimSpace(n.FingerprintProfile)))
 			}
 			changes = appendOptionalIntChange(changes, fmt.Sprintf("claude[%d].request-retry", i), o.RequestRetry, n.RequestRetry)
 			if o.Cloak != nil && n.Cloak != nil {

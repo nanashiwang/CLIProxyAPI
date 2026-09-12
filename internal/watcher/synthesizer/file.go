@@ -127,12 +127,19 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 					}
 					auth.Metadata["disabled"] = true
 				}
+				if p, ok := metadata["proxy_url"].(string); ok && auth.ProxyURL == "" {
+					auth.ProxyURL = strings.TrimSpace(p)
+				}
+				if pref, ok := metadata["prefix"].(string); ok && auth.Prefix == "" {
+					auth.Prefix = strings.Trim(strings.TrimSpace(pref), "/")
+				}
 				if errWeight := coreauth.ApplyAuthWeightMetadata(auth, metadata); errWeight != nil {
 					return nil, fmt.Errorf("invalid plugin auth weight in %s: %w", filepath.Base(fullPath), errWeight)
 				}
 				coreauth.SetOAuthModelAliasesAttribute(auth, perAccountModelAliases)
 				ApplyAuthExcludedModelsMeta(auth, cfg, perAccountExcluded, "oauth")
 				coreauth.ApplyCustomHeadersFromMetadata(auth)
+				applyFingerprintProfileAttribute(auth, metadata)
 			}
 			return auths, nil
 		}
@@ -222,6 +229,7 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 	coreauth.ApplyCustomHeadersFromMetadata(a)
 	coreauth.SetOAuthModelAliasesAttribute(a, perAccountModelAliases)
 	ApplyAuthExcludedModelsMeta(a, cfg, perAccountExcluded, "oauth")
+	applyFingerprintProfileAttribute(a, metadata)
 	// For codex auth files, extract plan_type from the JWT id_token.
 	if provider == "codex" {
 		if idTokenRaw, ok := metadata["id_token"].(string); ok && strings.TrimSpace(idTokenRaw) != "" {

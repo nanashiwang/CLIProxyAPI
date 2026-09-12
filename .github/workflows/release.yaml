@@ -7,6 +7,10 @@ on:
       - '*'
   workflow_dispatch:
 
+concurrency:
+  group: personal-release
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -22,6 +26,27 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+      - name: Verify mainline release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REPOSITORY}" == 'nanashiwang/CLIProxyAPI' ]]; then
+            [[ "${GITHUB_REF_TYPE}" == 'tag' ]] || { echo 'Publish through a mainline tag'; exit 1; }
+            [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-personal\.[0-9]+$ ]] || exit 1
+            git fetch origin main
+            git merge-base --is-ancestor HEAD origin/main || { echo 'Release commit is not on main'; exit 1; }
+          fi
+      - name: Set up Go for release validation
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Verify release management contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./internal/api ./internal/api/handlers/management
+          go build -o "${RUNNER_TEMP}/release-smoke" ./cmd/server
+          python3 .github/scripts/smoke-management-api.py "${RUNNER_TEMP}/release-smoke"
       - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -688,4 +713,10 @@ jobs:
             sleep "$sleep_seconds"
           done
           [[ "$uploaded" -eq 1 ]]
-          gh release edit "$GITHUB_REF_NAME" --draft=false
+          latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          newest="$(printf '%s\n' "$latest_tag" "$GITHUB_REF_NAME" | sort -V | tail -n 1)"
+          if [[ "$newest" == "$GITHUB_REF_NAME" ]]; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          else
+            gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
+          fi

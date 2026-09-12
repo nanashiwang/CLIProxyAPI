@@ -1,6 +1,7 @@
 name: auto-personal-release
 
 on:
+  # Only the shared main branch publishes personal releases.
   push:
     branches:
       - main
@@ -17,6 +18,7 @@ jobs:
   verify:
     if: >-
       github.repository == 'nanashiwang/CLIProxyAPI' &&
+      github.ref == 'refs/heads/main' &&
       !contains(github.event.head_commit.message, '[skip release]')
     runs-on: macos-15
     steps:
@@ -37,6 +39,7 @@ jobs:
           git diff --check
           go test ./...
           go build -o "${RUNNER_TEMP}/cli-proxy-api" ./cmd/server
+          python3 .github/scripts/smoke-management-api.py "${RUNNER_TEMP}/cli-proxy-api"
 
   tag-and-release:
     needs: verify

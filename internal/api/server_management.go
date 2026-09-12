@@ -76,6 +76,8 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PATCH("/quota-exceeded/switch-preview-model", s.mgmt.PutSwitchPreviewModel)
 		mgmt.POST("/reset-quota", s.mgmt.ResetQuota)
 
+		mgmt.GET("/account-pools", s.mgmt.GetAccountPools)
+		mgmt.PUT("/account-pools", s.mgmt.PutAccountPools)
 		mgmt.GET("/api-keys", s.mgmt.GetAPIKeys)
 		mgmt.PUT("/api-keys", s.mgmt.PutAPIKeys)
 		mgmt.PATCH("/api-keys", s.mgmt.PatchAPIKeys)
@@ -148,6 +150,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PATCH("/xai-api-key", s.mgmt.PatchXAIKey)
 		mgmt.DELETE("/xai-api-key", s.mgmt.DeleteXAIKey)
 
+		mgmt.GET("/opencode", s.mgmt.GetOpenCode)
+		mgmt.PUT("/opencode", s.mgmt.PutOpenCode)
+
 		mgmt.GET("/openai-compatibility", s.mgmt.GetOpenAICompat)
 		mgmt.PUT("/openai-compatibility", s.mgmt.PutOpenAICompat)
 		mgmt.PATCH("/openai-compatibility", s.mgmt.PatchOpenAICompat)
@@ -176,6 +181,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.DELETE("/auth-files", s.mgmt.DeleteAuthFile)
 		mgmt.PATCH("/auth-files/status", s.mgmt.PatchAuthFileStatus)
 		mgmt.PATCH("/auth-files/fields", s.mgmt.PatchAuthFileFields)
+		mgmt.POST("/auth-files/refresh", s.mgmt.RefreshAuthFiles)
 		mgmt.POST("/vertex/import", s.mgmt.ImportVertexCredential)
 
 		mgmt.GET("/anthropic-auth-url", s.mgmt.RequestAnthropicToken)

@@ -59,6 +59,25 @@ func (r *Registry) HasPluginHooks() bool {
 	return r.hooks != nil
 }
 
+// NormalizeRequest applies the installed request normalizer without invoking a
+// format translator. This is useful for native executors that own their wire
+// conversion but must still honor plugin request hooks.
+func (r *Registry) NormalizeRequest(ctx context.Context, from, to Format, model string, body []byte, stream bool) []byte {
+	if r == nil {
+		return body
+	}
+	r.mu.RLock()
+	hooks := r.hooks
+	r.mu.RUnlock()
+	if hooks == nil {
+		return body
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return hooks.NormalizeRequest(ctx, from, to, model, body, stream)
+}
+
 // TranslateRequest converts a payload between schemas, returning the original payload
 // if no translator is registered. When falling back to the original payload, the
 // "model" field is still updated to match the resolved model name so that
@@ -257,6 +276,12 @@ func SetPluginHooks(hooks PluginHooks) {
 // HasPluginHooks reports whether hooks are installed on the default registry.
 func HasPluginHooks() bool {
 	return defaultRegistry.HasPluginHooks()
+}
+
+// NormalizeRequest applies the default registry's request normalizer without
+// invoking a format translator.
+func NormalizeRequest(ctx context.Context, from, to Format, model string, body []byte, stream bool) []byte {
+	return defaultRegistry.NormalizeRequest(ctx, from, to, model, body, stream)
 }
 
 // TranslateRequest is a helper on the default registry.

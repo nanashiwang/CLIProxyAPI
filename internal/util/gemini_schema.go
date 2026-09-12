@@ -1180,3 +1180,8 @@ func mergeDescriptionRaw(schemaRaw, parentDesc string) string {
 		return string(updated)
 	}
 }
+
+// InlineLocalRefs resolves local schema references for providers that require inline parameters.
+func InlineLocalRefs(jsonStr string) string {
+	return inlineLocalRefs(jsonStr)
+}

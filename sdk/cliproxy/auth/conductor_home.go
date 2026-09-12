@@ -970,6 +970,11 @@ func requestedModelFromMetadata(metadata map[string]any, fallback string) string
 }
 
 func (m *Manager) findAllAntigravityCreditsCandidateAuths(ctx context.Context, routeModel string, opts cliproxyexecutor.Options) ([]creditsCandidateEntry, error) {
+	scope, errPool := m.AccountPoolScope(ctx)
+	if errPool != nil {
+		return nil, errPool
+	}
+
 	if m == nil || !m.localExecutionAllowed() {
 		return nil, nil
 	}
@@ -977,7 +982,7 @@ func (m *Manager) findAllAntigravityCreditsCandidateAuths(ctx context.Context, r
 	var candidates []creditsCandidateEntry
 	m.mu.RLock()
 	for _, auth := range m.auths {
-		if auth == nil || auth.Disabled || auth.Status == StatusDisabled {
+		if auth == nil || auth.Disabled || auth.Status == StatusDisabled || !scope.Allows(auth.ID) {
 			continue
 		}
 		if pinnedAuthID != "" && auth.ID != pinnedAuthID {
@@ -1093,7 +1098,7 @@ func (m *Manager) tryAntigravityCreditsExecute(ctx context.Context, req cliproxy
 		if ctx.Err() != nil {
 			return cliproxyexecutor.Response{}, false, nil
 		}
-		creditsCtx := WithAntigravityCredits(ctx)
+		creditsCtx := WithAntigravityCredits(m.accountPoolUsageContext(ctx, c.auth.ID))
 		if rt := m.roundTripperFor(c.auth); rt != nil {
 			creditsCtx = context.WithValue(creditsCtx, roundTripperContextKey{}, rt)
 			creditsCtx = context.WithValue(creditsCtx, "cliproxy.roundtripper", rt)
@@ -1115,7 +1120,7 @@ func (m *Manager) tryAntigravityCreditsExecute(ctx context.Context, req cliproxy
 			execReq := req
 			execReq.Model = upstreamModel
 			resp, errExec := c.executor.Execute(creditsCtx, c.auth, execReq, creditsOpts)
-			result := Result{AuthID: c.auth.ID, Provider: c.provider, Model: resultModel, Success: errExec == nil, Options: creditsOpts}
+			result := Result{AuthID: c.auth.ID, Provider: c.provider, Model: resultModel, RouteModel: routeModel, Success: errExec == nil, Options: creditsOpts}
 			if errExec != nil {
 				result.Error = resultErrorFromError(errExec)
 				if ra := retryAfterFromError(errExec); ra != nil {
@@ -1155,7 +1160,7 @@ func (m *Manager) tryAntigravityCreditsExecuteStream(ctx context.Context, req cl
 		if ctx.Err() != nil {
 			return nil, false, nil
 		}
-		creditsCtx := WithAntigravityCredits(ctx)
+		creditsCtx := WithAntigravityCredits(m.accountPoolUsageContext(ctx, c.auth.ID))
 		if rt := m.roundTripperFor(c.auth); rt != nil {
 			creditsCtx = context.WithValue(creditsCtx, roundTripperContextKey{}, rt)
 			creditsCtx = context.WithValue(creditsCtx, "cliproxy.roundtripper", rt)

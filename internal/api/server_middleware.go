@@ -167,6 +167,7 @@ func accessAuthMiddleware(manager *sdkaccess.Manager, realtimeError bool) gin.Ha
 		if err == nil {
 			if result != nil {
 				c.Set("userApiKey", result.Principal)
+				c.Request = c.Request.WithContext(sdkaccess.WithClientKeyIdentity(c.Request.Context(), result.Principal))
 				c.Set("accessProvider", result.Provider)
 				if len(result.Metadata) > 0 {
 					c.Set("accessMetadata", result.Metadata)
@@ -225,6 +226,7 @@ func realtimeAuthMiddleware(manager *sdkaccess.Manager, handler *codexlive.Handl
 			provider = "realtime-client-secret"
 		}
 		c.Set("userApiKey", principal)
+		c.Request = c.Request.WithContext(sdkaccess.WithClientKeyIdentity(c.Request.Context(), principal))
 		c.Set("accessProvider", provider)
 		c.Set(codexlive.ClientSecretSessionContextKey, authorization.Session)
 		c.Set(codexlive.ClientSecretPrincipalContextKey, authorization.Principal)

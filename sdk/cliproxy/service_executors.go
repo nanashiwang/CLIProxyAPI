@@ -209,6 +209,7 @@ func baselineExecutorAuths() []*coreauth.Auth {
 		"antigravity",
 		"kimi",
 		"xai",
+		"opencode",
 		"openai-compatibility",
 	}
 	auths := make([]*coreauth.Auth, 0, len(providers))
@@ -227,12 +228,19 @@ func baselineExecutorAuths() []*coreauth.Auth {
 
 func (s *Service) registerExecutorsForAuths(auths []*coreauth.Auth, forceReplace bool) {
 	reboundCodex := false
+	reboundOpenCode := false
 	for _, auth := range auths {
 		if auth != nil && strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
 			if reboundCodex && forceReplace {
 				continue
 			}
 			reboundCodex = true
+		}
+		if auth != nil && !auth.Disabled && auth.Status != coreauth.StatusDisabled && strings.EqualFold(strings.TrimSpace(auth.Provider), "opencode") {
+			if reboundOpenCode && forceReplace {
+				continue
+			}
+			reboundOpenCode = true
 		}
 		s.registerExecutorForAuth(auth, forceReplace)
 	}
@@ -262,6 +270,32 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 	// Disabled auths can linger during config reloads (e.g., removed OpenAI-compat entries)
 	// and must not override active provider executors.
 	if a.Disabled {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(a.Provider), "opencode") {
+		if a.Status == coreauth.StatusDisabled {
+			return
+		}
+		if cfg == nil || !cfg.OpenCode.Enabled || cfg.Home.Enabled {
+			if existingExecutor, ok := s.coreManager.Executor("opencode"); ok {
+				if _, isOpenCode := existingExecutor.(*executor.OpenCodeExecutor); isOpenCode {
+					s.coreManager.UnregisterExecutor("opencode")
+				}
+			}
+			return
+		}
+		if existingExecutor, ok := s.coreManager.Executor("opencode"); ok {
+			if _, isOpenCode := existingExecutor.(*executor.OpenCodeExecutor); isOpenCode {
+				if !forceReplace {
+					return
+				}
+			} else {
+				// Do not replace an executor owned by another integration under the
+				// reserved provider key.
+				return
+			}
+		}
+		s.coreManager.RegisterExecutor(executor.NewOpenCodeExecutor(cfg, s.currentOpenCodeCatalog()))
 		return
 	}
 	if compatProviderKey, _, isCompat := openAICompatInfoFromAuth(a); isCompat {

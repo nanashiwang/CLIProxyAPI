@@ -28,7 +28,17 @@ func (h *Handler) GetConfig(c *gin.Context) {
 		c.JSON(200, gin.H{})
 		return
 	}
-	c.JSON(200, new(*h.cfg))
+
+	h.mu.Lock()
+	value := h.cfg.CloneForRuntime()
+	h.mu.Unlock()
+	if value == nil {
+		c.JSON(200, gin.H{})
+		return
+	}
+	value.OpenCode.Zen = maskOpenCodeTier(value.OpenCode.Zen)
+	value.OpenCode.Go = maskOpenCodeTier(value.OpenCode.Go)
+	c.JSON(200, value)
 }
 
 type releaseInfo struct {

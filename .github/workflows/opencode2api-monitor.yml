@@ -1,0 +1,146 @@
+name: opencode2api-monitor
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: opencode2api-monitor
+  cancel-in-progress: true
+
+env:
+  UPSTREAM_REPO: jasonxu114514/opencode2api
+  # Update this value after manually reviewing and adapting an upstream change.
+  ADAPTED_COMMIT: 3be4b393c0c23746caef54d4bde26cb8c1fdf1e1
+  ADAPTED_TAG: v1.2.2
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout CPA
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check upstream and open an issue when review is needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          upstream="${UPSTREAM_REPO}"
+          api="repos/${upstream}"
+          watched_json='["gateway.go","models.go","convert.go","stream.go","pool.go","config.go","runtime.go","admin.go","ids.go","model_metadata.go","observability.go","password.go","main.go","go.mod","go.sum","README.md","config.example.json","Dockerfile","compose.yaml","docker-entrypoint.sh"]'
+
+          default_branch="$(gh api "${api}" --jq '.default_branch')"
+          head_sha="$(gh api "${api}/commits/${default_branch}" --jq '.sha')"
+          latest_tag_json="$(gh api "${api}/tags?per_page=1" 2>/dev/null || printf '{}')"
+          latest_tag="$(jq -r '.[]?.name // ""' <<<"${latest_tag_json}" | head -n 1)"
+          latest_tag_sha="$(jq -r '.[]?.commit.sha // ""' <<<"${latest_tag_json}" | head -n 1)"
+          latest_release_json="$(gh api "${api}/releases/latest" 2>/dev/null || printf '{}')"
+          latest_release="$(jq -r '.tag_name // ""' <<<"${latest_release_json}")"
+          latest_release_url="$(jq -r '.html_url // ""' <<<"${latest_release_json}")"
+          latest_release_date="$(jq -r '.published_at // ""' <<<"${latest_release_json}")"
+
+          compare_json="$(gh api "${api}/compare/${ADAPTED_COMMIT}...${head_sha}" 2>/dev/null || printf '{}')"
+          changed_files="$(jq -r --argjson watched "${watched_json}" '
+            .files[]? |
+            select((.filename as $file | $watched | index($file)) or (.previous_filename as $file | $watched | index($file))) |
+            [.status, (.previous_filename // ""), .filename] | @tsv
+          ' <<<"${compare_json}")"
+
+          head_changed=false
+          if [[ "${head_sha}" != "${ADAPTED_COMMIT}" ]]; then
+            head_changed=true
+          fi
+
+          tag_changed=false
+          if [[ -n "${latest_tag}" && "${latest_tag}" != "${ADAPTED_TAG}" ]]; then
+            tag_changed=true
+          fi
+          release_changed=false
+          if [[ -n "${latest_release}" && "${latest_release}" != "${ADAPTED_TAG}" ]]; then
+            release_changed=true
+          fi
+          status_marker="opencode2api-status head=${head_sha} tag=${latest_tag}@${latest_tag_sha} release=${latest_release}"
+
+          if [[ "${head_changed}" != true && "${tag_changed}" != true && "${release_changed}" != true ]]; then
+            echo "No upstream OpenCode changes require review."
+            exit 0
+          fi
+
+          title="[Upstream review] opencode2api update pending"
+          existing_number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "[Upstream review] opencode2api update pending") | .number' 2>/dev/null | head -n 1 || true)"
+          if [[ -n "${existing_number}" ]]; then
+            existing_issue="$(gh issue view "${existing_number}" --json body,comments 2>/dev/null || printf '{}')"
+            if jq -e --arg marker "${status_marker}" '
+              (.body // "") as $body |
+              ([.comments[]?.body // ""] | join("\n")) as $comments |
+              (($body + "\n" + $comments) | contains($marker))
+            ' <<<"${existing_issue}" >/dev/null; then
+              echo "Current upstream HEAD is already recorded in issue #${existing_number}."
+              exit 0
+            fi
+          fi
+
+          changed_section="$(if [[ -n "${changed_files}" ]]; then
+            while IFS=$'\t' read -r status previous filename; do
+              if [[ -n "${previous}" ]]; then
+                printf -- '- `%s`: `%s` -> `%s`\n' "${status}" "${previous}" "${filename}"
+              else
+                printf -- '- `%s`: `%s`\n' "${status}" "${filename}"
+              fi
+            done <<<"${changed_files}"
+          else
+            printf '%s\n' '- 未发现关键文件差异，但上游 tag/release 已推进。'
+          fi)"
+
+          if [[ -n "${existing_number}" ]]; then
+            cat > update.md <<EOF2
+          检测到新的 opencode2api 上游状态，需继续人工审查。
+
+          状态标记：\`${status_marker}\`
+          - 上游 HEAD：\`${head_sha}\`
+          - 最新 tag：${latest_tag:-无}
+          - 最新 release：${latest_release:-无}
+          - 关键文件变化：
+          ${changed_section}
+          EOF2
+            gh issue comment "${existing_number}" --body-file update.md
+            echo "Updated existing issue #${existing_number}."
+            exit 0
+          fi
+
+          cat > issue.md <<EOF2
+          ## OpenCode 上游更新待审查
+
+          状态标记：\`${status_marker}\`
+          检测时间：$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          上游仓库：https://github.com/${UPSTREAM_REPO}
+          当前已适配 commit：
+          \`${ADAPTED_COMMIT}\`（${ADAPTED_TAG}）
+          上游默认分支：${default_branch}
+          上游 HEAD：
+          \`${head_sha}\`
+          上游最新 tag：${latest_tag:-无}（${latest_tag_sha:-无}）
+          上游最新 release：${latest_release:-无}（${latest_release_date:-未知}）
+          ${latest_release_url}
+
+          ### 关键文件变化
+          ${changed_section}
+
+          ### CPA 影响分析（需人工确认）
+          - 对照 \`internal/opencode\`、\`internal/runtime/executor/opencode_executor.go\` 及配置/路由逻辑检查协议、模型目录和错误重试行为。
+          - 重点确认是否出现认证头、Host、代理、SSRF、模型注入或流式响应语义变化。
+          - 若确认需要适配，请在 CPA 中完成实现和测试，然后更新本 workflow 的 \`ADAPTED_COMMIT\` / \`ADAPTED_TAG\`。
+          - 本 Issue 由自动监控创建，不应直接复制上游代码；请进行行为级审查和重实现。
+          EOF2
+
+          gh issue create --title "${title}" --body-file issue.md

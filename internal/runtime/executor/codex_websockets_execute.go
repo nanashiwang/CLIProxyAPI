@@ -64,6 +64,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	}
 	body = sanitizeOpenAIResponsesReasoningEncryptedContent(ctx, "codex websockets executor", body)
 	body = normalizeCodexWebsocketParallelToolCalls(body, opts.Headers)
+	body = helps.NormalizeCodexToolSchemas(body)
 	multiAgentV2Conflict := helps.HasCodexMultiAgentV2NamespaceConflict(body)
 	body, optimizeMultiAgentV2 := helps.OptimizeCodexMultiAgentV2RequestForAuth(ctx, opts.Headers, body, e.cfg, auth, baseModel)
 	body, replayScope, errReplay := applyCodexReasoningReplayCacheRequired(ctx, from, req, opts, body)
@@ -150,7 +151,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 			return e.CodexExecutor.Execute(ctx, auth, req, opts)
 		}
 		if respHS != nil && respHS.StatusCode > 0 {
-			return resp, statusErr{code: respHS.StatusCode, msg: string(bodyErr)}
+			return resp, newCodexStatusErrWithCooling(respHS.StatusCode, bodyErr, e.modelLevelCooling())
 		}
 		helps.RecordAPIWebsocketError(ctx, e.cfg, "dial", errDial)
 		return resp, errDial
@@ -257,6 +258,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 
 	outputItemsByIndex := make(map[int64][]byte)
 	var outputItemsFallback [][]byte
+	sawOutputDelta := false
 	for {
 		if ctx != nil && ctx.Err() != nil {
 			return resp, ctx.Err()
@@ -289,7 +291,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		payload = helps.RestoreCodexMultiAgentV2Response(payload, restoreMultiAgentV2)
 		reporter.ObserveQuotaHeaders(helps.ParseCodexQuotaEventHeaders(payload))
 
-		if wsErr, ok := parseCodexWebsocketError(payload); ok {
+		if wsErr, ok := parseCodexWebsocketErrorWithCooling(payload, e.modelLevelCooling()); ok {
 			if sess != nil {
 				e.invalidateUpstreamConn(sess, conn, "upstream_error", wsErr)
 			}
@@ -299,7 +301,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 			helps.RecordAPIWebsocketError(ctx, e.cfg, "upstream_error", wsErr)
 			return resp, wsErr
 		}
-		if streamErr, terminalBody, ok := codexTerminalFailureErr(payload); ok {
+		if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(payload, e.modelLevelCooling()); ok {
 			if sess != nil {
 				unlockSession()
 				e.invalidateUpstreamConn(sess, conn, "terminal_failure", streamErr)
@@ -312,10 +314,23 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 
 		payload = normalizeCodexWebsocketCompletion(payload)
 		eventType := gjson.GetBytes(payload, "type").String()
+		if helps.HasMeaningfulCodexOutputDelta(payload) {
+			sawOutputDelta = true
+		}
 		switch eventType {
 		case "response.output_item.done":
 			collectCodexOutputItemDone(payload, outputItemsByIndex, &outputItemsFallback)
-		case "response.completed":
+		case "response.completed", "response.done", "response.incomplete":
+			if helps.IsCodexTerminalEmptyIncomplete(payload, len(outputItemsByIndex)+len(outputItemsFallback), sawOutputDelta) {
+				if sess != nil {
+					e.invalidateUpstreamConn(sess, conn, "terminal_empty_incomplete", nil)
+					unlockSession()
+				}
+				streamErr := newCodexEmptyIncompleteStreamError()
+				helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
+				reporter.PublishFailure(ctx, streamErr)
+				return resp, streamErr
+			}
 			payload = patchCodexCompletedOutput(payload, outputItemsByIndex, outputItemsFallback)
 			cacheCodexReasoningReplayFromCompleted(replayScope, payload)
 			if detail, ok := helps.ParseCodexUsage(payload); ok {

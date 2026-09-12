@@ -367,7 +367,11 @@ func (m *Manager) run(ctx context.Context) {
 			return
 		}
 		item := m.queue[0]
+		m.queue[0] = queueItem{}
 		m.queue = m.queue[1:]
+		if len(m.queue) == 0 {
+			m.queue = nil
+		}
 		m.mu.Unlock()
 		m.dispatch(item)
 	}

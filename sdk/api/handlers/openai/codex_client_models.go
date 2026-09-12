@@ -6,8 +6,12 @@ import (
 )
 
 func (h *OpenAIAPIHandler) codexClientModelsResponse() map[string]any {
+	return h.codexClientModelsResponseFor(h.Models())
+}
+
+func (h *OpenAIAPIHandler) codexClientModelsResponseFor(models []map[string]any) map[string]any {
 	optimizeMultiAgentV2 := h != nil && h.Cfg != nil && h.Cfg.CodexOptimizeMultiAgentV2
-	return codexmodels.BuildResponse(h.Models(), registry.GetGlobalRegistry().GetModelProviders, optimizeMultiAgentV2)
+	return codexmodels.BuildResponse(models, registry.GetGlobalRegistry().GetModelProviders, optimizeMultiAgentV2)
 }
 
 // CodexClientModelsResponse builds a Codex client model response.

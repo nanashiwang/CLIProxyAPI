@@ -403,3 +403,69 @@ func TestSnapshotWindowRefreshesAfterClear(t *testing.T) {
 		t.Fatalf("after clear requests = %d", snapshot.TotalRequests)
 	}
 }
+
+func TestOpenCodeHistoricalUsageImportAndReloadHideSource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	stats := NewRequestStatistics()
+	options := Options{StoragePath: path, RetentionDays: 30, MaxRecords: 100}
+	if err := stats.Configure(options); err != nil {
+		t.Fatal(err)
+	}
+	detail := RequestDetail{Timestamp: time.Now().UTC(), Provider: "opencode", AuthID: "stable-id", AuthIndex: "index-1", Source: "historical-secret", Tokens: TokenStats{InputTokens: 3, OutputTokens: 2, TotalTokens: 5}}
+	snapshot := StatisticsSnapshot{APIs: map[string]APISnapshot{"client": {Models: map[string]ModelSnapshot{"model": {Details: []RequestDetail{detail}}}}}}
+	if _, err := stats.MergeSnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := NewRequestStatistics()
+	if err := reloaded.Configure(options); err != nil {
+		t.Fatal(err)
+	}
+	for _, current := range []*RequestStatistics{stats, reloaded} {
+		got := current.Snapshot()
+		if got.TotalRequests != 1 || got.TotalTokens != 5 {
+			t.Fatalf("totals changed: %+v", got)
+		}
+		data, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "historical-secret") {
+			t.Fatal("snapshot leaked imported source")
+		}
+		accounts := current.AccountSnapshotsRange(time.Time{}, time.Time{})
+		data, err = json.Marshal(accounts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "historical-secret") || !strings.Contains(string(data), "stable-id") {
+			t.Fatalf("unsafe or missing account identity: %s", data)
+		}
+	}
+}
+
+func BenchmarkSnapshotWindowRecentDetails(b *testing.B) {
+	stats := NewRequestStatistics()
+	now := time.Now().UTC()
+	stats.events = make([]storedEvent, 200000)
+	for i := range stats.events {
+		stats.events[i] = storedEvent{API: "test", Model: "test", Detail: RequestDetail{Timestamp: now.Add(-time.Second)}}
+	}
+	stats.rebuildWindowCache(stats.events, now)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		stats.SnapshotWindow("7d", 20)
+	}
+}
+
+func TestAccountPoolAttributionIsPersistedWithoutChangingBilling(t *testing.T) {
+	ctx := coreusage.WithAccountPoolAttribution(context.Background(), "key-fingerprint", "group-a")
+	event := eventFromRecord(ctx, coreusage.Record{Provider: "codex", Model: "test", Billing: coreusage.Billing{Currency: "USD", Priced: true, TotalUSD: 2}})
+	if event.Detail.ClientKeyID != "key-fingerprint" || event.Detail.PoolID != "group-a" || event.Detail.CostUSD == nil || *event.Detail.CostUSD != 2 {
+		t.Fatalf("wrong attribution or billing: %+v", event.Detail)
+	}
+	legacy := eventFromRecord(context.Background(), coreusage.Record{Provider: "codex"})
+	if legacy.Detail.ClientKeyID != "" || legacy.Detail.PoolID != "" {
+		t.Fatal("legacy records were assigned a current group")
+	}
+}

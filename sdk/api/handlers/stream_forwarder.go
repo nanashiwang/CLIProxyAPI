@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/poo"
 )
 
 // PendingStreamError returns an immediately available non-nil stream error.
@@ -51,6 +53,10 @@ type StreamForwardOptions struct {
 	// without an error (e.g. OpenAI's `[DONE]`). It should not flush.
 	WriteDone func()
 
+	// WriteTEEEvent optionally emits the final `tee.proof` or `tee.error` SSE event.
+	// It should not flush.
+	WriteTEEEvent func(event string, payload []byte)
+
 	// WriteKeepAlive optionally writes a keep-alive heartbeat. It should not flush.
 	// When nil, a standard SSE comment heartbeat is used.
 	WriteKeepAlive func()
@@ -67,6 +73,13 @@ func (h *BaseAPIHandler) ForwardStream(c *gin.Context, flusher http.Flusher, can
 	writeChunk := opts.WriteChunk
 	if writeChunk == nil {
 		writeChunk = func([]byte) {}
+	}
+
+	writeTEEEvent := opts.WriteTEEEvent
+	if writeTEEEvent == nil {
+		writeTEEEvent = func(event string, payload []byte) {
+			_, _ = fmt.Fprintf(c.Writer, "event: tee.%s\ndata: %s\n\n", event, payload)
+		}
 	}
 
 	writeKeepAlive := opts.WriteKeepAlive
@@ -89,6 +102,8 @@ func (h *BaseAPIHandler) ForwardStream(c *gin.Context, flusher http.Flusher, can
 	}
 
 	var terminalErr *interfaces.ErrorMessage
+	var teeEvent string
+	var teePayload []byte
 	for {
 		select {
 		case <-c.Request.Context().Done():
@@ -116,12 +131,26 @@ func (h *BaseAPIHandler) ForwardStream(c *gin.Context, flusher http.Flusher, can
 					cancel(terminalErr.Error)
 					return
 				}
+				if teeEvent == "error" {
+					writeTEEEvent("error", teePayload)
+					flusher.Flush()
+					cancel(fmt.Errorf("TEE proof stream failed"))
+					return
+				}
 				if opts.WriteDone != nil {
 					opts.WriteDone()
+				}
+				if teeEvent == "proof" {
+					writeTEEEvent("proof", teePayload)
 				}
 				flusher.Flush()
 				cancel(nil)
 				return
+			}
+			if event, payload, isTEEEvent := poo.DecodeStreamEvent(chunk); isTEEEvent {
+				teeEvent = event
+				teePayload = append(teePayload[:0], payload...)
+				continue
 			}
 			writeChunk(chunk)
 			flusher.Flush()

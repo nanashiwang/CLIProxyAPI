@@ -186,7 +186,7 @@ func HideAPIKey(apiKey string) string {
 	} else if len(apiKey) > 2 {
 		return apiKey[:1] + "..." + apiKey[len(apiKey)-1:]
 	}
-	return apiKey
+	return strings.Repeat("*", len(apiKey))
 }
 
 // maskAuthorizationHeader masks the Authorization header value while preserving the auth type prefix.

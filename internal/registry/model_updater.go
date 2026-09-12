@@ -121,6 +121,8 @@ func tryRefreshModels(ctx context.Context, label string) {
 		return
 	}
 
+	retainCompatibilityCatalog(parsed, oldData)
+
 	// Detect changes before updating store.
 	changed := detectChangedProviders(oldData, parsed)
 

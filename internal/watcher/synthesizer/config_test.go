@@ -229,6 +229,7 @@ func TestConfigSynthesizer_ClaudeKeys(t *testing.T) {
 					BaseURL:                 "https://api.anthropic.com",
 					DisableCooling:          boolPointer(true),
 					RebuildMidSystemMessage: true,
+					FingerprintProfile:      "claude-code-cli",
 					Models: []config.ClaudeModel{
 						{Name: "claude-3-opus"},
 						{Name: "claude-3-sonnet"},
@@ -268,6 +269,9 @@ func TestConfigSynthesizer_ClaudeKeys(t *testing.T) {
 	}
 	if got := auths[0].Attributes["rebuild_mid_system_message"]; got != "true" {
 		t.Errorf("expected rebuild_mid_system_message=true, got %s", got)
+	}
+	if got := auths[0].Attributes["fingerprint_profile"]; got != "claude-code-cli" {
+		t.Errorf("expected fingerprint_profile=claude-code-cli, got %s", got)
 	}
 	if v, ok := auths[0].Metadata["disable_cooling"].(bool); !ok || !v {
 		t.Errorf("expected disable_cooling=true, got %v", auths[0].Metadata["disable_cooling"])
@@ -1093,5 +1097,84 @@ func TestConfigSynthesizer_RequestScopedErrors(t *testing.T) {
 		if !ok || len(extracted) != 1 || extracted[0].Action != "stop" {
 			t.Fatalf("auth %s unexpected request_scoped_errors: %#v", auth.ID, val)
 		}
+	}
+}
+
+func TestConfigSynthesizer_OpenCodeKeyOverrides(t *testing.T) {
+	disableCooling := true
+	retry := 0
+	synth := NewConfigSynthesizer()
+	ctx := &SynthesisContext{
+		Config: &config.Config{OpenCode: config.OpenCodeConfig{
+			Enabled: true,
+			Prefer:  "zen",
+			Zen: config.OpenCodeTierConfig{BaseURL: config.DefaultOpenCodeZenURL, APIKeyEntries: []config.OpenCodeAPIKey{{
+				APIKey:         "zen-key",
+				Note:           "张三账号",
+				DisableCooling: &disableCooling,
+				RequestRetry:   &retry,
+				RequestScopedErrors: []config.RequestScopedErrorRule{{
+					Status: 429,
+					Action: "continue-and-cooldown",
+					Match:  []string{"rate limit"},
+				}},
+			}}},
+		}},
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	}
+	auths, err := synth.Synthesize(ctx)
+	if err != nil || len(auths) != 1 {
+		t.Fatalf("Synthesize() = %d auths, %v", len(auths), err)
+	}
+	if auths[0].Attributes["note"] != "张三账号" {
+		t.Fatalf("note attribute = %q", auths[0].Attributes["note"])
+	}
+	metadata := auths[0].Metadata
+	if metadata["disable_cooling"] != true || metadata["request_retry"] != 0 {
+		t.Fatalf("override metadata = %#v", metadata)
+	}
+	rules, ok := metadata["request_scoped_errors"].([]config.RequestScopedErrorRule)
+	if !ok || len(rules) != 1 || rules[0].Status != 429 {
+		t.Fatalf("request scoped errors = %#v", metadata["request_scoped_errors"])
+	}
+}
+
+func TestConfigSynthesizer_OpenCodeTierAndAnonymousPolicy(t *testing.T) {
+	synth := NewConfigSynthesizer()
+	ctx := &SynthesisContext{
+		Config: &config.Config{OpenCode: config.OpenCodeConfig{
+			Enabled:   true,
+			Prefer:    "go",
+			Anonymous: true,
+			Zen:       config.OpenCodeTierConfig{BaseURL: config.DefaultOpenCodeZenURL, APIKeyEntries: []config.OpenCodeAPIKey{{APIKey: "zen-key"}}},
+			Go:        config.OpenCodeTierConfig{BaseURL: config.DefaultOpenCodeGoURL, APIKeyEntries: []config.OpenCodeAPIKey{{APIKey: "go-key"}}},
+		}},
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	}
+	auths, err := synth.Synthesize(ctx)
+	if err != nil {
+		t.Fatalf("Synthesize() error = %v", err)
+	}
+	if len(auths) != 3 {
+		t.Fatalf("synthesized auth count = %d, want 3", len(auths))
+	}
+	seen := map[string]*coreauth.Auth{}
+	for _, auth := range auths {
+		seen[auth.Label] = auth
+		if auth.Provider != "opencode" {
+			t.Fatalf("provider = %q, want opencode", auth.Provider)
+		}
+	}
+	if seen["opencode-go"].Attributes["priority"] != "1" {
+		t.Fatalf("preferred Go priority = %q, want 1", seen["opencode-go"].Attributes["priority"])
+	}
+	if seen["opencode-zen"].Attributes["priority"] != "" {
+		t.Fatalf("non-preferred Zen priority = %q, want empty", seen["opencode-zen"].Attributes["priority"])
+	}
+	anonymous := seen["opencode-anonymous"]
+	if anonymous.Attributes["anonymous"] != "true" || anonymous.Attributes["api_key"] != "public" || anonymous.Attributes["priority"] != "-1" {
+		t.Fatalf("anonymous auth attributes = %#v", anonymous.Attributes)
 	}
 }

@@ -36,6 +36,17 @@ func rejectInvalidCredentialWeight(c *gin.Context, field string, weight *int) bo
 	return false
 }
 
+// rejectInvalidFingerprintProfile fails a write that carries a value the request
+// path would silently ignore, so a typo surfaces here instead of as a warning
+// behind every later request.
+func rejectInvalidFingerprintProfile(c *gin.Context, field, profile string) bool {
+	if errValidate := config.ValidateClaudeFingerprintProfile(profile); errValidate != nil {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("%s: %v", field, errValidate)})
+		return true
+	}
+	return false
+}
+
 // Generic helpers for list[string]
 func (h *Handler) putStringList(c *gin.Context, set func([]string), after func()) {
 	data, err := c.GetRawData()
@@ -129,20 +140,6 @@ func (h *Handler) deleteFromStringList(c *gin.Context, target *[]string, after f
 		return
 	}
 	c.JSON(400, gin.H{"error": "missing index or value"})
-}
-
-// api-keys
-func (h *Handler) GetAPIKeys(c *gin.Context) { c.JSON(200, gin.H{"api-keys": h.cfg.APIKeys}) }
-func (h *Handler) PutAPIKeys(c *gin.Context) {
-	h.putStringList(c, func(v []string) {
-		h.cfg.APIKeys = append([]string(nil), v...)
-	}, nil)
-}
-func (h *Handler) PatchAPIKeys(c *gin.Context) {
-	h.patchStringList(c, &h.cfg.APIKeys, func() {})
-}
-func (h *Handler) DeleteAPIKeys(c *gin.Context) {
-	h.deleteFromStringList(c, &h.cfg.APIKeys, func() {})
 }
 
 // gemini-api-key: []GeminiKey
@@ -541,6 +538,9 @@ func (h *Handler) PutClaudeKeys(c *gin.Context) {
 		if rejectInvalidCredentialWeight(c, fmt.Sprintf("claude-api-key[%d].weight", i), arr[i].Weight) {
 			return
 		}
+		if rejectInvalidFingerprintProfile(c, fmt.Sprintf("claude-api-key[%d].fingerprint-profile", i), arr[i].FingerprintProfile) {
+			return
+		}
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -551,6 +551,7 @@ func (h *Handler) PutClaudeKeys(c *gin.Context) {
 func (h *Handler) PatchClaudeKey(c *gin.Context) {
 	type claudeKeyPatch struct {
 		APIKey                  *string                          `json:"api-key"`
+		FingerprintProfile      *string                          `json:"fingerprint-profile"`
 		Weight                  json.RawMessage                  `json:"weight"`
 		Prefix                  *string                          `json:"prefix"`
 		BaseURL                 *string                          `json:"base-url"`
@@ -596,6 +597,12 @@ func (h *Handler) PatchClaudeKey(c *gin.Context) {
 	entry := h.cfg.ClaudeKey[targetIndex]
 	if body.Value.APIKey != nil {
 		entry.APIKey = strings.TrimSpace(*body.Value.APIKey)
+	}
+	if body.Value.FingerprintProfile != nil {
+		if rejectInvalidFingerprintProfile(c, "fingerprint-profile", *body.Value.FingerprintProfile) {
+			return
+		}
+		entry.FingerprintProfile, _ = config.NormalizeClaudeFingerprintProfile(*body.Value.FingerprintProfile)
 	}
 	if len(body.Value.Weight) > 0 {
 		weight, errWeight := parseCredentialWeightPatch(body.Value.Weight)
@@ -1682,6 +1689,11 @@ func normalizeClaudeKey(entry *config.ClaudeKey) {
 		return
 	}
 	entry.APIKey = strings.TrimSpace(entry.APIKey)
+	if normalized, ok := config.NormalizeClaudeFingerprintProfile(entry.FingerprintProfile); ok {
+		entry.FingerprintProfile = normalized
+	} else {
+		entry.FingerprintProfile = strings.TrimSpace(entry.FingerprintProfile)
+	}
 	entry.BaseURL = strings.TrimSpace(entry.BaseURL)
 	entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
 	entry.Headers = config.NormalizeHeaders(entry.Headers)

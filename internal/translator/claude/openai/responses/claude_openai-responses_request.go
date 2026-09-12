@@ -186,6 +186,14 @@ func convertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 		})
 	}
 
+	formatResult := root.Get("text.format")
+	if !formatResult.Exists() {
+		formatResult = root.Get("response_format")
+	}
+	if formatInstruction := common.BuildClaudeStructuredOutputInstruction(formatResult); formatInstruction != "" {
+		appendSystemText(formatInstruction, gjson.Result{})
+	}
+
 	// input array processing
 	var pendingRole string
 	var pendingParts [][]byte

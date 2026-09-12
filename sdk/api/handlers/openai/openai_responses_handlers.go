@@ -476,9 +476,13 @@ func (h *OpenAIResponsesAPIHandler) Models() []map[string]any {
 // It returns a list of available AI models with their capabilities
 // and specifications in OpenAIResponses-compatible format.
 func (h *OpenAIResponsesAPIHandler) OpenAIResponsesModels(c *gin.Context) {
+	models, ok := h.FilterModelsForAccountPools(c, h.Models())
+	if !ok {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
-		"data":   h.Models(),
+		"data":   models,
 	})
 }
 
@@ -817,9 +821,14 @@ func responsesStreamErrorText(errMsg *interfaces.ErrorMessage, status int) strin
 	if errorNode.Exists() && errorNode.IsObject() {
 		safe := []byte(`{"error":{}}`)
 		copied := false
-		for _, field := range []string{"type", "code", "message", "param"} {
+		for _, field := range []string{"type", "code", "message", "param", "retryable"} {
 			value := errorNode.Get(field)
 			if !value.Exists() || value.Type == gjson.Null {
+				continue
+			}
+			if field == "retryable" {
+				safe, _ = sjson.SetBytes(safe, "error.retryable", value.Bool())
+				copied = true
 				continue
 			}
 			limit := responsesStreamErrorFieldLimit
@@ -836,9 +845,14 @@ func responsesStreamErrorText(errMsg *interfaces.ErrorMessage, status int) strin
 
 	safe := []byte(`{"type":"error"}`)
 	copied := false
-	for _, field := range []string{"code", "message", "param"} {
+	for _, field := range []string{"code", "message", "param", "retryable"} {
 		value := root.Get(field)
 		if !value.Exists() || value.Type == gjson.Null {
+			continue
+		}
+		if field == "retryable" {
+			safe, _ = sjson.SetBytes(safe, "retryable", value.Bool())
+			copied = true
 			continue
 		}
 		limit := responsesStreamErrorFieldLimit
@@ -968,6 +982,10 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesStream(c *gin.Context, flush
 		WriteDone: func() {
 			framer.Flush(c.Writer)
 			_, _ = c.Writer.Write([]byte("\n"))
+		},
+		WriteTEEEvent: func(event string, payload []byte) {
+			framer.Flush(c.Writer)
+			_, _ = fmt.Fprintf(c.Writer, "event: tee.%s\ndata: %s\n\n", event, payload)
 		},
 	})
 }

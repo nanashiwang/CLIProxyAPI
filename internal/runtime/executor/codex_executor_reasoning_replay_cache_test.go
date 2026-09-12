@@ -1112,3 +1112,15 @@ func TestCodexReplayPrefixFingerprintsMatchesDirectComputation(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexReasoningReplaySeparatesPoolLeaseEpochs(t *testing.T) {
+	body := []byte(`{"prompt_cache_key":"same-client-session"}`)
+	req := cliproxyexecutor.Request{Payload: body}
+	first := cliproxyexecutor.Options{Metadata: map[string]any{cliproxyexecutor.AccountPoolNamespaceMetadataKey: "key:policy:lease-a"}}
+	second := cliproxyexecutor.Options{Metadata: map[string]any{cliproxyexecutor.AccountPoolNamespaceMetadataKey: "key:policy:lease-b"}}
+	a := codexReasoningReplaySessionKey(context.Background(), sdktranslator.FormatOpenAI, req, first, body)
+	b := codexReasoningReplaySessionKey(context.Background(), sdktranslator.FormatOpenAI, req, second, body)
+	if a == b || a == "" || b == "" {
+		t.Fatal("replay cache shared between leases")
+	}
+}

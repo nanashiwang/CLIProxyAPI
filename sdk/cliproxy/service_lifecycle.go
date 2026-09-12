@@ -95,6 +95,7 @@ func (s *Service) Run(ctx context.Context) error {
 			}
 		}
 	}
+	s.syncOpenCodeCatalog(s.cfg)
 
 	if !homeEnabled {
 		tokenResult, err := s.tokenProvider.Load(ctx, s.cfg)
@@ -291,6 +292,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		s.homeLifecycleMu.Unlock()
 
 		// legacy refresh loop removed; only stopping core auth manager below
+		s.stopOpenCodeCatalog()
 
 		if s.watcherCancel != nil {
 			s.watcherCancel()

@@ -11,6 +11,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/homeplugins"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/opencode"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/wsrelay"
@@ -94,6 +95,17 @@ type Service struct {
 
 	// pluginHost owns dynamic plugin lifecycle and runtime capability adapters.
 	pluginHost *pluginhost.Host
+
+	// openCodeCatalog is shared by all native OpenCode auths and executors.
+	openCodeCatalog      *opencode.Catalog
+	openCodeCatalogOwned bool
+	openCodeCatalogProxy string
+	// openCodeCatalogCancel stops the periodic OpenCode catalog refresh loop.
+	openCodeCatalogCancel     context.CancelFunc
+	openCodeCatalogInterval   time.Duration
+	openCodeCatalogGeneration uint64
+	openCodeCatalogStartFn    func(context.Context, time.Duration, func()) context.CancelFunc
+	openCodeCatalogMu         sync.Mutex
 
 	// shutdownOnce ensures shutdown is called only once.
 	shutdownOnce sync.Once

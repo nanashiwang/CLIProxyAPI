@@ -10,6 +10,7 @@ INSTALL_DIR="/root/cliproxyapi"
 CONFIG_PATH="${INSTALL_DIR}/config.yaml"
 SERVICE_PATH="/etc/systemd/system/cliproxyapi.service"
 PANEL_REPOSITORY="https://github.com/nanashiwang/Cli-Proxy-API-Management-Center"
+# Keep the updater on the shared main branch that publishes personal releases.
 UPDATE_SCRIPT_URL="https://raw.githubusercontent.com/nanashiwang/CLIProxyAPI/main/deploy/cpa-node/update-node.sh"
 
 log() {
@@ -369,15 +370,19 @@ install_update_command() {
   cat >/usr/local/sbin/update-cliproxyapi <<EOF_UPDATE
 #!/usr/bin/env bash
 set -Eeuo pipefail
+if [[ "\${EUID}" -ne 0 ]]; then
+  exec sudo /usr/local/sbin/update-cliproxyapi "\$@"
+fi
 UPDATE_SCRIPT_URL="${UPDATE_SCRIPT_URL}"
 tmp_path="\$(mktemp)"
 trap 'rm -f "\${tmp_path}"' EXIT
 curl --retry 5 --retry-all-errors -fsSL "\${UPDATE_SCRIPT_URL}" -o "\${tmp_path}"
 bash -n "\${tmp_path}"
 install -m 0755 "\${tmp_path}" /usr/local/sbin/cpa-node-update
-exec /usr/local/sbin/cpa-node-update
+exec /usr/local/sbin/cpa-node-update "\$@"
 EOF_UPDATE
   chmod 0755 /usr/local/sbin/update-cliproxyapi
+  ln -sfn /usr/local/sbin/update-cliproxyapi /usr/local/bin/update-cliproxyapi
 }
 
 configure_firewall() {

@@ -586,6 +586,17 @@ func TestCodexTerminalFailureErrClassifiesStatus(t *testing.T) {
 			event:      `{"type":"response.failed","response":{"error":{"type":"upstream_error","code":"unknown","message":"Upstream failed."}}}`,
 			wantStatus: http.StatusBadGateway,
 		},
+		// Preserve the existing overload status independently of bootstrap buffering.
+		{
+			name:       "overload preserves service unavailable without buffering",
+			event:      `{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`,
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:       "model not found with invalid_request_error type maps to 404",
+			event:      `{"type":"error","error":{"type":"invalid_request_error","code":"model_not_found","message":"The model gpt-5.5 does not exist or you do not have access to it."}}`,
+			wantStatus: http.StatusNotFound,
+		},
 	}
 
 	for _, tc := range tests {

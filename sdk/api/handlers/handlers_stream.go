@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/poo"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
@@ -26,6 +27,13 @@ func (h *BaseAPIHandler) ExecuteImageStreamWithAuthManager(ctx context.Context, 
 }
 
 func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProtocol, responseProtocol, modelName, originalRequestedModel string, rawJSON []byte, alt, executorPluginID string, execOptions modelExecutionOptions) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
+	if h.AuthManager != nil && h.AuthManager.AccountPoolsEnabled() {
+		errors := make(chan *interfaces.ErrorMessage, 1)
+		errors <- &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: fmt.Errorf("direct plugin executors do not support account group authorization")}
+		close(errors)
+		return nil, nil, errors
+	}
+
 	if h.AuthManager != nil && h.AuthManager.HomeEnabled() {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: fmt.Errorf("plugin executor routing is unavailable while Home is enabled")}
@@ -494,6 +502,11 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	}
 
 	bootstrapEligible := func(err error) bool {
+		// Once a request has reached the enclave it must never be replayed with
+		// another credential merely because the proof stream failed.
+		if poo.IsError(err) {
+			return false
+		}
 		status := statusFromError(err)
 		if status == 0 {
 			return true
@@ -552,6 +565,15 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 			close(closed)
 			chunks = closed
 		}
+	}
+
+	// The transport recorder id is private control data. Resolve it only after
+	// bootstrap retries select the final upstream stream, then strip every copy
+	// before exposing headers to clients or plugins.
+	pooRecordID := poo.TakeRecordID(rawStreamHeaders)
+	baseRecordID := poo.TakeRecordID(baseStreamHeaders)
+	if pooRecordID == "" {
+		pooRecordID = baseRecordID
 	}
 
 	upstreamHeaders := downstreamHeadersAfterInterceptors(baseStreamHeaders, rawStreamHeaders, passthroughHeadersEnabled)
@@ -622,6 +644,51 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 
 		chunkIndex := bootstrapChunkIndex
 		historyChunks := bootstrapHistoryChunks
+		sentModelData := false
+
+		pooFailure := func(err error) {
+			errMsg := pooOutputError(err)
+			completionOutcome = pluginapi.RequestCompletionFailed
+			completionStatus = errMsg.StatusCode
+			completionErr = errMsg.Error
+			if sentModelData {
+				_ = sendData(poo.EncodeStreamEvent("error", pooStreamErrorPayload(errMsg.Error)))
+				return
+			}
+			_ = sendErr(errMsg)
+		}
+
+		finishPoO := func() {
+			if pooRecordID == "" {
+				if h.pooRequired() && !allowImageModel {
+					pooFailure(fmt.Errorf("PoO transport was bypassed"))
+				}
+				return
+			}
+			proof, proofErr := poo.AwaitResult(pooRecordID, h.Cfg.PoOParentGateway.RequestTimeout())
+			if allowImageModel {
+				return
+			}
+			if proofErr != nil {
+				if h.pooRequired() {
+					pooFailure(proofErr)
+				}
+				return
+			}
+			if !h.pooEnabled() {
+				return
+			}
+			if !sentModelData {
+				pooFailure(fmt.Errorf("upstream stream closed before model output"))
+				return
+			}
+			if !sendData(poo.EncodeStreamEvent("proof", proof)) && ctx != nil && ctx.Err() != nil {
+				completionOutcome = pluginapi.RequestCompletionCanceled
+				completionStatus = 0
+				completionErr = ctx.Err()
+			}
+		}
+
 		if bootstrapPayload != nil {
 			if okSendData := sendData(bootstrapPayload); !okSendData {
 				completionOutcome = pluginapi.RequestCompletionCanceled
@@ -631,6 +698,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				}
 				return
 			}
+			sentModelData = true
 			if streamInterceptorsActive {
 				historyChunks = appendStreamInterceptorHistory(historyChunks, bootstrapPayload)
 			}
@@ -653,11 +721,17 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 						completionStatus = errMsg.StatusCode
 						completionErr = errMsg.Error
 						_ = sendErr(errMsg)
+						return
 					}
 				}
+				finishPoO()
 				return
 			}
 			if chunk.Err != nil {
+				if poo.IsError(chunk.Err) && sentModelData {
+					pooFailure(chunk.Err)
+					return
+				}
 				errMsg := executionErrorMessage(chunk.Err)
 				completionOutcome = pluginapi.RequestCompletionFailed
 				completionStatus = errMsg.StatusCode
@@ -695,6 +769,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				}
 				return
 			}
+			sentModelData = true
 			if streamInterceptorsActive {
 				historyChunks = appendStreamInterceptorHistory(historyChunks, payload)
 			}
@@ -704,8 +779,9 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 }
 
 type sseJSONValidationState struct {
-	pending    []byte
-	pendingErr error
+	pending        []byte
+	pendingErr     error
+	prevEndsWithCR bool
 }
 
 func (s *sseJSONValidationState) AddChunk(chunk []byte) ([]byte, error) {
@@ -717,8 +793,19 @@ func (s *sseJSONValidationState) AddChunk(chunk []byte) ([]byte, error) {
 	if len(chunk) == 0 {
 		return nil, nil
 	}
+	if s.prevEndsWithCR {
+		if chunk[0] == '\n' {
+			chunk = chunk[1:]
+		}
+		s.prevEndsWithCR = false
+	}
+	if len(chunk) == 0 {
+		return nil, nil
+	}
+	endsWithCR := chunk[len(chunk)-1] == '\r'
 	chunk = bytes.ReplaceAll(chunk, []byte("\r\n"), []byte("\n"))
 	chunk = bytes.ReplaceAll(chunk, []byte("\r"), []byte("\n"))
+	s.prevEndsWithCR = endsWithCR
 	if len(s.pending) > 0 && !bytes.HasSuffix(s.pending, []byte("\n")) && !bytes.HasPrefix(chunk, []byte("\n")) {
 		first := bytes.TrimSpace(bytes.SplitN(chunk, []byte("\n"), 2)[0])
 		if bytes.HasPrefix(first, []byte("data:")) || bytes.HasPrefix(first, []byte("event:")) {
@@ -762,6 +849,7 @@ func (s *sseJSONValidationState) AddChunk(chunk []byte) ([]byte, error) {
 }
 
 func (s *sseJSONValidationState) Finish() error {
+	s.prevEndsWithCR = false
 	if s.pendingErr != nil {
 		errPending := s.pendingErr
 		s.pendingErr = nil

@@ -9,6 +9,9 @@ type SDKConfig struct {
 	// ProxyURL is the URL of an optional proxy server to use for outbound requests.
 	ProxyURL string `yaml:"proxy-url" json:"proxy-url"`
 
+	// PoOParentGateway routes supported HTTPS model requests through an AWS Nitro Enclave proof gateway.
+	PoOParentGateway PoOParentGatewayConfig `yaml:"poo-parent-gateway" json:"poo-parent-gateway"`
+
 	// DisableImageGeneration controls whether the built-in image_generation tool is injected/allowed.
 	//
 	// Supported values:
@@ -50,6 +53,11 @@ type SDKConfig struct {
 
 	// APIKeys is a list of keys for authenticating clients to this proxy server.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
+
+	// AccountPools limits client keys to explicitly assigned credential groups.
+	AccountPools AccountPoolsConfig `yaml:"account-pools" json:"account-pools"`
+	// AccountPoolPolicy is an immutable compiled runtime index, never serialized.
+	AccountPoolPolicy *AccountPoolPolicy `yaml:"-" json:"-"`
 
 	// PassthroughHeaders controls whether upstream response headers are forwarded to downstream clients.
 	// Default is false (disabled).
