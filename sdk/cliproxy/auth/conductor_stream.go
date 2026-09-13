@@ -172,13 +172,13 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 		}
 		for _, chunk := range buffered {
 			if ok := emit(chunk); !ok {
-				discardStreamChunks(remaining)
+				m.discardLeasedStream(ctx, remaining)
 				return
 			}
 		}
 		for chunk := range remaining {
 			if ok := emit(chunk); !ok {
-				discardStreamChunks(remaining)
+				m.discardLeasedStream(ctx, remaining)
 				return
 			}
 		}
@@ -302,7 +302,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		buffered, closed, bootstrapErr := readStreamBootstrap(ctx, streamResult.Chunks)
 		if bootstrapErr != nil {
 			if errCtx := ctx.Err(); errCtx != nil {
-				discardStreamChunks(streamResult.Chunks)
+				m.discardLeasedStream(ctx, streamResult.Chunks)
 				return nil, errCtx
 			}
 			if allowRetry {
@@ -316,11 +316,11 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 					}
 				}
 				if errRefresh != nil {
-					discardStreamChunks(streamResult.Chunks)
+					m.discardLeasedStream(ctx, streamResult.Chunks)
 					bootstrapErr = errRefresh
 					streamResult = &cliproxyexecutor.StreamResult{}
 				} else if okRefresh {
-					discardStreamChunks(streamResult.Chunks)
+					m.discardLeasedStream(ctx, streamResult.Chunks)
 					auth = refreshed
 					m.replaceHomeExecutionLifecycleAuth(execOpts.ExecutionLifecycle, auth)
 					publishSelectedAuthMetadata(execOpts.Metadata, auth)
@@ -342,7 +342,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		}
 		if !ephemeralResult {
 			if errCancel := claudeOAuthRequestCancellation(ctx, auth, bootstrapErr); errCancel != nil {
-				discardStreamChunks(streamResult.Chunks)
+				m.discardLeasedStream(ctx, streamResult.Chunks)
 				return nil, errCancel
 			}
 		}
@@ -357,7 +357,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				}
 				applyRequestScopedActionToResult(action, okAction, &result)
 				m.recordExecutionResult(ctx, result, auth, ephemeralResult)
-				discardStreamChunks(streamResult.Chunks)
+				m.discardLeasedStream(ctx, streamResult.Chunks)
 				if isRequestScopedStop(action, okAction) {
 					return nil, wrapRequestStopError(bootstrapErr)
 				}
@@ -375,7 +375,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 					result.CredentialScope = true
 				}
 				m.recordExecutionResult(ctx, result, auth, ephemeralResult)
-				discardStreamChunks(streamResult.Chunks)
+				m.discardLeasedStream(ctx, streamResult.Chunks)
 				return nil, bootstrapErr
 			}
 			if idx < len(execModels)-1 {
@@ -386,7 +386,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 					result.CredentialScope = true
 				}
 				m.recordExecutionResult(ctx, result, auth, ephemeralResult)
-				discardStreamChunks(streamResult.Chunks)
+				m.discardLeasedStream(ctx, streamResult.Chunks)
 				lastErr = bootstrapErr
 				if result.CredentialScope {
 					return nil, newStreamBootstrapError(bootstrapErr, streamResult.Headers)
@@ -400,7 +400,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				result.CredentialScope = true
 			}
 			m.recordExecutionResult(ctx, result, auth, ephemeralResult)
-			discardStreamChunks(streamResult.Chunks)
+			m.discardLeasedStream(ctx, streamResult.Chunks)
 			return nil, newStreamBootstrapError(bootstrapErr, streamResult.Headers)
 		}
 
