@@ -1,7 +1,9 @@
 package poollease
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -28,7 +30,7 @@ func TestConcurrentUsersAndFixedExpiry(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			l, done, e := s.Acquire("alice", "v1", allowed, []string{"a", "b"}, now)
+			l, done, e := s.Acquire("alice", "v1", allowed, testCandidates("a", "b"), now)
 			if e != nil {
 				t.Error(e)
 				return
@@ -46,7 +48,7 @@ func TestConcurrentUsersAndFixedExpiry(t *testing.T) {
 		}
 		id = got
 	}
-	l, done, e := s.Acquire("alice", "v1", allowed, []string{"b"}, now.Add(30*time.Minute))
+	l, done, e := s.Acquire("alice", "v1", allowed, testCandidates("b"), now.Add(30*time.Minute))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -54,7 +56,7 @@ func TestConcurrentUsersAndFixedExpiry(t *testing.T) {
 		t.Fatal("request renewed the fixed lease")
 	}
 	done()
-	b, done, e := s.Acquire("bob", "v1", allowed, []string{"a", "b"}, now)
+	b, done, e := s.Acquire("bob", "v1", allowed, testCandidates("a", "b"), now)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -62,7 +64,7 @@ func TestConcurrentUsersAndFixedExpiry(t *testing.T) {
 		t.Fatal("users shared pool")
 	}
 	done()
-	_, _, e = s.Acquire("charlie", "v1", allowed, []string{"a", "b"}, now)
+	_, _, e = s.Acquire("charlie", "v1", allowed, testCandidates("a", "b"), now)
 	if !errors.Is(e, ErrBusy) {
 		t.Fatal(e)
 	}
@@ -71,17 +73,17 @@ func TestExpiredInFlightLeaseCannotBeReassigned(t *testing.T) {
 	s := testStore(t)
 	now := time.Now()
 	allowed := map[string]bool{"a": true}
-	_, done, e := s.Acquire("alice", "v1", allowed, []string{"a"}, now)
+	_, done, e := s.Acquire("alice", "v1", allowed, testCandidates("a"), now)
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, _, e = s.Acquire("bob", "v1", allowed, []string{"a"}, now.Add(61*time.Minute))
+	_, _, e = s.Acquire("bob", "v1", allowed, testCandidates("a"), now.Add(61*time.Minute))
 	if !errors.Is(e, ErrBusy) {
 		t.Fatal("reassigned in-flight pool", e)
 	}
 	done()
 	done()
-	l, release, e := s.Acquire("bob", "v1", allowed, []string{"a"}, now.Add(61*time.Minute))
+	l, release, e := s.Acquire("bob", "v1", allowed, testCandidates("a"), now.Add(61*time.Minute))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -97,7 +99,7 @@ func TestRecoveryLockAndPolicyProtection(t *testing.T) {
 		t.Fatal(e)
 	}
 	now := time.Now()
-	l, done, e := s.Acquire("alice", "v1", map[string]bool{"a": true}, []string{"a"}, now)
+	l, done, e := s.Acquire("alice", "v1", map[string]bool{"a": true}, testCandidates("a"), now)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -139,7 +141,7 @@ func TestCorruptStateAndFailedPersistenceFailClosed(t *testing.T) {
 	defer s.Close()
 	os.Remove(path)
 	os.Mkdir(path, 0700)
-	_, _, e = s.Acquire("alice", "v1", map[string]bool{"a": true}, []string{"a"}, time.Now())
+	_, _, e = s.Acquire("alice", "v1", map[string]bool{"a": true}, testCandidates("a"), time.Now())
 	if e == nil {
 		t.Fatal("persistence failure accepted")
 	}
@@ -161,5 +163,146 @@ func TestMissingStateIsNotTreatedAsAnEmptyPool(t *testing.T) {
 	if s, e = Open(path); e == nil {
 		s.Close()
 		t.Fatal("missing state reset all leases")
+	}
+}
+
+func testCandidates(groups ...string) []Candidate {
+	out := []Candidate{}
+	for _, g := range groups {
+		out = append(out, Candidate{Group: g, Credential: "account-" + g})
+	}
+	return out
+}
+
+func TestEightAccountsInOneGroupServeEightUsers(t *testing.T) {
+	s := testStore(t)
+	now := time.Now()
+	allowed := map[string]bool{"pool": true}
+	candidates := make([]Candidate, 8)
+	for i := range candidates {
+		candidates[i] = Candidate{Group: "pool", Credential: fmt.Sprint("account-", i)}
+	}
+	var wg sync.WaitGroup
+	results := make(chan Lease, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			l, done, err := s.Acquire(fmt.Sprint("user-", i), "v1", allowed, candidates, now)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer done()
+			results <- l
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+	seen := map[string]bool{}
+	for l := range results {
+		if l.Credential == "" || seen[l.Credential] || l.Group != "pool" {
+			t.Fatal("account shared", l)
+		}
+		seen[l.Credential] = true
+	}
+	if len(seen) != 8 {
+		t.Fatal(len(seen))
+	}
+	if _, _, err := s.Acquire("ninth", "v1", allowed, candidates, now); !errors.Is(err, ErrBusy) {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(s.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, done, err := s.Acquire("user-0", "v1", allowed, nil, now.Add(30*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done()
+	after, err := os.Stat(s.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) || !l.Expires.Equal(now.Add(time.Hour)) {
+		t.Fatal("reuse rewrote or renewed lease")
+	}
+}
+
+func TestLegacyLeaseNarrowsWithoutRenewalAndPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "leases")
+	now := time.Now().UTC()
+	legacy := Lease{ID: "old", Owner: "alice", Group: "pool", Policy: "v1", Started: now, Expires: now.Add(time.Hour)}
+	raw, _ := json.Marshal(struct {
+		Version int     `json:"version"`
+		Leases  []Lease `json:"leases"`
+	}{1, []Lease{legacy}})
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{"pool": true}
+	candidates := []Candidate{{"pool", "one"}, {"pool", "two"}}
+	if _, _, err = s.Acquire("bob", "v1", allowed, candidates, now); !errors.Is(err, ErrBusy) {
+		t.Fatal("legacy pool exposed", err)
+	}
+	// Failed narrowing must not free the legacy reservation.
+	backup := s.path
+	s.path = filepath.Join(t.TempDir(), "missing", "state")
+	if _, _, err = s.Acquire("alice", "v1", allowed, candidates, now); err == nil {
+		t.Fatal("ignored persistence failure")
+	}
+	s.path = backup
+	l, ok, err := s.Lookup("alice", "v1", now)
+	if err != nil || !ok || !l.LegacyGroup || l.Credential != "" {
+		t.Fatal(l, err)
+	}
+	l, done, err := s.Acquire("alice", "v1", allowed, candidates, now.Add(10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done()
+	if l.Credential != "one" || l.LegacyGroup || l.ID != legacy.ID || !l.Expires.Equal(legacy.Expires) {
+		t.Fatal(l)
+	}
+	b, done, err := s.Acquire("bob", "v1", allowed, candidates, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done()
+	if b.Credential != "two" {
+		t.Fatal(b)
+	}
+	s.Close()
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	l, ok, err = s.Lookup("alice", "v1", now)
+	if err != nil || !ok || l.Credential != "one" {
+		t.Fatal(l, err)
+	}
+}
+
+func TestStateRejectsDuplicateAccountReservations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "leases")
+	now := time.Now().UTC()
+	a := Lease{ID: "a", Owner: "alice", Group: "pool", Credential: "same", Policy: "v1", Started: now, Expires: now.Add(time.Hour)}
+	b := a
+	b.ID = "b"
+	b.Owner = "bob"
+	raw, _ := json.Marshal(struct {
+		Version int     `json:"version"`
+		Leases  []Lease `json:"leases"`
+	}{2, []Lease{a, b}})
+	os.WriteFile(path, raw, 0600)
+	if s, err := Open(path); err == nil {
+		s.Close()
+		t.Fatal("duplicate account accepted")
 	}
 }

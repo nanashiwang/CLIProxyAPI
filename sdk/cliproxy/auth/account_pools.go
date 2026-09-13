@@ -81,6 +81,9 @@ func (m *Manager) CheckAccountPoolAccess(ctx context.Context, authID string) err
 
 func poolUnavailable(ctx context.Context) *Error {
 	if scope, _ := ctx.Value(accountPoolScopeContextKey{}).(*config.AccountPoolScope); scope != nil {
+		if scope.LeasedCredential() != "" {
+			return &Error{Code: "leased_account_unavailable", Message: "the leased account cannot currently serve this request", HTTPStatus: http.StatusServiceUnavailable}
+		}
 		return &Error{Code: "pool_unavailable", Message: "no available credential in the authorized account groups", HTTPStatus: http.StatusServiceUnavailable}
 	}
 	return &Error{Code: "auth_not_found", Message: "no auth available"}

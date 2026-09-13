@@ -127,7 +127,7 @@ func (m *Manager) scopeWithLease(ctx context.Context, cfg *config.Config, scope 
 	if !time.Now().Before(lease.Expires) {
 		return nil, leaseError("pool_lease_expired", "pool lease expired; finish the current request before allocating again", 503)
 	}
-	return scope.WithLease(lease.Group, lease.ID), nil
+	return scope.WithLease(lease.Group, lease.ID, lease.Credential), nil
 }
 
 func (m *Manager) beginPoolLease(ctx context.Context, providers []string, req coreexecutor.Request, opts coreexecutor.Options) (context.Context, func(), error) {
@@ -151,9 +151,9 @@ func (m *Manager) beginPoolLease(ctx context.Context, providers []string, req co
 	if store == nil {
 		return ctx, noop, leaseError("pool_unavailable", "no lease pools configured", 503)
 	}
-	if _, exists, e := store.Lookup(owner, runtimeLeaseRevision(cfg), time.Now()); e != nil {
+	if previous, exists, e := store.Lookup(owner, runtimeLeaseRevision(cfg), time.Now()); e != nil {
 		return ctx, noop, e
-	} else if !exists && (gjson.GetBytes(req.Payload, "previous_response_id").String() != "" || gjson.GetBytes(opts.OriginalRequest, "previous_response_id").String() != "") {
+	} else if (!exists || previous.LegacyGroup) && (gjson.GetBytes(req.Payload, "previous_response_id").String() != "" || gjson.GetBytes(opts.OriginalRequest, "previous_response_id").String() != "") {
 		return ctx, noop, leaseError("pool_lease_session_expired", "start a new conversation after the pool lease expires", http.StatusConflict)
 	}
 	groups := scope.LeaseGroups()
@@ -161,7 +161,7 @@ func (m *Manager) beginPoolLease(ctx context.Context, providers []string, req co
 	for _, g := range groups {
 		allowed[g] = true
 	}
-	ready := map[string]bool{}
+	candidates := []poollease.Candidate{}
 	providerSet := map[string]bool{}
 	for _, p := range m.normalizeProviders(providers) {
 		providerSet[p] = true
@@ -179,22 +179,20 @@ func (m *Manager) beginPoolLease(ctx context.Context, providers []string, req co
 			continue
 		}
 		if available, e := getAvailableAuths([]*Auth{a}, a.Provider, model, time.Now()); e == nil && len(available) > 0 {
-			ready[group] = true
+			candidates = append(candidates, poollease.Candidate{Group: group, Credential: a.ID})
 		}
 	}
 	m.mu.RUnlock()
-	candidates := []string{}
-	for g := range ready {
-		candidates = append(candidates, g)
-	}
-	sort.Strings(candidates)
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Group < candidates[j].Group || (candidates[i].Group == candidates[j].Group && candidates[i].Credential < candidates[j].Credential)
+	})
 	lease, release, err := store.Acquire(owner, runtimeLeaseRevision(cfg), allowed, candidates, time.Now())
 	if err != nil {
 		if errors.Is(err, poollease.ErrDenied) {
 			return ctx, noop, leaseError("pool_access_denied", "current lease is outside key permissions", 403)
 		}
 		if errors.Is(err, poollease.ErrBusy) {
-			return ctx, noop, leaseError("pool_busy", "no free authorized pool; retry later", 503)
+			return ctx, noop, leaseError("pool_busy", "no free authorized account for the requested model; retry later", 503)
 		}
 		return ctx, noop, leaseError("pool_lease_unavailable", "lease allocation failed", 503)
 	}
