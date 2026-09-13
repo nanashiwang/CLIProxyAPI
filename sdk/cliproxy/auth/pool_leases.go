@@ -112,12 +112,20 @@ func (m *Manager) scopeWithLease(ctx context.Context, cfg *config.Config, scope 
 	if err != nil {
 		return scope, nil
 	}
-	lease, ok, err := store.Lookup(owner, runtimeLeaseRevision(cfg), time.Now())
+	binding, _ := ctx.Value(requestPoolLeaseKey{}).(*requestPoolLease)
+	var lease poollease.Lease
+	var ok bool
+	if binding != nil {
+		lease, ok, err = store.LookupID(binding.Lease.ID, runtimeLeaseRevision(cfg), time.Now())
+	} else if sdkaccess.GetGatewayIdentity(ctx).User == "1" {
+		return scope, nil
+	} else {
+		lease, ok, err = store.Lookup(owner, runtimeLeaseRevision(cfg), time.Now())
+	}
 	if err != nil {
 		return nil, err
 	}
-	binding, _ := ctx.Value(requestPoolLeaseKey{}).(*requestPoolLease)
-	if binding != nil && (!ok || binding.Owner != owner || binding.Lease.ID != lease.ID) {
+	if binding != nil && (!ok || binding.Owner != owner || lease.Owner != owner || binding.Lease.ID != lease.ID) {
 		return nil, leaseError("pool_lease_expired", "pool lease is no longer valid", 403)
 	}
 	if !ok {
@@ -126,7 +134,7 @@ func (m *Manager) scopeWithLease(ctx context.Context, cfg *config.Config, scope 
 	if !scope.AuthorizesGroup(lease.Group) {
 		return nil, leaseError("pool_access_denied", "current lease is outside key permissions", 403)
 	}
-	if !time.Now().Before(lease.Expires) {
+	if !lease.Temporary && !time.Now().Before(lease.Expires) {
 		return nil, leaseError("pool_lease_expired", "pool lease expired; finish the current request before allocating again", 503)
 	}
 	return scope.WithLease(lease.Group, lease.ID, lease.Credential), nil
@@ -153,6 +161,10 @@ func (m *Manager) beginPoolLease(ctx context.Context, providers []string, req co
 	if store == nil {
 		return ctx, noop, leaseError("pool_unavailable", "no lease pools configured", 503)
 	}
+	temporary := sdkaccess.GetGatewayIdentity(ctx).User == "1"
+	if temporary && (gjson.GetBytes(req.Payload, "previous_response_id").String() != "" || gjson.GetBytes(opts.OriginalRequest, "previous_response_id").String() != "") {
+		return ctx, noop, leaseError("pool_temporary_session_unsupported", "temporary account access requires full conversation history; previous_response_id is not supported", http.StatusConflict)
+	}
 	if previous, exists, e := store.Lookup(owner, runtimeLeaseRevision(cfg), time.Now()); e != nil {
 		return ctx, noop, e
 	} else if (!exists || previous.LegacyGroup || previous.Reassigned) && (gjson.GetBytes(req.Payload, "previous_response_id").String() != "" || gjson.GetBytes(opts.OriginalRequest, "previous_response_id").String() != "") {
@@ -163,7 +175,13 @@ func (m *Manager) beginPoolLease(ctx context.Context, providers []string, req co
 	for _, group := range scope.LeaseGroups() {
 		allowed[group] = true
 	}
-	lease, release, err := store.Acquire(owner, runtimeLeaseRevision(cfg), allowed, candidates, time.Now())
+	var lease poollease.Lease
+	var release func()
+	if temporary {
+		lease, release, err = store.AcquireTemporary(owner, runtimeLeaseRevision(cfg), allowed, candidates, time.Now())
+	} else {
+		lease, release, err = store.Acquire(owner, runtimeLeaseRevision(cfg), allowed, candidates, time.Now())
+	}
 	if err != nil {
 		if errors.Is(err, poollease.ErrDenied) {
 			return ctx, noop, leaseError("pool_access_denied", "current lease is outside key permissions", 403)

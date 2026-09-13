@@ -117,7 +117,7 @@ func (h *Handler) GetAccountPools(c *gin.Context) {
 			leaseError = "lease state unavailable"
 		}
 		for _, l := range rows {
-			leases = append(leases, gin.H{"id": l.ID, "group-id": l.Group, "credential-id": l.Credential, "legacy-group": l.LegacyGroup, "owner": l.Owner, "expires-at": l.Expires, "active": l.Active})
+			leases = append(leases, gin.H{"id": l.ID, "group-id": l.Group, "credential-id": l.Credential, "legacy-group": l.LegacyGroup, "temporary": l.Temporary, "owner": l.Owner, "expires-at": l.Expires, "active": l.Active})
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"lease-unit": "account", "leases": leases, "lease-error": leaseError, "config": pools, "keys": keys, "credentials": credentials, "revision": poolConfigRevision(cfg), "home-enabled": cfg.Home.Enabled})

@@ -24,6 +24,7 @@ type Candidate struct {
 }
 
 type Lease struct {
+	Temporary   bool      `json:"-"`
 	Reassigned  bool      `json:"reassigned,omitempty"`
 	Credential  string    `json:"credential,omitempty"`
 	LegacyGroup bool      `json:"legacy_group,omitempty"`
@@ -138,7 +139,7 @@ func (s *Store) Lookup(owner, policy string, now time.Time) (Lease, bool, error)
 		return Lease{}, false, err
 	}
 	for _, l := range s.leases {
-		if l.Owner == owner {
+		if l.Owner == owner && !l.Temporary {
 			return *l, true, nil
 		}
 	}
@@ -162,7 +163,7 @@ func (s *Store) Acquire(owner, policy string, allowed map[string]bool, candidate
 		return Lease{}, nil, err
 	}
 	for _, l := range s.leases {
-		if l.Owner != owner {
+		if l.Owner != owner || l.Temporary {
 			continue
 		}
 		if !allowed[l.Group] {
@@ -222,6 +223,9 @@ func (s *Store) releaser(id string) func() {
 			defer s.mu.Unlock()
 			if l := s.leases[id]; l != nil {
 				l.Active--
+				if l.Temporary && l.Active == 0 {
+					delete(s.leases, id)
+				}
 			}
 		})
 	}
@@ -229,6 +233,9 @@ func (s *Store) releaser(id string) func() {
 func (s *Store) save() error {
 	rows := make([]Lease, 0, len(s.leases))
 	for _, l := range s.leases {
+		if l.Temporary {
+			continue
+		}
 		rows = append(rows, *l)
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -287,7 +294,7 @@ func (s *Store) Replace(expected Lease, candidates []Candidate, now time.Time) (
 		return Lease{}, nil, err
 	}
 	old := s.leases[expected.ID]
-	if old == nil || old.Owner != expected.Owner || old.Credential != expected.Credential || old.LegacyGroup || old.Active != 1 || !now.Before(old.Expires) {
+	if old == nil || old.Owner != expected.Owner || old.Credential != expected.Credential || old.LegacyGroup || old.Active != 1 || (!old.Temporary && !now.Before(old.Expires)) {
 		return Lease{}, nil, ErrBusy
 	}
 	for _, c := range candidates {
@@ -302,10 +309,12 @@ func (s *Store) Replace(expected Lease, candidates []Candidate, now time.Time) (
 		next.ID, next.Credential, next.Reassigned = hex.EncodeToString(id), c.Credential, true
 		delete(s.leases, old.ID)
 		s.leases[next.ID] = &next
-		if err := s.save(); err != nil {
-			delete(s.leases, next.ID)
-			s.leases[old.ID] = old
-			return Lease{}, nil, err
+		if !old.Temporary {
+			if err := s.save(); err != nil {
+				delete(s.leases, next.ID)
+				s.leases[old.ID] = old
+				return Lease{}, nil, err
+			}
 		}
 		return next, s.releaser(next.ID), nil
 	}
@@ -322,4 +331,66 @@ func (s *Store) Hold(id string) (func(), bool) {
 	}
 	l.Active++
 	return s.releaser(id), true
+}
+
+// LookupID binds temporary requests independently, even for the same owner.
+func (s *Store) LookupID(id, policy string, now time.Time) (Lease, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.check(policy, now); err != nil {
+		return Lease{}, false, err
+	}
+	l := s.leases[id]
+	if l == nil {
+		return Lease{}, false, nil
+	}
+	return *l, true, nil
+}
+
+// AcquireTemporary reserves one free credential for a single request. Temporary
+// reservations share the exclusion map but never enter persistent lease state.
+func (s *Store) AcquireTemporary(owner, policy string, allowed map[string]bool, candidates []Candidate, now time.Time) (Lease, func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.check(policy, now); err != nil {
+		return Lease{}, nil, err
+	}
+	var old *Lease
+	for _, l := range s.leases {
+		if l.Owner == owner && !l.Temporary {
+			if !allowed[l.Group] {
+				return Lease{}, nil, ErrDenied
+			}
+			if l.Active != 0 {
+				return Lease{}, nil, ErrBusy
+			}
+			old = l
+			break
+		}
+	}
+	ignore := ""
+	if old != nil {
+		ignore = old.ID
+	}
+	for _, c := range candidates {
+		if c.Credential == "" || !allowed[c.Group] || s.occupied(c, ignore) {
+			continue
+		}
+		id := make([]byte, 16)
+		if _, err := rand.Read(id); err != nil {
+			return Lease{}, nil, err
+		}
+		next := &Lease{ID: hex.EncodeToString(id), Owner: owner, Group: c.Group, Credential: c.Credential, Policy: policy, Started: now, Expires: now, Active: 1, Temporary: true}
+		s.leases[next.ID] = next
+		if old != nil {
+			delete(s.leases, old.ID)
+			if err := s.save(); err != nil {
+				delete(s.leases, next.ID)
+				s.leases[old.ID] = old
+				return Lease{}, nil, err
+			}
+		}
+		return *next, s.releaser(next.ID), nil
+	}
+	return Lease{}, nil, ErrBusy
 }
