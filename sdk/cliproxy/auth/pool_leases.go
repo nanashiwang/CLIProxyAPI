@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -153,39 +155,14 @@ func (m *Manager) beginPoolLease(ctx context.Context, providers []string, req co
 	}
 	if previous, exists, e := store.Lookup(owner, runtimeLeaseRevision(cfg), time.Now()); e != nil {
 		return ctx, noop, e
-	} else if (!exists || previous.LegacyGroup) && (gjson.GetBytes(req.Payload, "previous_response_id").String() != "" || gjson.GetBytes(opts.OriginalRequest, "previous_response_id").String() != "") {
+	} else if (!exists || previous.LegacyGroup || previous.Reassigned) && (gjson.GetBytes(req.Payload, "previous_response_id").String() != "" || gjson.GetBytes(opts.OriginalRequest, "previous_response_id").String() != "") {
 		return ctx, noop, leaseError("pool_lease_session_expired", "start a new conversation after the pool lease expires", http.StatusConflict)
 	}
-	groups := scope.LeaseGroups()
+	candidates := m.poolLeaseCandidates(ctx, scope, providers, req, opts)
 	allowed := map[string]bool{}
-	for _, g := range groups {
-		allowed[g] = true
+	for _, group := range scope.LeaseGroups() {
+		allowed[group] = true
 	}
-	candidates := []poollease.Candidate{}
-	providerSet := map[string]bool{}
-	for _, p := range m.normalizeProviders(providers) {
-		providerSet[p] = true
-	}
-	model := authSelectionModelFromOptions(opts, req.Model)
-	eligibility := authSelectionEligibilityForRequest(ctx, opts)
-	pinned := pinnedAuthIDFromMetadata(opts.Metadata)
-	m.mu.RLock()
-	for _, a := range m.auths {
-		if a == nil || a.Disabled || !providerSet[executorKeyFromAuth(a)] || !eligibility.allows(a) || (pinned != "" && a.ID != pinned) {
-			continue
-		}
-		group := scope.GroupForCredential(a.ID)
-		if !allowed[group] || !m.supportsPoolModel(a, model) {
-			continue
-		}
-		if available, e := getAvailableAuths([]*Auth{a}, a.Provider, model, time.Now()); e == nil && len(available) > 0 {
-			candidates = append(candidates, poollease.Candidate{Group: group, Credential: a.ID})
-		}
-	}
-	m.mu.RUnlock()
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].Group < candidates[j].Group || (candidates[i].Group == candidates[j].Group && candidates[i].Credential < candidates[j].Credential)
-	})
 	lease, release, err := store.Acquire(owner, runtimeLeaseRevision(cfg), allowed, candidates, time.Now())
 	if err != nil {
 		if errors.Is(err, poollease.ErrDenied) {
@@ -196,7 +173,19 @@ func (m *Manager) beginPoolLease(ctx context.Context, providers []string, req co
 		}
 		return ctx, noop, leaseError("pool_lease_unavailable", "lease allocation failed", 503)
 	}
-	return context.WithValue(ctx, requestPoolLeaseKey{}, &requestPoolLease{owner, lease}), release, nil
+	ctx = context.WithValue(ctx, requestPoolLeaseKey{}, &requestPoolLease{owner, lease})
+	// A previous request may have recorded a terminal failure while another
+	// in-flight request prevented replacement. Retry allocation at admission.
+	next, done, changed, err := m.replaceFailedPoolLease(ctx, providers, req, opts, nil)
+	if err != nil {
+		release()
+		return ctx, noop, err
+	}
+	if changed {
+		release()
+		return next, done, nil
+	}
+	return ctx, release, nil
 }
 
 // Keep the in-flight lease until the upstream producer closes. Cancellation stops
@@ -255,4 +244,138 @@ func runtimeLeaseRevision(cfg *config.Config) string {
 		return cfg.AccountPoolPolicy.LeaseRevision()
 	}
 	return "disabled"
+}
+
+func (m *Manager) poolLeaseCandidates(ctx context.Context, scope *config.AccountPoolScope, providers []string, req coreexecutor.Request, opts coreexecutor.Options) []poollease.Candidate {
+	groups := scope.LeaseGroups()
+	allowed := map[string]bool{}
+	for _, g := range groups {
+		allowed[g] = true
+	}
+	candidates := []poollease.Candidate{}
+	providerSet := map[string]bool{}
+	for _, p := range m.normalizeProviders(providers) {
+		providerSet[p] = true
+	}
+	model := authSelectionModelFromOptions(opts, req.Model)
+	eligibility := authSelectionEligibilityForRequest(ctx, opts)
+	pinned := pinnedAuthIDFromMetadata(opts.Metadata)
+	m.mu.RLock()
+	for _, a := range m.auths {
+		if a == nil || a.Disabled || !providerSet[executorKeyFromAuth(a)] || !eligibility.allows(a) || (pinned != "" && a.ID != pinned) {
+			continue
+		}
+		group := scope.GroupForCredential(a.ID)
+		if !allowed[group] || !m.supportsPoolModel(a, model) {
+			continue
+		}
+		if available, e := getAvailableAuths([]*Auth{a}, a.Provider, model, time.Now()); e == nil && len(available) > 0 {
+			candidates = append(candidates, poollease.Candidate{Group: group, Credential: a.ID})
+		}
+	}
+	m.mu.RUnlock()
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Group < candidates[j].Group || (candidates[i].Group == candidates[j].Group && candidates[i].Credential < candidates[j].Credential)
+	})
+	return candidates
+}
+
+// Only explicit account quota/authentication failures permit replacement.
+// Generic 429s, transport errors, overload and request policy errors do not.
+func poolLeaseTerminalFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var e *Error
+	if errors.As(err, &e) && e.Code == ErrorCodeRequestScoped {
+		return false
+	}
+	if IsTerminalAuthError(err) {
+		return true
+	}
+	status := 0
+	var sc interface{ StatusCode() int }
+	if errors.As(err, &sc) {
+		status = sc.StatusCode()
+	}
+	msg := strings.ToLower(err.Error())
+	if status == 429 {
+		return strings.Contains(msg, "usage_limit_reached") || strings.Contains(msg, "insufficient_quota") || strings.Contains(msg, "you've hit your usage limit")
+	}
+	if status == 401 {
+		return true
+	}
+	return status == 403 && (strings.Contains(msg, "account_deactivated") || strings.Contains(msg, "account_disabled") || strings.Contains(msg, "token_revoked"))
+}
+
+func (m *Manager) replaceFailedPoolLease(ctx context.Context, providers []string, req coreexecutor.Request, opts coreexecutor.Options, failure error) (context.Context, func(), bool, error) {
+	binding, ok := ctx.Value(requestPoolLeaseKey{}).(*requestPoolLease)
+	if !ok || ctx.Err() != nil {
+		return ctx, nil, false, nil
+	}
+	terminal := poolLeaseTerminalFailure(failure)
+	m.mu.RLock()
+	if a := m.auths[binding.Lease.Credential]; a != nil {
+		if _, unavailable := getAvailableAuths([]*Auth{a}, a.Provider, authSelectionModelFromOptions(opts, req.Model), time.Now()); unavailable != nil || a.Disabled {
+			terminal = terminal || poolLeaseTerminalFailure(a.LastError)
+		}
+	}
+	m.mu.RUnlock()
+	if !terminal {
+		return ctx, nil, false, nil
+	}
+	if gjson.GetBytes(req.Payload, "previous_response_id").String() != "" || gjson.GetBytes(opts.OriginalRequest, "previous_response_id").String() != "" {
+		return ctx, nil, false, leaseError("pool_lease_session_expired", "leased account is unavailable; start a new conversation with full history", http.StatusConflict)
+	}
+	scope, err := m.AccountPoolScope(ctx)
+	if err != nil {
+		return ctx, nil, false, err
+	}
+	store, err := m.checkLeaseConfiguration(m.runtimeConfigSnapshot())
+	if err != nil {
+		return ctx, nil, false, err
+	}
+	if store == nil || scope == nil {
+		return ctx, nil, false, nil
+	}
+	next, release, err := store.Replace(binding.Lease, m.poolLeaseCandidates(ctx, scope, providers, req, opts), time.Now())
+	if errors.Is(err, poollease.ErrBusy) {
+		return ctx, nil, false, leaseError("pool_lease_failover_pending", "no free account in the leased group or previous requests are still running; retry later", 503)
+	}
+	if err != nil {
+		return ctx, nil, false, leaseError("pool_lease_unavailable", "cannot persist account replacement", 503)
+	}
+	log.WithFields(log.Fields{"owner": next.Owner[:10], "group": next.Group, "lease": next.ID, "expires_at": next.Expires}).Info("exclusive account lease replaced after quota or authentication failure")
+	return context.WithValue(ctx, requestPoolLeaseKey{}, &requestPoolLease{binding.Owner, next}), release, true, nil
+}
+
+func (m *Manager) discardLeasedStream(ctx context.Context, chunks <-chan coreexecutor.StreamChunk) {
+	if chunks == nil {
+		return
+	}
+	if ctx == nil {
+		discardStreamChunks(chunks)
+		return
+	}
+	binding, leased := ctx.Value(requestPoolLeaseKey{}).(*requestPoolLease)
+	if !leased {
+		discardStreamChunks(chunks)
+		return
+	}
+	m.poolLeaseRuntime.mu.Lock()
+	store := m.poolLeaseRuntime.store
+	m.poolLeaseRuntime.mu.Unlock()
+	if store != nil {
+		if done, ok := store.Hold(binding.Lease.ID); ok {
+			go func() {
+				defer done()
+				for range chunks {
+				}
+			}()
+			return
+		}
+	}
+	// If retention fails, do not release the caller's lease before draining.
+	for range chunks {
+	}
 }

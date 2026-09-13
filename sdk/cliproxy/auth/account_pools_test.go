@@ -19,6 +19,7 @@ type poolCaptureExecutor struct {
 	mu       sync.Mutex
 	ids      []string
 	failures map[string]bool
+	errors   map[string]error
 }
 
 func (*poolCaptureExecutor) Identifier() string { return "pool-test" }
@@ -26,6 +27,9 @@ func (e *poolCaptureExecutor) Execute(_ context.Context, a *Auth, _ coreexecutor
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.ids = append(e.ids, a.ID)
+	if err := e.errors[a.ID]; err != nil {
+		return coreexecutor.Response{}, err
+	}
 	if e.failures[a.ID] {
 		return coreexecutor.Response{}, &Error{HTTPStatus: 503, Message: "upstream unavailable"}
 	}

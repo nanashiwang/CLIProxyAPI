@@ -24,6 +24,7 @@ type Candidate struct {
 }
 
 type Lease struct {
+	Reassigned  bool      `json:"reassigned,omitempty"`
 	Credential  string    `json:"credential,omitempty"`
 	LegacyGroup bool      `json:"legacy_group,omitempty"`
 	ID          string    `json:"id"`
@@ -275,4 +276,50 @@ func (s *Store) Snapshot(now time.Time) []Lease {
 		return rows[i].Group < rows[j].Group || (rows[i].Group == rows[j].Group && rows[i].ID < rows[j].ID)
 	})
 	return rows
+}
+
+// Replace moves a lease only when its sole in-flight request has stopped using
+// the old credential. Rotating the ID invalidates old routing namespaces.
+func (s *Store) Replace(expected Lease, candidates []Candidate, now time.Time) (Lease, func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.check(expected.Policy, now); err != nil {
+		return Lease{}, nil, err
+	}
+	old := s.leases[expected.ID]
+	if old == nil || old.Owner != expected.Owner || old.Credential != expected.Credential || old.LegacyGroup || old.Active != 1 || !now.Before(old.Expires) {
+		return Lease{}, nil, ErrBusy
+	}
+	for _, c := range candidates {
+		if c.Group != old.Group || c.Credential == "" || c.Credential == old.Credential || s.occupied(c, "") {
+			continue
+		}
+		id := make([]byte, 16)
+		if _, err := rand.Read(id); err != nil {
+			return Lease{}, nil, err
+		}
+		next := *old
+		next.ID, next.Credential, next.Reassigned = hex.EncodeToString(id), c.Credential, true
+		delete(s.leases, old.ID)
+		s.leases[next.ID] = &next
+		if err := s.save(); err != nil {
+			delete(s.leases, next.ID)
+			s.leases[old.ID] = old
+			return Lease{}, nil, err
+		}
+		return next, s.releaser(next.ID), nil
+	}
+	return Lease{}, nil, ErrBusy
+}
+
+// Hold retains a live lease while an abandoned upstream producer is drained.
+func (s *Store) Hold(id string) (func(), bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l := s.leases[id]
+	if l == nil || l.Active == 0 {
+		return nil, false
+	}
+	l.Active++
+	return s.releaser(id), true
 }

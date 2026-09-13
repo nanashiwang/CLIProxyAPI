@@ -44,7 +44,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 	if errLease != nil {
 		return cliproxyexecutor.Response{}, errLease
 	}
-	defer releaseLease()
+	defer func() { releaseLease() }()
 
 	req, opts = cliproxysession.Enrich(req, opts)
 	normalized := m.normalizeProviders(providers)
@@ -59,6 +59,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 	_, maxRetryCredentials, maxWait := m.retrySettings()
 
 	var lastErr error
+	leaseReplaced := false
 	retryModel := authSelectionModelFromOptions(opts, req.Model)
 	for attempt := 0; ; attempt++ {
 		resp, errExec := m.executeMixedOnce(ctx, normalized, req, opts, maxRetryCredentials)
@@ -67,6 +68,17 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 		}
 		if isRequestTerminatedError(errExec) || isRequestStopError(errExec) {
 			return cliproxyexecutor.Response{}, unwrapRequestStopError(errExec)
+		}
+		if !leaseReplaced {
+			next, done, changed, err := m.replaceFailedPoolLease(ctx, normalized, req, opts, errExec)
+			if err != nil {
+				return cliproxyexecutor.Response{}, err
+			}
+			if changed {
+				releaseLease()
+				ctx, releaseLease, leaseReplaced = next, done, true
+				continue
+			}
 		}
 		lastErr = errExec
 		wait, shouldRetry := m.shouldRetryAfterError(errExec, attempt, normalized, retryModel, maxWait)
@@ -101,7 +113,7 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 	if errLease != nil {
 		return cliproxyexecutor.Response{}, errLease
 	}
-	defer releaseLease()
+	defer func() { releaseLease() }()
 
 	req, opts = cliproxysession.Enrich(req, opts)
 	normalized := m.normalizeProviders(providers)
@@ -116,6 +128,7 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 	_, maxRetryCredentials, maxWait := m.retrySettings()
 
 	var lastErr error
+	leaseReplaced := false
 	retryModel := authSelectionModelFromOptions(opts, req.Model)
 	for attempt := 0; ; attempt++ {
 		resp, errExec := m.executeCountMixedOnce(ctx, normalized, req, opts, maxRetryCredentials)
@@ -124,6 +137,17 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 		}
 		if isRequestTerminatedError(errExec) || isRequestStopError(errExec) {
 			return cliproxyexecutor.Response{}, unwrapRequestStopError(errExec)
+		}
+		if !leaseReplaced {
+			next, done, changed, err := m.replaceFailedPoolLease(ctx, normalized, req, opts, errExec)
+			if err != nil {
+				return cliproxyexecutor.Response{}, err
+			}
+			if changed {
+				releaseLease()
+				ctx, releaseLease, leaseReplaced = next, done, true
+				continue
+			}
 		}
 		lastErr = errExec
 		wait, shouldRetry := m.shouldRetryAfterError(errExec, attempt, normalized, retryModel, maxWait)
@@ -172,6 +196,7 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 	_, maxRetryCredentials, maxWait := m.retrySettings()
 
 	var lastErr error
+	leaseReplaced := false
 	retryModel := authSelectionModelFromOptions(opts, req.Model)
 	for attempt := 0; ; attempt++ {
 		result, errStream := m.executeStreamMixedOnce(ctx, normalized, req, opts, maxRetryCredentials)
@@ -181,6 +206,17 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 		}
 		if isRequestTerminatedError(errStream) || isRequestStopError(errStream) {
 			return nil, unwrapRequestStopError(errStream)
+		}
+		if !leaseReplaced {
+			next, done, changed, err := m.replaceFailedPoolLease(ctx, normalized, req, opts, errStream)
+			if err != nil {
+				return nil, err
+			}
+			if changed {
+				releaseLease()
+				ctx, releaseLease, leaseReplaced = next, done, true
+				continue
+			}
 		}
 		lastErr = errStream
 		wait, shouldRetry := m.shouldRetryAfterError(errStream, attempt, normalized, retryModel, maxWait)

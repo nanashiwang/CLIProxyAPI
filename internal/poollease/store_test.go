@@ -306,3 +306,58 @@ func TestStateRejectsDuplicateAccountReservations(t *testing.T) {
 		t.Fatal("duplicate account accepted")
 	}
 }
+
+func TestReplacementPreservesExpiryAndExclusiveOwnership(t *testing.T) {
+	s := testStore(t)
+	now := time.Now()
+	allowed := map[string]bool{"a": true, "b": true}
+	candidates := []Candidate{{"a", "one"}, {"a", "two"}, {"a", "three"}, {"b", "other"}}
+	old, done, err := s.Acquire("alice", "v1", allowed, candidates, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	_, done2, _ := s.Acquire("bob", "v1", allowed, candidates, now)
+	defer done2()
+	_, parallel, _ := s.Acquire("alice", "v1", allowed, candidates, now)
+	if _, _, err = s.Replace(old, candidates, now); !errors.Is(err, ErrBusy) {
+		t.Fatal("replaced during concurrent execution", err)
+	}
+	parallel()
+	next, release, err := s.Replace(old, candidates, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Credential != "three" || next.Group != old.Group || !next.Expires.Equal(old.Expires) || next.ID == old.ID {
+		t.Fatalf("bad replacement %+v", next)
+	}
+	done()
+	if rows := s.Snapshot(now); len(rows) != 2 {
+		t.Fatal(rows)
+	}
+	if _, _, err = s.Replace(old, candidates, now); !errors.Is(err, ErrBusy) {
+		t.Fatal("stale replacement accepted")
+	}
+	if _, _, err = s.Replace(next, []Candidate{{"a", "two"}, {"b", "other"}}, now); !errors.Is(err, ErrBusy) {
+		t.Fatal("cross group or occupied replacement")
+	}
+	release()
+}
+
+func TestReplacementPersistenceFailureRestoresOldLease(t *testing.T) {
+	s := testStore(t)
+	now := time.Now()
+	c := []Candidate{{"a", "one"}, {"a", "two"}}
+	old, done, _ := s.Acquire("alice", "v1", map[string]bool{"a": true}, c, now)
+	defer done()
+	original := s.path
+	s.path = filepath.Join(t.TempDir(), "missing", "state")
+	if _, _, err := s.Replace(old, c, now); err == nil {
+		t.Fatal("expected save failure")
+	}
+	s.path = original
+	rows := s.Snapshot(now)
+	if len(rows) != 1 || rows[0].ID != old.ID || rows[0].Credential != old.Credential {
+		t.Fatal(rows)
+	}
+}
