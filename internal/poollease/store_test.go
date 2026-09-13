@@ -361,3 +361,117 @@ func TestReplacementPersistenceFailureRestoresOldLease(t *testing.T) {
 		t.Fatal(rows)
 	}
 }
+
+func TestTemporaryReservationsAreExclusiveAndNeverPersisted(t *testing.T) {
+	s := testStore(t)
+	now := time.Now()
+	allowed := map[string]bool{"a": true}
+	c := []Candidate{{"a", "one"}, {"a", "two"}, {"a", "three"}}
+	fixed, releaseFixed, err := s.Acquire("ordinary", "policy", allowed, c, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseFixed()
+	before, _ := os.ReadFile(s.path)
+	first, done, err := s.AcquireTemporary("admin", "policy", allowed, c, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, done2, err := s.AcquireTemporary("admin", "policy", allowed, c, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Temporary || first.Credential == fixed.Credential || second.Credential == first.Credential {
+		t.Fatal(first, second, fixed)
+	}
+	if _, _, err = s.Acquire("other", "policy", allowed, c, now); !errors.Is(err, ErrBusy) {
+		t.Fatal("stole temporary account", err)
+	}
+	if _, _, err = s.AcquireTemporary("admin", "policy", allowed, c, now); !errors.Is(err, ErrBusy) {
+		t.Fatal("stole occupied account", err)
+	}
+	if _, ok, _ := s.Lookup("admin", "policy", now); ok {
+		t.Fatal("temporary reservation became user lease")
+	}
+	hold, ok := s.Hold(first.ID)
+	if !ok {
+		t.Fatal("cannot hold temporary")
+	}
+	done()
+	if _, ok, _ := s.LookupID(first.ID, "policy", now.Add(2*time.Hour)); !ok {
+		t.Fatal("released before producer completed")
+	}
+	hold()
+	done2()
+	done()
+	if _, ok, _ := s.LookupID(first.ID, "policy", now); ok {
+		t.Fatal("temporary leaked")
+	}
+	after, _ := os.ReadFile(s.path)
+	if string(before) != string(after) {
+		t.Fatal("temporary state written to disk")
+	}
+	if rows := s.Snapshot(now); len(rows) != 1 || rows[0].ID != fixed.ID {
+		t.Fatal(rows)
+	}
+}
+
+func TestTemporaryMigrationAndSaveFailure(t *testing.T) {
+	s := testStore(t)
+	now := time.Now()
+	a := map[string]bool{"a": true}
+	c := []Candidate{{"a", "one"}}
+	old, done, _ := s.Acquire("admin", "policy", a, c, now)
+	if _, _, err := s.AcquireTemporary("admin", "policy", a, c, now); !errors.Is(err, ErrBusy) {
+		t.Fatal("migrated active lease", err)
+	}
+	done()
+	original := s.path
+	s.path = filepath.Join(t.TempDir(), "missing", "state")
+	if _, _, err := s.AcquireTemporary("admin", "policy", a, c, now); err == nil {
+		t.Fatal("migration ignored persistence failure")
+	}
+	s.path = original
+	if l, ok, _ := s.Lookup("admin", "policy", now); !ok || l.ID != old.ID {
+		t.Fatal("lost original lease")
+	}
+	next, release, err := s.AcquireTemporary("admin", "policy", a, c, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.Temporary || next.Credential != old.Credential {
+		t.Fatal(next)
+	}
+	var state struct{ Leases []Lease }
+	raw, _ := os.ReadFile(s.path)
+	json.Unmarshal(raw, &state)
+	if len(state.Leases) != 0 {
+		t.Fatal("old administrator lease still persisted")
+	}
+	release()
+	if len(s.Snapshot(now)) != 0 {
+		t.Fatal("temporary lease remains")
+	}
+}
+
+func TestTemporaryReplacementStaysTemporary(t *testing.T) {
+	s := testStore(t)
+	now := time.Now()
+	c := []Candidate{{"a", "one"}, {"a", "two"}}
+	old, done, err := s.AcquireTemporary("admin", "p", map[string]bool{"a": true}, c, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, release, err := s.Replace(old, c, now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.Temporary || next.Credential == old.Credential {
+		t.Fatal(next)
+	}
+	done()
+	release()
+	if len(s.Snapshot(now)) != 0 {
+		t.Fatal("replaced temporary reservation leaked")
+	}
+}

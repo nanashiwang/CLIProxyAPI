@@ -38,7 +38,7 @@ func TestLeaseIdentityAndPoolIsolationAcrossKeys(t *testing.T) {
 	if _, err := m.Execute(poolCaller("key-all"), []string{"pool-test"}, req, opts); err == nil {
 		t.Fatal("accepted missing identity")
 	}
-	for _, c := range []context.Context{leaseCaller("key-all", "1"), leaseCaller("key-multi", "1"), leaseCaller("key-all", "2")} {
+	for _, c := range []context.Context{leaseCaller("key-all", "101"), leaseCaller("key-multi", "101"), leaseCaller("key-all", "2")} {
 		if _, err := m.Execute(c, []string{"pool-test"}, req, opts); err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func TestLeaseIdentityAndPoolIsolationAcrossKeys(t *testing.T) {
 func TestLeaseRetryCannotEscapeAndConfigChangeBlocks(t *testing.T) {
 	m, c, e := leaseManager(t)
 	req := coreexecutor.Request{Model: "pool-model"}
-	ctx := leaseCaller("key-all", "1")
+	ctx := leaseCaller("key-all", "101")
 	if _, err := m.Execute(ctx, []string{"pool-test"}, req, coreexecutor.Options{}); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestLeaseRetryCannotEscapeAndConfigChangeBlocks(t *testing.T) {
 }
 func TestLeaseStreamRetainsInFlightUntilProducerCloses(t *testing.T) {
 	m, _, _ := leaseManager(t)
-	ctx, done, err := m.beginPoolLease(leaseCaller("key-all", "1"), []string{"pool-test"}, coreexecutor.Request{Model: "pool-model"}, coreexecutor.Options{})
+	ctx, done, err := m.beginPoolLease(leaseCaller("key-all", "101"), []string{"pool-test"}, coreexecutor.Request{Model: "pool-model"}, coreexecutor.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestLeaseStreamRetainsInFlightUntilProducerCloses(t *testing.T) {
 }
 func TestExpiredContinuationDoesNotAllocateAnotherPool(t *testing.T) {
 	m, _, _ := leaseManager(t)
-	_, err := m.Execute(leaseCaller("key-all", "1"), []string{"pool-test"}, coreexecutor.Request{Model: "pool-model", Payload: []byte(`{"previous_response_id":"old"}`)}, coreexecutor.Options{})
+	_, err := m.Execute(leaseCaller("key-all", "101"), []string{"pool-test"}, coreexecutor.Request{Model: "pool-model", Payload: []byte(`{"previous_response_id":"old"}`)}, coreexecutor.Options{})
 	var poolErr *Error
 	if !errors.As(err, &poolErr) || poolErr.Code != "pool_lease_session_expired" {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestExpiredContinuationDoesNotAllocateAnotherPool(t *testing.T) {
 
 func TestLeaseStreamFailoverAfterTargetedCooldownCannotEscape(t *testing.T) {
 	m, c, e := leaseManager(t)
-	ctx := leaseCaller("key-all", "1")
+	ctx := leaseCaller("key-all", "101")
 	req := coreexecutor.Request{Model: "pool-model"}
 	result, err := m.ExecuteStream(ctx, []string{"pool-test"}, req, coreexecutor.Options{})
 	if err != nil {
@@ -157,7 +157,7 @@ func TestLeaseTerminalFailureReplacesAccountInEveryMode(t *testing.T) {
 	for _, mode := range []string{"normal", "count", "stream"} {
 		t.Run(mode, func(t *testing.T) {
 			m, _, e := leaseManager(t)
-			ctx := leaseCaller("key-all", "1")
+			ctx := leaseCaller("key-all", "101")
 			req := coreexecutor.Request{Model: "pool-model"}
 			if _, err := m.Execute(ctx, []string{"pool-test"}, req, coreexecutor.Options{}); err != nil {
 				t.Fatal(err)
@@ -199,7 +199,7 @@ func TestLeaseTerminalFailureReplacesAccountInEveryMode(t *testing.T) {
 
 func TestLeaseGenericRateLimitKeepsAccount(t *testing.T) {
 	m, _, e := leaseManager(t)
-	ctx := leaseCaller("key-all", "1")
+	ctx := leaseCaller("key-all", "101")
 	req := coreexecutor.Request{Model: "pool-model"}
 	m.Execute(ctx, []string{"pool-test"}, req, coreexecutor.Options{})
 	before, _ := m.AccountPoolLeases()
@@ -215,7 +215,7 @@ func TestLeaseGenericRateLimitKeepsAccount(t *testing.T) {
 
 func TestLeaseReplacementWaitsForOtherRequestAndResumesOnAdmission(t *testing.T) {
 	m, _, e := leaseManager(t)
-	ctx := leaseCaller("key-all", "1")
+	ctx := leaseCaller("key-all", "101")
 	req := coreexecutor.Request{Model: "pool-model"}
 	held, done, err := m.beginPoolLease(ctx, []string{"pool-test"}, req, coreexecutor.Options{})
 	if err != nil {
@@ -255,7 +255,7 @@ func TestLeaseTerminalFailureClassification(t *testing.T) {
 
 func TestLeaseDiscardedProducerBlocksReplacement(t *testing.T) {
 	m, _, _ := leaseManager(t)
-	ctx, done, err := m.beginPoolLease(leaseCaller("key-all", "1"), []string{"pool-test"}, coreexecutor.Request{Model: "pool-model"}, coreexecutor.Options{})
+	ctx, done, err := m.beginPoolLease(leaseCaller("key-all", "101"), []string{"pool-test"}, coreexecutor.Request{Model: "pool-model"}, coreexecutor.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestLeaseCommittedStreamIsNotReplayed(t *testing.T) {
 	m, _, e := leaseManager(t)
 	m.RegisterExecutor(&leaseCommittedErrorExecutor{e})
 	req := coreexecutor.Request{Model: "pool-model"}
-	ctx := leaseCaller("key-all", "1")
+	ctx := leaseCaller("key-all", "101")
 	r, err := m.ExecuteStream(ctx, []string{"pool-test"}, req, coreexecutor.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -330,5 +330,144 @@ func TestLeaseCommittedStreamIsNotReplayed(t *testing.T) {
 	after, _ := m.AccountPoolLeases()
 	if before[0].Credential == after[0].Credential {
 		t.Fatal("next request did not replace failed account")
+	}
+}
+
+func TestUserOneUsesTemporaryAccountsInEveryMode(t *testing.T) {
+	for _, mode := range []string{"normal", "count", "stream"} {
+		t.Run(mode, func(t *testing.T) {
+			m, _, _ := leaseManager(t)
+			ctx := leaseCaller("key-all", "1")
+			req := coreexecutor.Request{Model: "pool-model"}
+			var err error
+			switch mode {
+			case "normal":
+				_, err = m.Execute(ctx, []string{"pool-test"}, req, coreexecutor.Options{})
+			case "count":
+				_, err = m.ExecuteCount(ctx, []string{"pool-test"}, req, coreexecutor.Options{})
+			case "stream":
+				var r *coreexecutor.StreamResult
+				r, err = m.ExecuteStream(ctx, []string{"pool-test"}, req, coreexecutor.Options{})
+				if err == nil {
+					for c := range r.Chunks {
+						if c.Err != nil {
+							t.Fatal(c.Err)
+						}
+					}
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(time.Second)
+			for time.Now().Before(deadline) {
+				ls, _ := m.AccountPoolLeases()
+				if len(ls) == 0 {
+					return
+				}
+				time.Sleep(time.Millisecond)
+			}
+			t.Fatal("user 1 left hour lease")
+		})
+	}
+}
+
+func TestTemporaryIdentityAndConcurrentIsolation(t *testing.T) {
+	m, _, _ := leaseManager(t)
+	req := coreexecutor.Request{Model: "pool-model"}
+	providers := []string{"pool-test"}
+	normal, done, err := m.beginPoolLease(leaseCaller("key-all", "2"), providers, req, coreexecutor.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	first, done1, err := m.beginPoolLease(leaseCaller("key-all", "1"), providers, req, coreexecutor.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done1()
+	second, done2, err := m.beginPoolLease(leaseCaller("key-all", "1"), providers, req, coreexecutor.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done2()
+	seen := map[string]bool{}
+	for _, ctx := range []context.Context{normal, first, second} {
+		l := ctx.Value(requestPoolLeaseKey{}).(*requestPoolLease).Lease
+		if seen[l.Credential] {
+			t.Fatal("concurrent accounts shared")
+		}
+		seen[l.Credential] = true
+		scope, err := m.AccountPoolScope(ctx)
+		if err != nil || !scope.Allows(l.Credential) {
+			t.Fatal("wrong request binding", err)
+		}
+	}
+	wrong := sdkaccess.WithGatewayIdentity(poolCaller("key-all"), "wrong-instance", "1")
+	if _, _, err = m.beginPoolLease(wrong, providers, req, coreexecutor.Options{}); err == nil {
+		t.Fatal("wrong instance bypassed identity validation")
+	}
+	done1()
+	done2()
+	rows, _ := m.AccountPoolLeases()
+	if len(rows) != 1 || rows[0].Temporary {
+		t.Fatal(rows)
+	}
+}
+
+func TestTemporaryStreamCancellationKeepsReservationUntilDrain(t *testing.T) {
+	m, _, _ := leaseManager(t)
+	ctx, done, err := m.beginPoolLease(leaseCaller("key-all", "1"), []string{"pool-test"}, coreexecutor.Request{Model: "pool-model"}, coreexecutor.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := make(chan coreexecutor.StreamChunk)
+	ctx, cancel := context.WithCancel(ctx)
+	result := holdPoolLeaseStream(ctx, &coreexecutor.StreamResult{Chunks: raw}, done)
+	cancel()
+	ls, _ := m.AccountPoolLeases()
+	if len(ls) != 1 || !ls[0].Temporary {
+		t.Fatal("released before upstream ended")
+	}
+	close(raw)
+	for range result.Chunks {
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		ls, _ = m.AccountPoolLeases()
+		if len(ls) == 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("temporary stream leaked")
+}
+
+func TestTemporaryContinuationDoesNotAllocate(t *testing.T) {
+	m, _, _ := leaseManager(t)
+	_, err := m.Execute(leaseCaller("key-all", "1"), []string{"pool-test"}, coreexecutor.Request{Model: "pool-model", Payload: []byte(`{"previous_response_id":"old"}`)}, coreexecutor.Options{})
+	var pe *Error
+	if !errors.As(err, &pe) || pe.Code != "pool_temporary_session_unsupported" {
+		t.Fatal(err)
+	}
+	ls, _ := m.AccountPoolLeases()
+	if len(ls) != 0 {
+		t.Fatal("continuation allocated account")
+	}
+}
+
+func TestTemporaryQuotaFailoverDoesNotLeaveHourLease(t *testing.T) {
+	m, c, e := leaseManager(t)
+	first := c.AccountPools.Groups[1].CredentialIDs[0]
+	e.errors = map[string]error{first: &Error{HTTPStatus: 429, Message: "usage_limit_reached"}}
+	if _, err := m.Execute(leaseCaller("key-all", "1"), []string{"pool-test"}, coreexecutor.Request{Model: "pool-model"}, coreexecutor.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.ids) != 2 || e.ids[0] == e.ids[1] {
+		t.Fatal("temporary failover did not occur", e.ids)
+	}
+	rows, _ := m.AccountPoolLeases()
+	if len(rows) != 0 {
+		t.Fatal("temporary failover retained lease", rows)
 	}
 }
