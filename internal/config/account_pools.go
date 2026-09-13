@@ -118,13 +118,14 @@ type AccountPoolPolicy struct {
 	invalid       bool
 }
 type AccountPoolScope struct {
-	policy        *AccountPoolPolicy
-	leaseInstance string
-	leaseGroup    string
-	leaseID       string
-	keyID         string
-	all           bool
-	groups        map[string]bool
+	leaseCredential string
+	policy          *AccountPoolPolicy
+	leaseInstance   string
+	leaseGroup      string
+	leaseID         string
+	keyID           string
+	all             bool
+	groups          map[string]bool
 }
 
 func (cfg *Config) CompileAccountPoolPolicy() *AccountPoolPolicy {
@@ -185,7 +186,7 @@ func (s *AccountPoolScope) Allows(id string) bool {
 		return true
 	}
 	group := s.policy.GroupForCredential(id)
-	return s.AuthorizesGroup(group) && ((!s.policy.leased[group] && s.leaseInstance == "") || s.leaseGroup == group)
+	return s.AuthorizesGroup(group) && ((!s.policy.leased[group] && s.leaseInstance == "") || (s.leaseGroup == group && (s.leaseCredential == "" || s.leaseCredential == id)))
 }
 func (s *AccountPoolScope) Namespace() string {
 	return s.keyID + ":" + s.policy.revision + ":" + s.leaseID
@@ -229,10 +230,11 @@ func (s *AccountPoolScope) LeaseGroups() []string {
 	sort.Strings(result)
 	return result
 }
-func (s *AccountPoolScope) WithLease(group, id string) *AccountPoolScope {
+func (s *AccountPoolScope) WithLease(group, id, credential string) *AccountPoolScope {
 	copy := *s
 	copy.leaseGroup = group
 	copy.leaseID = id
+	copy.leaseCredential = credential
 	return &copy
 }
 func (s *AccountPoolScope) AuthorizesCredential(id string) bool {
@@ -241,3 +243,5 @@ func (s *AccountPoolScope) AuthorizesCredential(id string) bool {
 
 func (p *AccountPoolPolicy) LeaseRevision() string { return p.leaseRevision }
 func (p *AccountPoolPolicy) HasLeasePools() bool   { return p != nil && p.hasLeases }
+
+func (s *AccountPoolScope) LeasedCredential() string { return s.leaseCredential }

@@ -44,11 +44,14 @@ func TestLeaseIdentityAndPoolIsolationAcrossKeys(t *testing.T) {
 		}
 	}
 	policy := m.runtimeConfigSnapshot().AccountPoolPolicy
-	if policy.GroupForCredential(e.ids[0]) != policy.GroupForCredential(e.ids[1]) || policy.GroupForCredential(e.ids[0]) == policy.GroupForCredential(e.ids[2]) {
+	if e.ids[0] != e.ids[1] || e.ids[0] == e.ids[2] || policy.GroupForCredential(e.ids[0]) != policy.GroupForCredential(e.ids[2]) {
 		t.Fatal("lease isolation failed", e.ids)
 	}
-	if _, err := m.Execute(leaseCaller("key-all", "3"), []string{"pool-test"}, req, opts); err == nil {
-		t.Fatal("third user stole occupied pool")
+	if _, err := m.Execute(leaseCaller("key-all", "3"), []string{"pool-test"}, req, opts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Execute(leaseCaller("key-all", "4"), []string{"pool-test"}, req, opts); err == nil {
+		t.Fatal("fourth user stole occupied account")
 	}
 	if _, err := m.Execute(poolCaller("key-a"), []string{"pool-test"}, req, opts); err == nil {
 		t.Fatal("static key bypassed lease")
@@ -61,14 +64,13 @@ func TestLeaseRetryCannotEscapeAndConfigChangeBlocks(t *testing.T) {
 	if _, err := m.Execute(ctx, []string{"pool-test"}, req, coreexecutor.Options{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range c.AccountPools.Groups[1].CredentialIDs {
-		e.failures[id] = true
-	}
+	leasedID := e.ids[0]
+	e.failures[leasedID] = true
 	if _, err := m.Execute(ctx, []string{"pool-test"}, req, coreexecutor.Options{}); err == nil {
 		t.Fatal("failure escaped pool")
 	}
 	for _, id := range e.ids {
-		if m.runtimeConfigSnapshot().AccountPoolPolicy.GroupForCredential(id) == "b" {
+		if id != leasedID {
 			t.Fatal("used other pool")
 		}
 	}

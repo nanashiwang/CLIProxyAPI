@@ -1,4 +1,4 @@
-// Package poollease implements persistent, single-process exclusive pool leases.
+// Package poollease implements persistent, single-process exclusive account leases.
 package poollease
 
 import (
@@ -18,14 +18,21 @@ var ErrBusy = errors.New("pool_busy")
 var ErrDenied = errors.New("pool_lease_access_denied")
 var ErrPolicy = errors.New("pool_lease_policy_changed")
 
+type Candidate struct {
+	Group      string
+	Credential string
+}
+
 type Lease struct {
-	ID      string    `json:"id"`
-	Owner   string    `json:"owner"`
-	Group   string    `json:"group"`
-	Policy  string    `json:"policy"`
-	Started time.Time `json:"started_at"`
-	Expires time.Time `json:"expires_at"`
-	Active  int       `json:"-"`
+	Credential  string    `json:"credential,omitempty"`
+	LegacyGroup bool      `json:"legacy_group,omitempty"`
+	ID          string    `json:"id"`
+	Owner       string    `json:"owner"`
+	Group       string    `json:"group"`
+	Policy      string    `json:"policy"`
+	Started     time.Time `json:"started_at"`
+	Expires     time.Time `json:"expires_at"`
+	Active      int       `json:"-"`
 }
 type Store struct {
 	mu     sync.Mutex
@@ -66,19 +73,37 @@ func Open(path string) (*Store, error) {
 			Version int     `json:"version"`
 			Leases  []Lease `json:"leases"`
 		}
-		if err = json.Unmarshal(raw, &state); err != nil || state.Version != 1 {
+		if err = json.Unmarshal(raw, &state); err != nil || (state.Version != 1 && state.Version != 2) {
 			s.Close()
 			return nil, errors.New("invalid pool lease state")
 		}
 		owners := map[string]bool{}
+		credentials := map[string]bool{}
+		groups := map[string]bool{}
+		legacyGroups := map[string]bool{}
 		for _, l := range state.Leases {
-			if l.ID == "" || l.Owner == "" || l.Group == "" || l.Policy == "" || !l.Expires.After(l.Started) || s.leases[l.Group] != nil || owners[l.Owner] {
+			if state.Version == 1 {
+				if l.Credential != "" {
+					s.Close()
+					return nil, errors.New("invalid legacy lease")
+				}
+				l.LegacyGroup = true
+			}
+			invalidResource := (l.Credential == "") != l.LegacyGroup
+			overlap := legacyGroups[l.Group] || (l.LegacyGroup && groups[l.Group]) || (l.Credential != "" && credentials[l.Credential])
+			if l.ID == "" || l.Owner == "" || l.Group == "" || l.Policy == "" || !l.Expires.After(l.Started) || s.leases[l.ID] != nil || owners[l.Owner] || invalidResource || overlap {
 				s.Close()
 				return nil, errors.New("invalid pool lease record")
 			}
 			copy := l
-			s.leases[l.Group] = &copy
+			s.leases[l.ID] = &copy
 			owners[l.Owner] = true
+			groups[l.Group] = true
+			if l.LegacyGroup {
+				legacyGroups[l.Group] = true
+			} else {
+				credentials[l.Credential] = true
+			}
 		}
 	}
 	return s, nil
@@ -118,49 +143,83 @@ func (s *Store) Lookup(owner, policy string, now time.Time) (Lease, bool, error)
 	}
 	return Lease{}, false, nil
 }
-func (s *Store) Acquire(owner, policy string, allowed map[string]bool, candidates []string, now time.Time) (Lease, func(), error) {
+
+// occupied protects account IDs globally; legacy v1 records temporarily protect
+// their entire group until the owner safely narrows the lease or it expires.
+func (s *Store) occupied(candidate Candidate, ignore string) bool {
+	for _, l := range s.leases {
+		if l.ID != ignore && (l.Credential == candidate.Credential || (l.LegacyGroup && l.Group == candidate.Group)) {
+			return true
+		}
+	}
+	return false
+}
+func (s *Store) Acquire(owner, policy string, allowed map[string]bool, candidates []Candidate, now time.Time) (Lease, func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.check(policy, now); err != nil {
 		return Lease{}, nil, err
 	}
 	for _, l := range s.leases {
-		if l.Owner == owner {
-			if !allowed[l.Group] {
-				return Lease{}, nil, ErrDenied
-			}
-			if !now.Before(l.Expires) {
+		if l.Owner != owner {
+			continue
+		}
+		if !allowed[l.Group] {
+			return Lease{}, nil, ErrDenied
+		}
+		if !now.Before(l.Expires) {
+			return Lease{}, nil, ErrBusy
+		}
+		if l.LegacyGroup {
+			if l.Active != 0 {
 				return Lease{}, nil, ErrBusy
 			}
-			l.Active++
-			return *l, s.releaser(l.Group, l.ID), nil
+			chosen := ""
+			for _, c := range candidates {
+				if c.Group == l.Group && c.Credential != "" && !s.occupied(c, l.ID) {
+					chosen = c.Credential
+					break
+				}
+			}
+			if chosen == "" {
+				return Lease{}, nil, ErrBusy
+			}
+			l.Credential = chosen
+			l.LegacyGroup = false
+			if err := s.save(); err != nil {
+				l.Credential = ""
+				l.LegacyGroup = true
+				return Lease{}, nil, err
+			}
 		}
+		l.Active++
+		return *l, s.releaser(l.ID), nil
 	}
-	for _, group := range candidates {
-		if !allowed[group] || s.leases[group] != nil {
+	for _, c := range candidates {
+		if c.Credential == "" || !allowed[c.Group] || s.occupied(c, "") {
 			continue
 		}
 		id := make([]byte, 16)
 		if _, err := rand.Read(id); err != nil {
 			return Lease{}, nil, err
 		}
-		l := &Lease{ID: hex.EncodeToString(id), Owner: owner, Group: group, Policy: policy, Started: now, Expires: now.Add(time.Hour), Active: 1}
-		s.leases[group] = l
+		l := &Lease{ID: hex.EncodeToString(id), Owner: owner, Group: c.Group, Credential: c.Credential, Policy: policy, Started: now, Expires: now.Add(time.Hour), Active: 1}
+		s.leases[l.ID] = l
 		if err := s.save(); err != nil {
-			delete(s.leases, group)
+			delete(s.leases, l.ID)
 			return Lease{}, nil, err
 		}
-		return *l, s.releaser(group, l.ID), nil
+		return *l, s.releaser(l.ID), nil
 	}
 	return Lease{}, nil, ErrBusy
 }
-func (s *Store) releaser(group, id string) func() {
+func (s *Store) releaser(id string) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			if l := s.leases[group]; l != nil && l.ID == id {
+			if l := s.leases[id]; l != nil {
 				l.Active--
 			}
 		})
@@ -171,11 +230,13 @@ func (s *Store) save() error {
 	for _, l := range s.leases {
 		rows = append(rows, *l)
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Group < rows[j].Group })
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].Group < rows[j].Group || (rows[i].Group == rows[j].Group && rows[i].ID < rows[j].ID)
+	})
 	raw, err := json.Marshal(struct {
 		Version int     `json:"version"`
 		Leases  []Lease `json:"leases"`
-	}{1, rows})
+	}{2, rows})
 	if err != nil {
 		return err
 	}
@@ -210,6 +271,8 @@ func (s *Store) Snapshot(now time.Time) []Lease {
 	for _, l := range s.leases {
 		rows = append(rows, *l)
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Group < rows[j].Group })
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].Group < rows[j].Group || (rows[i].Group == rows[j].Group && rows[i].ID < rows[j].ID)
+	})
 	return rows
 }
