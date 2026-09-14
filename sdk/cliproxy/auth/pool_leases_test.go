@@ -3,11 +3,13 @@ package auth
 import (
 	"context"
 	"errors"
+	"net/http"
+	"testing"
+	"time"
+
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	"testing"
-	"time"
 )
 
 func leaseManager(t *testing.T) (*Manager, *config.Config, *poolCaptureExecutor) {
@@ -111,11 +113,41 @@ func TestLeaseStreamRetainsInFlightUntilProducerCloses(t *testing.T) {
 	t.Fatal("in-flight lease leaked")
 }
 func TestExpiredContinuationDoesNotAllocateAnotherPool(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  coreexecutor.Request
+		opts coreexecutor.Options
+	}{
+		{
+			name: "payload marker",
+			req:  coreexecutor.Request{Model: "pool-model", Payload: []byte(`{"previous_response_id":"old","client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"}}`)},
+		},
+		{
+			name: "header marker and original request",
+			req:  coreexecutor.Request{Model: "pool-model"},
+			opts: coreexecutor.Options{Headers: http.Header{"X-OpenAI-Internal-Codex-Responses-Lite": {"true"}}, OriginalRequest: []byte(`{"previous_response_id":"old"}`)},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _, _ := leaseManager(t)
+			_, err := m.Execute(leaseCaller("key-all", "101"), []string{"pool-test"}, tc.req, tc.opts)
+			var poolErr *Error
+			if !errors.As(err, &poolErr) || poolErr.Code != "pool_lease_session_expired" {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestResponsesLiteContinuationCannotUseTemporaryAccountLease(t *testing.T) {
 	m, _, _ := leaseManager(t)
-	_, err := m.Execute(leaseCaller("key-all", "101"), []string{"pool-test"}, coreexecutor.Request{Model: "pool-model", Payload: []byte(`{"previous_response_id":"old"}`)}, coreexecutor.Options{})
+	req := coreexecutor.Request{Model: "pool-model", Payload: []byte(`{"previous_response_id":"old","client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"}}`)}
+	opts := coreexecutor.Options{Headers: http.Header{"X-OpenAI-Internal-Codex-Responses-Lite": {"true"}}}
+
+	_, err := m.Execute(leaseCaller("key-all", "1"), []string{"pool-test"}, req, opts)
 	var poolErr *Error
-	if !errors.As(err, &poolErr) || poolErr.Code != "pool_lease_session_expired" {
-		t.Fatal(err)
+	if !errors.As(err, &poolErr) || poolErr.Code != "pool_temporary_session_unsupported" {
+		t.Fatalf("temporary responses-lite continuation was not rejected: %v", err)
 	}
 }
 
