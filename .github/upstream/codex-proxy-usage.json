@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "repository": "zyycn/codex-proxy-rs",
+  "license": "Apache-2.0",
+  "reviewed_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+  "reviewed_on": "2026-09-19",
+  "reviewed_release": "v3.10.0",
+  "review_scope": "Usage screens and their API, observability, token accounting, pricing, storage, test and UI dependencies; adaptation covers the five registered CPA features, not the entire source project.",
+  "shared_watch_paths": [
+    "LICENSE*",
+    "NOTICE*",
+    "README*",
+    "backend/Cargo.toml",
+    "backend/Cargo.lock",
+    "backend/crates/*/Cargo.toml",
+    "frontend/package.json",
+    "frontend/pnpm-lock.yaml",
+    "frontend/src/api/request*",
+    "frontend/src/api/request/**",
+    "frontend/src/components/base/**",
+    "frontend/src/utils/**",
+    "frontend/tests/**",
+    "frontend/src/**/*.test.*",
+    "frontend/src/**/*.spec.*",
+    "backend/migrations/**",
+    "backend/crates/gateway-core/src/engine/observation.rs",
+    "backend/crates/gateway-core/src/metering/**",
+    "backend/crates/gateway-core/tests/metering/**",
+    "backend/crates/gateway-api/src/admin/observability/**",
+    "backend/crates/gateway-api/tests/admin/observability/**",
+    "backend/crates/gateway-admin/src/model/observability.rs",
+    "backend/crates/gateway-admin/src/use_case/observability.rs",
+    "backend/crates/gateway-admin/tests/use_case/observability.rs",
+    "backend/crates/gateway-store/src/postgres/observability/**",
+    "backend/crates/gateway-store/src/postgres/usage_facts.rs",
+    "backend/crates/gateway-store/tests/postgres/observability/**",
+    "backend/crates/gateway-host/src/pricing/**",
+    "backend/crates/gateway-host/tests/pricing/**",
+    "backend/crates/gateway-store/src/postgres/pricing.rs",
+    "backend/crates/gateway-store/tests/postgres/pricing.rs",
+    "backend/crates/providers/*/src/**/usage.rs",
+    "backend/crates/providers/*/tests/**/usage.rs",
+    "backend/crates/providers/*/src/transport/client*.rs",
+    "backend/crates/providers/*/src/transport/response_meta.rs",
+    "backend/crates/providers/*/src/**/observation.rs"
+  ],
+  "features": [
+    {
+      "id": "usage-overview-insights",
+      "title": "Usage health, performance, cost, trends and dimensional diagnostics",
+      "status": "adapted",
+      "source_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "adapted_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "local_areas": [
+        "CLIProxyAPI/internal/usage",
+        "CLIProxyAPI/internal/api/handlers/management",
+        "Cli-Proxy-API-Management-Center/src/features/usage"
+      ],
+      "watch_paths": [
+        "frontend/src/views/usage/**",
+        "frontend/src/api/modules/usage.ts",
+        "frontend/src/api/modules/pricing.ts",
+        "frontend/src/views/settings/pricing/**"
+      ],
+      "validation": [
+        "Go full suite and usage/management race tests passed",
+        "Management API binary smoke: filter, pagination, prewarm exclusion, stable detail, unknown cost",
+        "React verify: 525 tests, lint, TypeScript and production build passed",
+        "Browser synthetic fixture: all-time pagination, request search/detail, empty state, failed/warmup filters, management tools and redacted diagnostic download passed"
+      ],
+      "notes": "Preserve CPA token accounting v2, pricing coverage and its own retained-history limits."
+    },
+    {
+      "id": "usage-record-query",
+      "title": "Server-side usage record filtering and pagination",
+      "status": "adapted",
+      "source_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "adapted_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "local_areas": [
+        "CLIProxyAPI/internal/usage",
+        "CLIProxyAPI/internal/api/handlers/management"
+      ],
+      "watch_paths": [
+        "frontend/src/views/usage/composables/useUsageRecordsTable.ts",
+        "frontend/src/views/usage/composables/useUsageTimeRange.ts",
+        "frontend/src/views/usage/components/UsageFilters.vue",
+        "frontend/src/api/modules/usage.ts"
+      ],
+      "validation": [
+        "Go full suite and usage/management race tests passed",
+        "Management API binary smoke: filter, pagination, prewarm exclusion, stable detail, unknown cost",
+        "React verify: 525 tests, lint, TypeScript and production build passed",
+        "Browser synthetic fixture: all-time pagination, request search/detail, empty state, failed/warmup filters, management tools and redacted diagnostic download passed"
+      ],
+      "notes": "Query existing CPA storage; do not introduce the source project's PostgreSQL schema."
+    },
+    {
+      "id": "usage-record-detail",
+      "title": "Request details with actual metadata, token and cost breakdowns",
+      "status": "adapted",
+      "source_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "adapted_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "local_areas": [
+        "CLIProxyAPI/internal/usage",
+        "CLIProxyAPI/internal/api/handlers/management",
+        "Cli-Proxy-API-Management-Center/src/features/usage"
+      ],
+      "watch_paths": [
+        "frontend/src/views/usage/**",
+        "frontend/src/api/modules/usage.ts"
+      ],
+      "validation": [
+        "Go full suite and usage/management race tests passed",
+        "Management API binary smoke: filter, pagination, prewarm exclusion, stable detail, unknown cost",
+        "React verify: 525 tests, lint, TypeScript and production build passed",
+        "Browser synthetic fixture: all-time pagination, request search/detail, empty state, failed/warmup filters, management tools and redacted diagnostic download passed"
+      ],
+      "notes": "No new upstream-attempt capture is included. Uncollected attempts and trace phases must be shown as unavailable, never fabricated from selection_seq."
+    },
+    {
+      "id": "usage-react-interface",
+      "title": "Usage management interface adapted to React and CPA contracts",
+      "status": "adapted",
+      "source_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "adapted_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "local_areas": [
+        "Cli-Proxy-API-Management-Center/src/features/usage",
+        "Cli-Proxy-API-Management-Center/src/services/api/usage.ts",
+        "Cli-Proxy-API-Management-Center/src/i18n/locales"
+      ],
+      "watch_paths": [
+        "frontend/src/views/usage/**",
+        "frontend/src/api/modules/usage.ts",
+        "frontend/src/router/**",
+        "frontend/src/styles/**"
+      ],
+      "validation": [
+        "Go full suite and usage/management race tests passed",
+        "Management API binary smoke: filter, pagination, prewarm exclusion, stable detail, unknown cost",
+        "React verify: 525 tests, lint, TypeScript and production build passed",
+        "Browser synthetic fixture: all-time pagination, request search/detail, empty state, failed/warmup filters, management tools and redacted diagnostic download passed"
+      ],
+      "notes": "Reuse CPA authentication, account permissions, routes, localization and management API."
+    },
+    {
+      "id": "usage-diagnostic-export",
+      "title": "Redacted request diagnostic export",
+      "status": "adapted",
+      "source_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "adapted_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "local_areas": [
+        "Cli-Proxy-API-Management-Center/src/features/usage"
+      ],
+      "watch_paths": [
+        "frontend/src/views/usage/utils/diagnosticsBundle.ts",
+        "frontend/src/views/usage/utils/detail.ts",
+        "frontend/src/views/usage/components/RequestDiagnosticsPanel.vue",
+        "frontend/src/views/usage/components/UsageRecordDetailModal.vue",
+        "frontend/src/api/modules/usage.ts"
+      ],
+      "validation": [
+        "Go full suite and usage/management race tests passed",
+        "Management API binary smoke: filter, pagination, prewarm exclusion, stable detail, unknown cost",
+        "React verify: 525 tests, lint, TypeScript and production build passed",
+        "Browser synthetic fixture: all-time pagination, request search/detail, empty state, failed/warmup filters, management tools and redacted diagnostic download passed"
+      ],
+      "notes": "Export an explicit safe field set; omit credentials, request/response bodies and raw identity headers."
+    }
+  ],
+  "review_notes": [
+    {
+      "commit": "f3076e2338fb04e175533636dfc7a8784d53f9f6",
+      "decision": "not_applicable",
+      "reason": "Account auxiliary endpoint 404 fallback only; no change to usage token parsing, billing or dashboard contracts."
+    }
+  ]
+}

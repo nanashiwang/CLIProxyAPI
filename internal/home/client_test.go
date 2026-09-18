@@ -847,6 +847,57 @@ func TestGetPluginSyncCancellationInterruptsRead(t *testing.T) {
 	}
 }
 
+func TestPluginSyncCancellationSurvivesReadDeadlineRefresh(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = serverConn.Close() })
+	observed := &pluginSyncCancellationObservedConn{Conn: clientConn, canceled: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	conn := newPluginSyncCancelableConn(ctx, observed)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	cancel()
+	select {
+	case <-observed.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("connection did not observe cancellation")
+	}
+	// go-redis refreshes the read deadline after flushing the command. Force
+	// that refresh to happen after cancellation, without scheduler-dependent timing.
+	_ = conn.SetReadDeadline(time.Now().Add(time.Hour))
+	readResult := make(chan error, 1)
+	go func() {
+		_, err := conn.Read(make([]byte, 1))
+		readResult <- err
+	}()
+	select {
+	case err := <-readResult:
+		if err == nil {
+			t.Fatal("canceled connection read succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("refreshing the read deadline revived a canceled plugin sync connection")
+	}
+}
+
+type pluginSyncCancellationObservedConn struct {
+	net.Conn
+	canceled chan struct{}
+	once     sync.Once
+}
+
+func (c *pluginSyncCancellationObservedConn) SetDeadline(deadline time.Time) error {
+	err := c.Conn.SetDeadline(deadline)
+	c.once.Do(func() { close(c.canceled) })
+	return err
+}
+
+func (c *pluginSyncCancellationObservedConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(func() { close(c.canceled) })
+	return err
+}
+
 func TestProcessPluginSyncCommandCancellationInterruptsTLSHandshake(t *testing.T) {
 	listener, errListen := net.Listen("tcp", "127.0.0.1:0")
 	if errListen != nil {

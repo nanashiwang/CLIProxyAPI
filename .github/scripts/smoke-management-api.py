@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify management contracts against the built server without production data."""
 import json
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 import secrets
@@ -38,13 +39,18 @@ def main():
             if key.startswith(("PGSTORE_", "GITSTORE_", "OBJECTSTORE_")) or key == "MANAGEMENT_PASSWORD":
                 environment.pop(key)
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        def get(path):
+        def request(path, method="GET", payload=None):
             req = urllib.request.Request(
                 f"http://127.0.0.1:{port}/v0/management/{path}",
-                headers={"Authorization": "Bearer " + secret},
+                method=method,
+                data=json.dumps(payload).encode() if payload is not None else None,
+                headers={"Authorization": "Bearer " + secret, "Content-Type": "application/json"},
             )
             with opener.open(req, timeout=3) as response:
                 return json.load(response)
+
+        def get(path):
+            return request(path)
         with (root / "server.log").open("w") as output:
             process = subprocess.Popen(
                 [binary, "--config", str(config), "--local-model"],
@@ -74,6 +80,7 @@ def main():
                     if not isinstance(data, dict) or any(field not in data for field in fields):
                         raise RuntimeError(f"{path} response does not satisfy the management contract")
                     print(f"PASS /v0/management/{path}")
+                verify_usage_insights(request)
             finally:
                 process.terminate()
                 try:
@@ -81,6 +88,62 @@ def main():
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+
+
+def verify_usage_insights(request):
+    """Exercise the real pagination/filter contracts without upstream traffic."""
+    now = datetime.now(timezone.utc)
+    records = []
+    for index, (failed, generate) in enumerate([(False, True), (True, True), (False, False)]):
+        records.append({
+            "timestamp": (now - timedelta(minutes=index + 1)).isoformat(),
+            "request_id": f"smoke-usage-{index}",
+            "provider": "codex",
+            "auth_id": "smoke-synthetic-account",
+            "auth_index": "smoke-1",
+            "auth_type": "oauth",
+            "endpoint": "/v1/responses",
+            "latency_ms": 1000,
+            "ttft_ms": 100,
+            "generate": generate,
+            "failed": failed,
+            "status_code": 503 if failed else 200,
+            "tokens": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+            "billing": {"currency": "USD", "priced": False},
+        })
+    imported = request("usage/import", "POST", {
+        "version": 2,
+        "usage": {"apis": {"smoke": {"models": {"smoke-model": {"details": records}}}}},
+    })
+    if imported.get("added") != 3:
+        raise RuntimeError("usage insights fixture import failed")
+    dashboard = request("usage/dashboard?range=24h")
+    summary = dashboard.get("summary", {})
+    if summary.get("total_requests") != 2 or summary.get("success_count") != 1:
+        raise RuntimeError("usage dashboard must exclude prewarm records from inference totals")
+    if dashboard.get("cost", {}).get("total_cost_usd") is not None:
+        raise RuntimeError("unpriced usage must remain unknown rather than zero")
+    first = request("usage/records?range=24h&page=1&page_size=1")
+    second = request("usage/records?range=24h&page=2&page_size=1")
+    if first.get("total") != 2 or len(first.get("items", [])) != 1:
+        raise RuntimeError("usage records must provide bounded server pagination")
+    if len(second.get("items", [])) != 1 or first["items"][0]["id"] == second["items"][0]["id"]:
+        raise RuntimeError("usage record pages must not overlap")
+    filtered = request("usage/records?range=24h&search=smoke-usage-1&page=1&page_size=20")
+    if filtered.get("total") != 1 or filtered["items"][0].get("request_id") != "smoke-usage-1":
+        raise RuntimeError("usage record search must filter retained records")
+    record_id = first["items"][0]["id"]
+    detail = request("usage/records/" + record_id)
+    if detail.get("id") != record_id:
+        raise RuntimeError("usage record detail must resolve the same stable record ID")
+    try:
+        request("usage/records?page=0")
+    except urllib.error.HTTPError as error:
+        if error.code != 400:
+            raise
+    else:
+        raise RuntimeError("usage records must reject invalid pagination")
+    print("PASS usage dashboard, retained-record pagination, filtering, detail and unknown costs")
 
 
 if __name__ == "__main__":

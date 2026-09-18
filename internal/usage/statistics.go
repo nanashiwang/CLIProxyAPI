@@ -81,28 +81,42 @@ type TokenStats struct {
 
 // RequestDetail stores one persisted request event without secrets or failure bodies.
 type RequestDetail struct {
-	ClientKeyID         string            `json:"client_key_id,omitempty"`
-	PoolID              string            `json:"pool_id,omitempty"`
-	Timestamp           time.Time         `json:"timestamp"`
-	LatencyMs           int64             `json:"latency_ms"`
-	TTFTMs              int64             `json:"ttft_ms"`
-	Provider            string            `json:"provider"`
-	ExecutorType        string            `json:"executor_type"`
-	Alias               string            `json:"alias"`
-	Endpoint            string            `json:"endpoint"`
-	Source              string            `json:"source"`
-	AuthID              string            `json:"auth_id"`
-	AuthIndex           string            `json:"auth_index"`
-	AuthType            string            `json:"auth_type"`
-	RequestID           string            `json:"request_id,omitempty"`
-	ServiceTier         string            `json:"service_tier"`
-	ResponseServiceTier string            `json:"response_service_tier,omitempty"`
-	Tokens              TokenStats        `json:"tokens"`
-	Failed              bool              `json:"failed"`
-	StatusCode          int               `json:"status_code"`
-	Generate            bool              `json:"generate"`
-	Billing             coreusage.Billing `json:"billing"`
-	CostUSD             *float64          `json:"cost_usd,omitempty"`
+	ClientKeyID         string                    `json:"client_key_id,omitempty"`
+	PoolID              string                    `json:"pool_id,omitempty"`
+	Timestamp           time.Time                 `json:"timestamp"`
+	LatencyMs           int64                     `json:"latency_ms"`
+	TTFTMs              int64                     `json:"ttft_ms"`
+	Provider            string                    `json:"provider"`
+	ExecutorType        string                    `json:"executor_type"`
+	Alias               string                    `json:"alias"`
+	Endpoint            string                    `json:"endpoint"`
+	Source              string                    `json:"source"`
+	AuthID              string                    `json:"auth_id"`
+	AuthIndex           string                    `json:"auth_index"`
+	AuthType            string                    `json:"auth_type"`
+	RequestID           string                    `json:"request_id,omitempty"`
+	ServiceTier         string                    `json:"service_tier"`
+	ResponseServiceTier string                    `json:"response_service_tier,omitempty"`
+	ReasoningEffort     string                    `json:"reasoning_effort,omitempty"`
+	Tokens              TokenStats                `json:"tokens"`
+	TokenBreakdown      *coreusage.TokenBreakdown `json:"token_breakdown,omitempty"`
+	Failed              bool                      `json:"failed"`
+	StatusCode          int                       `json:"status_code"`
+	Generate            bool                      `json:"generate"`
+	Billing             coreusage.Billing         `json:"billing"`
+	CostUSD             *float64                  `json:"cost_usd,omitempty"`
+}
+
+// UnmarshalJSON preserves the generation default of historical exports that
+// predate the generate field. Explicit false remains a warmup request.
+func (d *RequestDetail) UnmarshalJSON(data []byte) error {
+	type detailAlias RequestDetail
+	value := detailAlias{Generate: true}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*d = RequestDetail(value)
+	return nil
 }
 
 // DimensionSnapshot contains aggregate totals for one account, model, or provider.
@@ -1137,6 +1151,11 @@ func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
 		cost := billing.TotalUSD
 		costUSD = &cost
 	}
+	var tokenBreakdown *coreusage.TokenBreakdown
+	if detail.TokenBreakdown.Valid() {
+		breakdown := detail.TokenBreakdown
+		tokenBreakdown = &breakdown
+	}
 	return normalizeStoredEvent(storedEvent{
 		Version: storageSchemaVersion,
 		API:     apiIdentifier(record.APIKey, endpoint, provider),
@@ -1158,7 +1177,9 @@ func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
 			RequestID:           strings.TrimSpace(internallogging.GetRequestID(ctx)),
 			ServiceTier:         serviceTier,
 			ResponseServiceTier: strings.TrimSpace(record.ResponseServiceTier),
+			ReasoningEffort:     strings.TrimSpace(record.ReasoningEffort),
 			Tokens:              tokens,
+			TokenBreakdown:      tokenBreakdown,
 			Failed:              failed,
 			StatusCode:          statusCode,
 			Generate:            coreusage.GenerateEnabled(record.Generate),

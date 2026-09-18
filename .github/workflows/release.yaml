@@ -200,11 +200,11 @@ jobs:
             -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
             -o "$archive_dir/$binary_name" ./cmd/server/
 
-          cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
+          cp LICENSE LICENSE.codex-proxy-rs NOTICE.codex-proxy-rs README.md README_CN.md config.example.yaml "$archive_dir/"
           if [[ "$ARCHIVE_FORMAT" == "zip" ]]; then
             powershell -NoProfile -Command "Compress-Archive -Path '${archive_dir}/*' -DestinationPath 'dist/${archive_name}' -Force"
           else
-            tar -C "$archive_dir" -czf "dist/$archive_name" "$binary_name" LICENSE README.md README_CN.md config.example.yaml
+            tar -C "$archive_dir" -czf "dist/$archive_name" "$binary_name" LICENSE LICENSE.codex-proxy-rs NOTICE.codex-proxy-rs README.md README_CN.md config.example.yaml
           fi
       - uses: actions/upload-artifact@v4
         with:
@@ -340,8 +340,8 @@ jobs:
               fi
             '
 
-          cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml
+          cp LICENSE LICENSE.codex-proxy-rs NOTICE.codex-proxy-rs README.md README_CN.md config.example.yaml "$archive_dir/"
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE LICENSE.codex-proxy-rs NOTICE.codex-proxy-rs README.md README_CN.md config.example.yaml
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -459,8 +459,8 @@ jobs:
             exit 1
           fi
 
-          cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml
+          cp LICENSE LICENSE.codex-proxy-rs NOTICE.codex-proxy-rs README.md README_CN.md config.example.yaml "$archive_dir/"
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE LICENSE.codex-proxy-rs NOTICE.codex-proxy-rs README.md README_CN.md config.example.yaml
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -613,8 +613,8 @@ jobs:
 
           echo "Packaging ${archive_name}"
           cp "dist/${TARGET}/bin/cli-proxy-api" "$archive_dir/cli-proxy-api"
-          cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml
+          cp LICENSE LICENSE.codex-proxy-rs NOTICE.codex-proxy-rs README.md README_CN.md config.example.yaml "$archive_dir/"
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE LICENSE.codex-proxy-rs NOTICE.codex-proxy-rs README.md README_CN.md config.example.yaml
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
