@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only upstream review report; adaptation baselines are changed by reviewers."""
+"""Weekly whole-project update report with independent feature adaptation tracking."""
 
 import argparse
 import fnmatch
@@ -22,6 +22,15 @@ def validate_manifest(manifest):
         raise ValueError("Unsupported tracking manifest schema")
     if manifest.get("repository") != "zyycn/codex-proxy-rs":
         raise ValueError("Unexpected upstream repository")
+    if manifest.get("monitor_scope") != "entire_repository":
+        raise ValueError("The monitor must cover the entire repository")
+    if not SHA.fullmatch(manifest.get("repository_tracking_commit", "")):
+        raise ValueError("A full repository tracking start commit is required")
+    repository_reviewed = manifest.get("repository_reviewed_commit")
+    if repository_reviewed is not None and not SHA.fullmatch(repository_reviewed):
+        raise ValueError("A repository review baseline must be a full commit SHA")
+    if manifest.get("repository_reviewed_release") and not repository_reviewed:
+        raise ValueError("A repository reviewed release requires a repository review baseline")
     if not SHA.fullmatch(manifest.get("reviewed_commit", "")):
         raise ValueError("A full reviewed commit SHA is required")
     ids = set()
@@ -57,7 +66,7 @@ def github_api(path, optional=False):
     return json.loads(result.stdout)
 
 
-def evaluate_comparison(comparison, patterns):
+def evaluate_comparison(comparison, patterns=None):
     files = comparison.get("files")
     status = comparison.get("status")
     # GitHub compare returns at most 300 changed files. Never turn a truncated,
@@ -66,12 +75,15 @@ def evaluate_comparison(comparison, patterns):
     matched = []
     for item in files or []:
         names = [item.get("filename", ""), item.get("previous_filename", "")]
-        if any(name and fnmatch.fnmatchcase(name, pattern) for name in names for pattern in patterns):
+        if patterns is None or any(name and fnmatch.fnmatchcase(name, pattern) for name in names for pattern in patterns):
             matched.append({key: item[key] for key in ("filename", "previous_filename", "status") if key in item})
     return {
         "comparison_status": status or "unknown",
         "comparison_complete": complete,
-        "review_required": bool(matched) or not complete,
+        # Whole-project tracking also detects commits with no net file diff,
+        # such as a change and its later revert within the weekly window.
+        "review_required": bool(matched) or not complete or (patterns is None and status == "ahead"),
+        "commit_count": comparison.get("total_commits", 0 if status == "identical" else None),
         "changed_files": matched,
         "limitation": None if complete else "History changed, response incomplete, or GitHub's 300-file limit was reached; review the full diff manually.",
     }
@@ -87,7 +99,12 @@ def build_report(manifest, head, release, compare):
 
     shared = manifest["shared_watch_paths"]
     all_patterns = shared + [pattern for feature in manifest["features"] for pattern in feature["watch_paths"]]
-    review = checked(manifest["reviewed_commit"], all_patterns)
+    repository_reviewed = manifest.get("repository_reviewed_commit")
+    repository_base = repository_reviewed or manifest["repository_tracking_commit"]
+    repository_release = manifest.get("repository_reviewed_release") or manifest.get("repository_tracking_release")
+    release_changed = (release["tag_name"] if release else None) != repository_release
+    review = checked(repository_base, None)
+    feature_review = checked(manifest["reviewed_commit"], all_patterns)
     features = []
     for feature in manifest["features"]:
         adapted = feature.get("adapted_commit")
@@ -104,40 +121,54 @@ def build_report(manifest, head, release, compare):
         "schema_version": 1,
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "repository": manifest["repository"], "head": head,
+        "monitor_scope": manifest["monitor_scope"],
+        "repository_tracking_commit": manifest["repository_tracking_commit"],
+        "repository_reviewed_commit": repository_reviewed,
+        "repository_comparison_base": repository_base,
+        "repository_comparison_basis": "reviewed_repository" if repository_reviewed else "tracking_start_only",
+        "repository_release_baseline": repository_release,
         "reviewed_commit": manifest["reviewed_commit"],
         "latest_release": release,
         "release_changed_since_review": bool(release and release["tag_name"] != manifest.get("reviewed_release")),
+        "release_changed_since_repository_baseline": release_changed,
+        "review_required": review["review_required"] or release_changed,
         "review": review,
+        "feature_review": feature_review,
         "features": features,
-        "policy": "Read-only report. No merges, baseline updates, issue creation, comments or deployment.",
+        "policy": "Weekly read-only whole-project report for AI review of source, fixes, features, dependencies, documentation, CI and formal releases. Feature adaptation is assessed independently. No automatic merges, baseline updates, issue creation, comments or deployment.",
     }
 
 
 def markdown(report):
     if report.get("error"):
-        return "# codex-proxy-rs 用量跟踪\n\n检查失败，不能据此判断上游没有变化。详见 report.json。\n"
+        return "# codex-proxy-rs 全项目更新跟踪\n\n检查失败，不能据此判断上游没有变化。详见 report.json。\n"
     repo = report["repository"]
     review = report["review"]
-    lines = ["# codex-proxy-rs 用量跟踪", "", f"已审查基线：`{report['reviewed_commit']}`", f"当前 HEAD：`{report['head']}`", "",
-             "相关上游变更需要审查。" if review["review_required"] else "已审查基线之后未发现所监控范围的变化。", "",
-             "已审查不等于已适配；单项状态及适配来源只由验证后的人工记录决定。", "",
+    basis = "全仓已审查基线" if report["repository_reviewed_commit"] else "全仓跟踪起点（尚未登记全仓审查）"
+    lines = ["# codex-proxy-rs 全项目更新跟踪", "", f"{basis}：`{report['repository_comparison_base']}`", f"当前 HEAD：`{report['head']}`", "",
+             "全项目更新需要评估。" if report["review_required"] else "全仓跟踪区间及正式 Release 均未发现新变化。", "",
+             "检查覆盖源码、功能、修复、依赖、文档和 CI；每周一由 AI 评估是否适合迁移，不自动合并或部署。", "",
+             f"以下五项统计功能的既有审查基线：`{report['reviewed_commit']}`。全仓变化不代表这些功能都需要移植；单项状态及适配来源只由验证后的审查记录决定。", "",
              "| 功能 | 本地状态 | 对比起点 | 来源变化 |", "| --- | --- | --- | --- |"]
     for feature in report["features"]:
         delta = feature["source_delta"]
         state = "需审查" if delta["review_required"] else "未发现变化"
         basis = "已适配来源" if feature["adapted_commit"] else "候选来源（尚未适配）"
         lines.append(f"| {feature['id']} | {feature['adaptation_status']} | {basis} | {state} |")
-    if report["latest_release"]:
-        lines += ["", f"最新正式 Release：{report['latest_release']['tag_name']}。Release 推进不会自动标记功能为已适配。"]
+    latest = report["latest_release"]
+    release_state = "发生变化，需要评估" if report["release_changed_since_repository_baseline"] else "未变化"
+    lines += ["", f"正式 Release：{report['repository_release_baseline'] or '无'} → {latest['tag_name'] if latest else '无'}（{release_state}）。Release 推进不会自动标记功能为已适配。"]
+    if latest:
+        lines.append(f"[最新正式 Release]({latest['html_url']})")
     if review["limitation"]:
         lines += ["", review["limitation"]]
-    lines += ["", f"[完整提交差异](https://github.com/{repo}/compare/{report['reviewed_commit']}...{report['head']})", "", "关键路径变化（完整列表见 report.json）："]
+    lines += ["", f"[全仓提交差异](https://github.com/{repo}/compare/{report['repository_comparison_base']}...{report['head']})", "", "全仓文件变化（不按统计功能路径过滤，完整列表见 report.json）："]
     for item in review["changed_files"][:100]:
         # Upstream path text is data, not workflow instructions or HTML.
         name = item["filename"].replace("`", "'").replace("<", "&lt;").replace(">", "&gt;").replace("\n", " ")
         lines.append(f"- `{name}` ({item.get('status', 'unknown')})")
     if not review["changed_files"]:
-        lines.append("- 未列出关键文件变化；比较不完整时仍需人工复核。")
+        lines.append("- 未列出净文件变化；仍须检查提交及 Release 状态，比较不完整时需复核完整历史。")
     return "\n".join(lines) + "\n"
 
 

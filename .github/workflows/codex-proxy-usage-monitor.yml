@@ -1,8 +1,9 @@
-name: codex-proxy-usage-monitor
+name: codex-proxy-project-monitor
 
 on:
   schedule:
-    - cron: '43 2 * * *'
+    # Monday 02:43 UTC / 10:43 Asia/Shanghai.
+    - cron: '43 2 * * 1'
   workflow_dispatch:
   pull_request:
     paths:
@@ -30,7 +31,7 @@ jobs:
           python-version: '3.12'
       - name: Verify monitor semantics
         run: python3 .github/scripts/test_codex_proxy_usage_monitor.py
-      - name: Check source changes without altering adaptation records
+      - name: Check whole-project changes and formal releases without altering adaptation records
         if: github.event_name != 'pull_request'
         env:
           GITHUB_TOKEN: ${{ github.token }}
