@@ -1,4 +1,4 @@
-# codex-proxy-rs 用量功能适配与跟踪
+# codex-proxy-rs 全项目更新跟踪与用量功能适配
 
 ## 来源与本次范围
 
@@ -8,6 +8,8 @@
 - 移植方式：参考行为、信息组织及数据接口，在 CPA 已有 Go 后端和 React 管理端实现；不引入 Rust 服务、Vue 运行时或上游 PostgreSQL 存储。
 
 本次只适配使用统计相关能力：健康/性能/成本/趋势/维度诊断、服务端分页筛选、请求详情与 token/费用拆分、React 使用统计界面、脱敏诊断导出。账号调度、鉴权、租约、OAuth、代理传输和模型转换不在本次适配范围。
+
+后续更新跟踪覆盖整个上游项目，包含源码、功能、修复、依赖、文档、CI 与正式 Release。已实现的五项用量功能继续单独记录适配来源；整个项目纳入跟踪，不代表其他模块已经审查或迁入 CPA。
 
 机器可读状态以 [codex-proxy-usage.json](../.github/upstream/codex-proxy-usage.json) 为准。最初登记为 `in_progress`；只有对应前后端实现及验证完成才改为 `adapted`。本说明不以参考源码已下载、代码已编写或构建已触发作为完成证明。
 
@@ -21,7 +23,7 @@
 | 管理界面组织 | `frontend/src/views/usage/index.vue` 及 components/composables/utils | `src/features/usage/` 与现有 CPA 国际化/组件 |
 | 诊断导出 | `frontend/src/views/usage/utils/diagnosticsBundle.ts`、`RequestDiagnosticsPanel.vue` | 基于 CPA 实际可用字段构建明确白名单的脱敏导出 |
 
-清单同时监控上游存储查询、领域模型、token/计费、接口测试、迁移、前端基础组件和依赖锁文件。依赖发生变化只是待审查信号，不意味着全部需要引入 CPA。
+这五项功能的来源筛选同时覆盖上游存储查询、领域模型、token/计费、接口测试、迁移、前端基础组件和依赖锁文件。这些路径只用于判断现有适配项可能受哪些变化影响，不限制全仓更新报告。依赖发生变化只是待审查信号，不意味着全部需要引入 CPA。
 
 ## 必须保留的 CPA 语义
 
@@ -33,9 +35,12 @@
 6. 查询范围和导出应说明保留历史/明细上限；分页只在实际保留的数据中查询，不宣称拥有全量上游历史。
 7. 导出不含 API key、OAuth token、原始身份头、请求/响应正文或密钥配置；使用允许字段列表，不直接序列化所有后端对象。
 
-## 两种基线和单项状态
+## 全仓跟踪基线、功能审查与单项适配状态
 
-- `reviewed_commit`：已经按 `review_scope` 审查的上游提交，只覆盖登记的功能及依赖闭包；不表示全仓库已适配。
+- `monitor_scope`：固定为 `entire_repository`，所有上游路径均纳入全仓更新检查。
+- `repository_tracking_commit`、`repository_tracking_release`：全仓跟踪起点，首次启用沿用已知源码 `7f320797…` 和正式 Release `v3.10.0`。该提交当时只审查了用量范围，不能据此声称全仓已经审查。
+- `repository_reviewed_commit`、`repository_reviewed_release`：全项目变化完成审查后才登记的基线，初始为 `null`。全仓差异优先对比此提交；未登记时对比跟踪起点。
+- `reviewed_commit`：原有功能审查基线，仍只表示已经按 `review_scope` 审查五项登记功能及依赖闭包；既不代表全仓审查，也不代表全仓适配。`review_notes` 继续限定在这些功能的审查范围。
 - `source_commit`：该功能本轮参考的候选上游提交。
 - `adapted_commit`：该功能已经验证完成的上游来源 SHA；不是 CPA 本地提交号。未完成时为 `null`。
 - `status`：`in_progress`、`adapted`、`deferred` 或 `rejected`。
@@ -45,9 +50,13 @@
 
 ## 后续跟踪
 
-[codex-proxy-usage-monitor.yml](../.github/workflows/codex-proxy-usage-monitor.yml) 每日 UTC 02:43（北京时间 10:43）及手动运行。它只读取上游默认分支、正式 Release 和提交差异，产出 Actions summary 与保留 30 天的 JSON/Markdown artifact；不写 Issue、不评论、不合并、不更新基线，也不部署。
+[codex-proxy-usage-monitor.yml](../.github/workflows/codex-proxy-usage-monitor.yml) 的工作流名称为 `codex-proxy-project-monitor`，每周一 UTC 02:43（北京时间 10:43）及手动运行。它只读取上游默认分支、正式 Release 和全仓提交差异，产出 Actions summary 与保留 30 天的 JSON/Markdown artifact；不写 Issue、不评论、不合并、不更新基线，也不部署。沿用已有文件名以兼容链接和调用。
 
-检查分为两部分：当前 HEAD 对比 `reviewed_commit`，判断登记范围是否有未审查变化；每项 HEAD 对比其 `adapted_commit`，未适配时对比候选 `source_commit` 并明确标注“尚未适配”。上游正式 Release 改变仅记录信息，不自动提高本地适配状态。
+检查分为三层：报告的 `review` 对比全仓基线与当前 HEAD，不按用量路径过滤；`feature_review` 对比原有 `reviewed_commit`，只判断登记功能范围；`features` 则逐项对比其 `adapted_commit`，未适配时对比候选 `source_commit` 并明确标注“尚未适配”。全仓有变化不会自动把五项功能都标记为需要移植。
+
+正式 Release 与全仓 Release 基线单独比较，即使 HEAD 和净文件差异没有变化，新 Release 仍令顶层 `review_required` 为真，并在 Markdown 报告中明确展示前后版本。Release 推进不会自动提高任何功能的适配状态。净文件差异为空但存在新提交（例如变更后又回退）时，也保留全仓审查信号。
+
+配套定期 AI 检查安排在每周一北京时间 10:50，结合上述报告评估整个项目更新是否适合迁移。评估包括新能力、修复和依赖闭包，保留 CPA 已有语义；不自动合并或部署。无需跟踪所有 Issue、PR 评论。
 
 GitHub 比较结果可能最多返回 300 个文件；达到这一界限、历史分叉或响应不完整时，报告要求完整人工复核。API 失败会使 workflow 失败，不能伪装成“没有变化”。重命名同时匹配旧路径，避免文件迁移漏报。
 

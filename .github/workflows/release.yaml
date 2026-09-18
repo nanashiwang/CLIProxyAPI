@@ -581,18 +581,8 @@ jobs:
       - name: Build FreeBSD binary with CGO
         if: ${{ matrix.cgo_enabled }}
         timeout-minutes: 45
-        uses: go-cross/cgo-actions@v1
-        with:
-          dir: .
-          packages: ./cmd/server/
-          targets: ${{ env.TARGET }}
-          out-dir: dist/${{ env.TARGET }}/bin
-          output: cli-proxy-api
-          flags: >-
-            -ldflags=-s -w
-            -X main.Version=${{ steps.metadata.outputs.release_version }}
-            -X main.Commit=${{ steps.metadata.outputs.commit }}
-            -X main.BuildDate=${{ steps.metadata.outputs.build_date }}
+        shell: bash
+        run: bash .github/scripts/build-freebsd-cgo.sh
       - name: Build FreeBSD no-plugin binary
         if: ${{ !matrix.cgo_enabled }}
         shell: bash
