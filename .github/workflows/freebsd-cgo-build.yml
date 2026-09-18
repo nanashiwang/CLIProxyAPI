@@ -1,0 +1,46 @@
+name: freebsd-cgo-build
+
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/build-freebsd-cgo.sh'
+      - '.github/workflows/release.yaml'
+      - '.github/workflows/freebsd-cgo-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freebsd-cgo-build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.26.4'
+  TARGET: freebsd-amd64
+  TARGET_GOARCH: amd64
+  RELEASE_VERSION: freebsd-cgo-check
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install FreeBSD cross-build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clang lld wget
+      - name: Build FreeBSD binary with CGO
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMIT="$(git rev-parse --short HEAD)" \
+            BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            bash .github/scripts/build-freebsd-cgo.sh
+          go version -m "dist/${TARGET}/bin/cli-proxy-api"
