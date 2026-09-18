@@ -1,0 +1,51 @@
+name: codex-proxy-usage-monitor
+
+on:
+  schedule:
+    - cron: '43 2 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/upstream/codex-proxy-usage.json'
+      - '.github/scripts/codex-proxy-usage-monitor.py'
+      - '.github/scripts/test_codex_proxy_usage_monitor.py'
+      - '.github/workflows/codex-proxy-usage-monitor.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-proxy-usage-monitor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    if: github.repository == 'nanashiwang/CLIProxyAPI'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify monitor semantics
+        run: python3 .github/scripts/test_codex_proxy_usage_monitor.py
+      - name: Check source changes without altering adaptation records
+        if: github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/codex-proxy-usage-monitor.py --output-dir upstream-report
+      - name: Publish review summary
+        if: always() && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          if [[ -f upstream-report/summary.md ]]; then
+            cat upstream-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always() && github.event_name != 'pull_request'
+        with:
+          name: codex-proxy-usage-review-${{ github.run_id }}
+          path: upstream-report/
+          if-no-files-found: error
+          retention-days: 30

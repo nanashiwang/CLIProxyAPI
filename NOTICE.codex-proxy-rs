@@ -1,0 +1,30 @@
+Third-party source attribution: codex-proxy-rs
+
+Project: https://github.com/zyycn/codex-proxy-rs
+Reference revision: 7f320797a06226d01ca77d1ff73980a843ee3efb
+Upstream license: Apache License, Version 2.0
+License text: LICENSE.codex-proxy-rs (copied without modification)
+
+CPA's usage overview, filtered/paginated usage queries, request detail
+presentation, and diagnostic export work reference the usage and observability
+behavior and interface organization of this project. The CPA implementation is
+adapted to Go, existing CPA storage and accounting contracts, and its separate
+React management center; it is not the original Rust/Vue implementation.
+
+Primary source areas:
+  frontend/src/views/usage/
+  frontend/src/api/modules/usage.ts
+  backend/crates/gateway-api/src/admin/observability/
+  backend/crates/gateway-admin/src/model/observability.rs
+  backend/crates/gateway-admin/src/use_case/observability.rs
+  backend/crates/gateway-store/src/postgres/observability/
+
+See docs/CODEX_PROXY_USAGE_SYNC_CN.md and
+.github/upstream/codex-proxy-usage.json for the scope, local changes, validation
+status, and per-feature upstream baselines. Referenced features are not all
+necessarily implemented; the tracking manifest records completion separately.
+
+No separate upstream NOTICE file was present in the referenced source snapshot.
+This attribution was written by CPA maintainers and is not an upstream NOTICE.
+The original CPA MIT license remains in LICENSE. This attribution does not
+relicense the upstream work or remove any terms applicable to adapted material.

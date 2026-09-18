@@ -34,7 +34,7 @@ func TestRequestStatisticsPersistsBillingAndAccountTotals(t *testing.T) {
 		AuthID:       "account@example.com",
 		AuthIndex:    "3",
 		AuthType:     "oauth",
-		RequestedAt:  time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC),
+		RequestedAt:  time.Now().UTC().Add(-time.Hour),
 		Latency:      1500 * time.Millisecond,
 		TTFT:         250 * time.Millisecond,
 		Detail: coreusage.Detail{
