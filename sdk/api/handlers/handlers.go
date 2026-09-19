@@ -473,6 +473,11 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 		newCtx = logging.WithEndpoint(newCtx, endpoint)
 	}
 	if c != nil && c.Request != nil {
+		newCtx = coreusage.WithClientRequestMetadata(newCtx, coreusage.ClientRequestMetadata{
+			Transport: "http",
+			ClientIP:  requestClientIP(c.Request),
+			UserAgent: c.Request.UserAgent(),
+		})
 		newCtx = logging.WithClientRequestMetadata(newCtx, logging.ClientRequestMetadata{
 			ClientIP:      requestClientIP(c.Request),
 			XForwardedFor: strings.TrimSpace(strings.Join(c.Request.Header.Values("X-Forwarded-For"), ", ")),

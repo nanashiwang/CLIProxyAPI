@@ -16,10 +16,17 @@ spec.loader.exec_module(monitor)
 
 class MonitorTests(unittest.TestCase):
     def setUp(self):
-        self.manifest = json.loads(monitor.MANIFEST.read_text())
+        self.checked_in_manifest = json.loads(monitor.MANIFEST.read_text())
+        self.manifest = copy.deepcopy(self.checked_in_manifest)
+        # Keep scenario baselines explicit instead of assuming every adapted
+        # feature in the live manifest still points to the original review.
+        for feature in self.manifest["features"]:
+            feature["source_commit"] = self.manifest["reviewed_commit"]
+            if feature.get("adapted_commit"):
+                feature["adapted_commit"] = self.manifest["reviewed_commit"]
 
     def test_checked_in_manifest(self):
-        monitor.validate_manifest(self.manifest)
+        monitor.validate_manifest(self.checked_in_manifest)
 
     def test_reviewed_head_does_not_imply_adaptation(self):
         manifest = copy.deepcopy(self.manifest)
@@ -45,6 +52,24 @@ class MonitorTests(unittest.TestCase):
         self.assertFalse(report["review"]["review_required"])
         self.assertTrue(report["features"][0]["source_delta"]["review_required"])
         self.assertEqual(calls, ["a" * 40])
+
+    def test_distinct_adapted_and_candidate_sources_are_both_reviewed(self):
+        manifest = copy.deepcopy(self.manifest)
+        manifest["features"][0].update(status="adapted", adapted_commit="a" * 40, validation=["test evidence"])
+        manifest["features"][1].update(status="in_progress", source_commit="b" * 40, adapted_commit=None, validation=[])
+        calls = []
+
+        def compare(base, head):
+            calls.append((base, head))
+            return {"status": "ahead", "files": [{"filename": "frontend/src/api/modules/usage.ts"}]}
+
+        report = monitor.build_report(manifest, manifest["reviewed_commit"], None, compare)
+        self.assertEqual(calls, [("a" * 40, manifest["reviewed_commit"]), ("b" * 40, manifest["reviewed_commit"])])
+        self.assertEqual(report["features"][0]["comparison_basis"], "adapted_source")
+        self.assertEqual(report["features"][1]["comparison_basis"], "candidate_source_only")
+        self.assertTrue(all(feature["source_delta"]["review_required"] for feature in report["features"][:2]))
+        self.assertFalse(report["review"]["review_required"])
+        self.assertIsNone(report["repository_reviewed_commit"])
 
     def test_renamed_watched_file_is_detected(self):
         comparison = {"status": "ahead", "files": [{"filename": "moved/new.ts", "previous_filename": "frontend/src/views/usage/index.vue", "status": "renamed"}]}

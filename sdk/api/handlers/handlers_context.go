@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	"golang.org/x/net/context"
 )
 
@@ -18,6 +20,19 @@ type preparedModelRouteContextKey struct{}
 type executionSessionContextKey struct{}
 
 type disallowFreeAuthContextKey struct{}
+
+// withUsageClientTransport captures the selected client-facing execution mode.
+// The websocket marker is set only after a successful downstream upgrade; an
+// Upgrade request header alone is not proof of an established websocket.
+func withUsageClientTransport(ctx context.Context, stream bool) context.Context {
+	transport := "http"
+	if coreexecutor.DownstreamWebsocket(ctx) {
+		transport = "ws"
+	} else if stream {
+		transport = "sse"
+	}
+	return coreusage.WithClientTransport(ctx, transport)
+}
 
 // WithPinnedAuthID returns a child context that requests execution on a specific auth ID.
 func WithPinnedAuthID(ctx context.Context, authID string) context.Context {

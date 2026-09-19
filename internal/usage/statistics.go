@@ -81,34 +81,39 @@ type TokenStats struct {
 
 // RequestDetail stores one persisted request event without secrets or failure bodies.
 type RequestDetail struct {
-	ClientKeyID                 string                    `json:"client_key_id,omitempty"`
-	PoolID                      string                    `json:"pool_id,omitempty"`
-	Timestamp                   time.Time                 `json:"timestamp"`
-	LatencyMs                   int64                     `json:"latency_ms"`
-	TTFTMs                      int64                     `json:"ttft_ms"`
-	Provider                    string                    `json:"provider"`
-	ExecutorType                string                    `json:"executor_type"`
-	Alias                       string                    `json:"alias"`
-	RequestedModel              string                    `json:"requested_model,omitempty"`
-	UpstreamModel               string                    `json:"upstream_model,omitempty"`
-	UpstreamResponseModel       string                    `json:"upstream_response_model,omitempty"`
-	UpstreamResponseModelSource string                    `json:"upstream_response_model_source,omitempty"`
-	Endpoint                    string                    `json:"endpoint"`
-	Source                      string                    `json:"source"`
-	AuthID                      string                    `json:"auth_id"`
-	AuthIndex                   string                    `json:"auth_index"`
-	AuthType                    string                    `json:"auth_type"`
-	RequestID                   string                    `json:"request_id,omitempty"`
-	ServiceTier                 string                    `json:"service_tier"`
-	ResponseServiceTier         string                    `json:"response_service_tier,omitempty"`
-	ReasoningEffort             string                    `json:"reasoning_effort,omitempty"`
-	Tokens                      TokenStats                `json:"tokens"`
-	TokenBreakdown              *coreusage.TokenBreakdown `json:"token_breakdown,omitempty"`
-	Failed                      bool                      `json:"failed"`
-	StatusCode                  int                       `json:"status_code"`
-	Generate                    bool                      `json:"generate"`
-	Billing                     coreusage.Billing         `json:"billing"`
-	CostUSD                     *float64                  `json:"cost_usd,omitempty"`
+	ClientKeyID                 string    `json:"client_key_id,omitempty"`
+	PoolID                      string    `json:"pool_id,omitempty"`
+	Timestamp                   time.Time `json:"timestamp"`
+	LatencyMs                   int64     `json:"latency_ms"`
+	TTFTMs                      int64     `json:"ttft_ms"`
+	Provider                    string    `json:"provider"`
+	ExecutorType                string    `json:"executor_type"`
+	Alias                       string    `json:"alias"`
+	RequestedModel              string    `json:"requested_model,omitempty"`
+	UpstreamModel               string    `json:"upstream_model,omitempty"`
+	UpstreamResponseModel       string    `json:"upstream_response_model,omitempty"`
+	UpstreamResponseModelSource string    `json:"upstream_response_model_source,omitempty"`
+	ClientTransport             string    `json:"client_transport,omitempty"`
+	UpstreamTransport           string    `json:"upstream_transport,omitempty"`
+	// ClientIP is the connection peer address, matching request logs, not an untrusted forwarding header.
+	ClientIP            string                    `json:"client_ip,omitempty"`
+	UserAgent           string                    `json:"user_agent,omitempty"`
+	Endpoint            string                    `json:"endpoint"`
+	Source              string                    `json:"source"`
+	AuthID              string                    `json:"auth_id"`
+	AuthIndex           string                    `json:"auth_index"`
+	AuthType            string                    `json:"auth_type"`
+	RequestID           string                    `json:"request_id,omitempty"`
+	ServiceTier         string                    `json:"service_tier"`
+	ResponseServiceTier string                    `json:"response_service_tier,omitempty"`
+	ReasoningEffort     string                    `json:"reasoning_effort,omitempty"`
+	Tokens              TokenStats                `json:"tokens"`
+	TokenBreakdown      *coreusage.TokenBreakdown `json:"token_breakdown,omitempty"`
+	Failed              bool                      `json:"failed"`
+	StatusCode          int                       `json:"status_code"`
+	Generate            bool                      `json:"generate"`
+	Billing             coreusage.Billing         `json:"billing"`
+	CostUSD             *float64                  `json:"cost_usd,omitempty"`
 }
 
 // UnmarshalJSON preserves the generation default of historical exports that
@@ -1175,6 +1180,10 @@ func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
 			UpstreamModel:               record.UpstreamModel,
 			UpstreamResponseModel:       record.UpstreamResponseModel,
 			UpstreamResponseModelSource: record.UpstreamResponseModelSource,
+			ClientTransport:             record.ClientTransport,
+			UpstreamTransport:           record.UpstreamTransport,
+			ClientIP:                    record.ClientIP,
+			UserAgent:                   record.UserAgent,
 			Endpoint:                    endpoint,
 			Source:                      strings.TrimSpace(record.Source),
 			AuthID:                      strings.TrimSpace(record.AuthID),
@@ -1220,6 +1229,7 @@ func normalizeStoredEvent(event storedEvent) storedEvent {
 		event.Detail.Alias = event.Model
 	}
 	normalizeModelObservation(&event.Detail)
+	normalizeRequestMetadata(&event.Detail)
 	if event.Detail.StatusCode <= 0 {
 		if event.Detail.Failed {
 			event.Detail.StatusCode = 500

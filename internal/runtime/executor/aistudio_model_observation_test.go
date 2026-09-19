@@ -135,6 +135,13 @@ func TestAIStudioModelObservationRelayRequestAndResponses(t *testing.T) {
 					if index == 2 {
 						want, source = "gemini-header-build", "header"
 					}
+					wantTransport := "http"
+					if tc.stream && !tc.fallback {
+						wantTransport = "sse"
+					}
+					if record.UpstreamTransport != wantTransport || record.ClientTransport != "" {
+						t.Fatalf("relayed API transport=%q client=%q, want %q/unknown", record.UpstreamTransport, record.ClientTransport, wantTransport)
+					}
 					if record.RequestedModel != "client-gemini" || record.UpstreamModel != req.Model || record.UpstreamResponseModel != want || record.UpstreamResponseModelSource != source || record.Model != req.Model || record.Detail.TotalTokens != 3 {
 						t.Fatalf("request %d usage=%+v", index, record)
 					}

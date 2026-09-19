@@ -28,6 +28,7 @@ func (r *UsageReporter) resetModelObservation() uint64 {
 	defer r.modelMu.Unlock()
 	r.modelGeneration++
 	r.upstreamModel, r.responseModel, r.responseSource = "", "", ""
+	r.upstreamTransport = ""
 	r.responseRank = 0
 	return r.modelGeneration
 }
@@ -49,6 +50,7 @@ func (r *UsageReporter) observeHTTPRequestModel(req *http.Request) uint64 {
 	if req == nil {
 		return generation
 	}
+	r.observeUpstreamTransport("http", generation)
 	// Gemini and Vertex name the model in the actual endpoint, not the JSON body.
 	if req.URL != nil {
 		path := req.URL.Path
