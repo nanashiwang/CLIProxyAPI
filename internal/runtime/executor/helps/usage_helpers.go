@@ -22,35 +22,37 @@ import (
 )
 
 type UsageReporter struct {
-	provider        string
-	executorType    string
-	model           string
-	alias           string
-	requestedModel  string
-	modelMu         sync.RWMutex
-	modelGeneration uint64
-	upstreamModel   string
-	responseModel   string
-	responseSource  string
-	responseRank    uint8
-	authID          string
-	authIndex       string
-	authMu          sync.RWMutex
-	accessTokenHash string
-	authType        string
-	apiKey          string
-	source          string
-	reasoning       string
-	serviceTier     string
-	generate        bool
-	requestedAt     time.Time
-	quotaHeadersMu  sync.RWMutex
-	quotaHeaders    http.Header
-	ttftMu          sync.RWMutex
-	ttft            time.Duration
-	ttftStart       time.Time
-	ttftSet         bool
-	once            sync.Once
+	provider          string
+	executorType      string
+	model             string
+	alias             string
+	requestedModel    string
+	clientMetadata    usage.ClientRequestMetadata
+	modelMu           sync.RWMutex
+	modelGeneration   uint64
+	upstreamModel     string
+	upstreamTransport string
+	responseModel     string
+	responseSource    string
+	responseRank      uint8
+	authID            string
+	authIndex         string
+	authMu            sync.RWMutex
+	accessTokenHash   string
+	authType          string
+	apiKey            string
+	source            string
+	reasoning         string
+	serviceTier       string
+	generate          bool
+	requestedAt       time.Time
+	quotaHeadersMu    sync.RWMutex
+	quotaHeaders      http.Header
+	ttftMu            sync.RWMutex
+	ttft              time.Duration
+	ttftStart         time.Time
+	ttftSet           bool
+	once              sync.Once
 }
 
 type usageExecutor interface {
@@ -78,6 +80,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		model:          model,
 		alias:          strings.TrimSpace(alias),
 		requestedModel: usage.RequestedModelFromContext(ctx),
+		clientMetadata: usage.ClientRequestMetadataFromContext(ctx),
 		requestedAt:    time.Now(),
 		apiKey:         apiKey,
 		source:         resolveUsageSource(auth, apiKey),
@@ -173,6 +176,7 @@ func (r *UsageReporter) observeResponseForGeneration(resp *http.Response, genera
 	if r == nil || resp == nil {
 		return
 	}
+	r.observeHTTPResponseTransport(resp.Header, generation)
 	r.observeResponseModelHeaders(resp.Header, generation)
 	if resp.Body == nil {
 		return
@@ -356,7 +360,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		return usage.Record{Model: model, Detail: detail, Failed: failed, Fail: fail, Generate: usage.GenerateFlag(true)}
 	}
 	r.modelMu.RLock()
-	upstreamModel, responseModel, responseSource := r.upstreamModel, r.responseModel, r.responseSource
+	upstreamModel, responseModel, responseSource, upstreamTransport := r.upstreamModel, r.responseModel, r.responseSource, r.upstreamTransport
 	r.modelMu.RUnlock()
 	if model != r.model {
 		// Tool sub-model billing has no independently observed upstream exchange.
@@ -371,6 +375,10 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		UpstreamModel:               upstreamModel,
 		UpstreamResponseModel:       responseModel,
 		UpstreamResponseModelSource: responseSource,
+		ClientTransport:             r.clientMetadata.Transport,
+		UpstreamTransport:           upstreamTransport,
+		ClientIP:                    r.clientMetadata.ClientIP,
+		UserAgent:                   r.clientMetadata.UserAgent,
 		Source:                      r.source,
 		APIKey:                      r.apiKey,
 		AuthID:                      r.authID,

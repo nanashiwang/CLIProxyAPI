@@ -207,6 +207,41 @@
         "Browser synthetic fixture: five model states, detail source, upstream model search and 390px mobile layout passed"
       ],
       "notes": "Compare explicit outbound and upstream-reported models only. Preserve pricing/aggregation model semantics and leave missing or historical observations unknown; model names remain omitted from redacted diagnostic exports."
+    },
+    {
+      "id": "usage-record-columns",
+      "title": "Complete usage record columns with independent client and upstream transports",
+      "status": "adapted",
+      "source_commit": "6659d0c1f9992c690883f07197c7d36b173d6f19",
+      "adapted_commit": "6659d0c1f9992c690883f07197c7d36b173d6f19",
+      "local_areas": [
+        "CLIProxyAPI/sdk/api/handlers",
+        "CLIProxyAPI/sdk/cliproxy/usage",
+        "CLIProxyAPI/internal/runtime/executor",
+        "CLIProxyAPI/internal/usage",
+        "Cli-Proxy-API-Management-Center/src/features/usage",
+        "Cli-Proxy-API-Management-Center/src/types/usage.ts"
+      ],
+      "watch_paths": [
+        "frontend/src/views/usage/**",
+        "frontend/src/api/modules/usage.ts",
+        "backend/crates/gateway-core/src/event.rs",
+        "backend/crates/gateway-core/src/engine/**",
+        "backend/crates/gateway-api/src/admin/observability/**",
+        "backend/crates/gateway-admin/src/model/observability.rs",
+        "backend/crates/gateway-store/src/postgres/observability/**",
+        "backend/crates/providers/*/src/**/observation.rs"
+      ],
+      "validation": [
+        "Go full suite, build and management binary smoke passed; metadata import/list/detail/search/full backup and legacy unknowns verified",
+        "Related eleven-package tests and six-package targeted race checks passed, including HTTP/SSE/WS boundaries, retry and reused connections",
+        "Immutable entry snapshots preserve connection peer and bounded User-Agent through Gin reuse, Home failures and internal plugin calls; forwarding headers are not trusted",
+        "React verify: 544 tests and production build passed, with one pre-existing unrelated lint warning",
+        "Browser synthetic fixture: all fourteen columns, independent transports, IP/User-Agent search, details, TTFT sorting, long value expansion, mobile empty state and dark mode passed",
+        "390px browser QA found and fixed sticky actions obscuring expanded User-Agent; narrow layouts now keep the full value readable",
+        "Weekly monitor fifteen regressions passed, including independently advancing candidate and adapted feature baselines"
+      ],
+      "notes": "Expose all fourteen requested columns while retaining CPA status, TTFT and model comparison. Client/upstream transports describe distinct connection legs, never inferred from API keys or provider names. Persist only bounded client IP and User-Agent metadata; historical missing values remain unknown and redacted diagnostics omit client identifiers."
     }
   ],
   "review_notes": [

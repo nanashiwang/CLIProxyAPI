@@ -91,6 +91,9 @@ func TestXAIWebsocketsModelObservationReusedConnection(t *testing.T) {
 			if wire != "grok-4.3" || record.RequestedModel != "client-grok" || record.UpstreamModel != wire || record.UpstreamResponseModel != want || record.UpstreamResponseModelSource != source || record.Model != req.Model {
 				t.Fatalf("request %d wire=%q usage=%+v", index, wire, record)
 			}
+			if record.UpstreamTransport != "ws" || record.ClientTransport != "" {
+				t.Fatalf("native WS or unknown SDK client transport lost: %+v", record)
+			}
 			if record.Detail.TotalTokens != 3 {
 				t.Fatalf("usage changed: %+v", record.Detail)
 			}

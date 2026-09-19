@@ -102,6 +102,7 @@ func TestCodexWebsocketsModelObservationUsesRequestFramesOnReusedConnection(t *t
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			ctx = usage.WithRequestedModel(ctx, "client-codex")
+			ctx = usage.WithClientRequestMetadata(ctx, usage.ClientRequestMetadata{Transport: "http", ClientIP: "192.0.2.44", UserAgent: "http-codex-client/1"})
 			for index := 0; index < 3; index++ {
 				if tc.stream {
 					result, err := exec.ExecuteStream(ctx, auth, req, opts)
@@ -126,6 +127,9 @@ func TestCodexWebsocketsModelObservationUsesRequestFramesOnReusedConnection(t *t
 				}
 				select {
 				case record := <-plugin.records:
+					if record.ClientTransport != "http" || record.UpstreamTransport != "ws" || record.ClientIP != "192.0.2.44" || record.UserAgent != "http-codex-client/1" {
+						t.Fatalf("HTTP client/native WS upstream facts lost: %+v", record)
+					}
 					if record.RequestedModel != "client-codex" || record.UpstreamModel != "gpt-5.4" {
 						t.Fatalf("observed request models = %q / %q", record.RequestedModel, record.UpstreamModel)
 					}

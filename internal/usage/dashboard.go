@@ -194,7 +194,7 @@ func (q UsageQuery) matches(event storedEvent) bool {
 	if q.Search == "" {
 		return true
 	}
-	for _, value := range []string{d.RequestID, event.Model, d.Alias, d.RequestedModel, d.UpstreamModel, d.UpstreamResponseModel, d.Provider, d.AuthID, d.AuthIndex, d.Source, d.Endpoint, event.API, d.ClientKeyID, d.PoolID} {
+	for _, value := range []string{d.RequestID, event.Model, d.Alias, d.RequestedModel, d.UpstreamModel, d.UpstreamResponseModel, d.Provider, d.AuthID, d.AuthIndex, d.AuthType, d.Source, d.Endpoint, event.API, d.ClientKeyID, d.PoolID, d.ReasoningEffort, d.ClientTransport, d.UpstreamTransport, d.ClientIP, d.UserAgent} {
 		if strings.Contains(strings.ToLower(value), q.Search) {
 			return true
 		}

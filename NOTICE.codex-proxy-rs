@@ -2,6 +2,7 @@ Third-party source attribution: codex-proxy-rs
 
 Project: https://github.com/zyycn/codex-proxy-rs
 Reference revision: 7f320797a06226d01ca77d1ff73980a843ee3efb
+Additional usage-column reference: 6659d0c1f9992c690883f07197c7d36b173d6f19
 Upstream license: Apache License, Version 2.0
 License text: LICENSE.codex-proxy-rs (copied without modification)
 
@@ -24,7 +25,7 @@ See docs/CODEX_PROXY_USAGE_SYNC_CN.md and
 status, and per-feature upstream baselines. Referenced features are not all
 necessarily implemented; the tracking manifest records completion separately.
 
-No separate upstream NOTICE file was present in the referenced source snapshot.
+No separate upstream NOTICE file was present in either referenced source snapshot.
 This attribution was written by CPA maintainers and is not an upstream NOTICE.
 The original CPA MIT license remains in LICENSE. This attribution does not
 relicense the upstream work or remove any terms applicable to adapted material.

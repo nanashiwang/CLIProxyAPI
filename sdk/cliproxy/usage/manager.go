@@ -30,9 +30,14 @@ type Record struct {
 	UpstreamModel               string
 	UpstreamResponseModel       string
 	UpstreamResponseModelSource string
-	APIKey                      string
-	AuthID                      string
-	AuthIndex                   string
+	ClientTransport             string
+	UpstreamTransport           string
+	// ClientIP is the connection peer captured at entry, never an unchecked forwarding header.
+	ClientIP  string
+	UserAgent string
+	APIKey    string
+	AuthID    string
+	AuthIndex string
 	// AccessTokenSHA256 identifies the OAuth token version without exposing the token.
 	AccessTokenSHA256 string
 	AuthType          string
@@ -323,6 +328,7 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 		return
 	}
 	// Normalize accounting and calculate billing before the record enters the async queue.
+	normalizeRecordRequestMetadata(ctx, &record)
 	record.RequestedModel = NormalizeObservedModel(record.RequestedModel)
 	record.UpstreamModel = NormalizeObservedModel(record.UpstreamModel)
 	record.UpstreamResponseModel = NormalizeObservedModel(record.UpstreamResponseModel)

@@ -107,6 +107,13 @@ func TestKimiModelObservationPreservesWireAndRawResponse(t *testing.T) {
 				if wireModel != wantWire || record.UpstreamModel != wireModel || record.UpstreamResponseModel != "reported-kimi-build" || record.UpstreamResponseModelSource != "body" || record.RequestedModel != "client-kimi" || record.Model != "kimi-k2.5" {
 					t.Fatalf("wire=%q, usage=%+v", wireModel, record)
 				}
+				wantTransport := "http"
+				if tc.stream {
+					wantTransport = "sse"
+				}
+				if record.UpstreamTransport != wantTransport {
+					t.Fatalf("upstream transport=%q, want %q", record.UpstreamTransport, wantTransport)
+				}
 				if record.Detail.InputTokens != 2 || record.Detail.OutputTokens != 1 {
 					t.Fatalf("token usage changed: %+v", record.Detail)
 				}

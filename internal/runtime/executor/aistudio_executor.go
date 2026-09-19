@@ -177,6 +177,7 @@ func (e *AIStudioExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth,
 		return resp, err
 	}
 	reporter.ObserveResponseModelHeaders(wsResp.Headers)
+	reporter.ObserveHTTPResponseTransport(wsResp.Headers)
 	reporter.ObserveResponseModelPayload(wsResp.Body, "body")
 	helps.RecordAPIResponseMetadata(ctx, e.cfg, wsResp.Status, wsResp.Headers.Clone())
 	reporter.StartResponseTTFT()
@@ -257,6 +258,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 		return nil, err
 	}
 	reporter.ObserveResponseModelHeaders(firstEvent.Headers)
+	reporter.ObserveHTTPResponseTransport(firstEvent.Headers)
 	if firstEvent.Status > 0 && firstEvent.Status != http.StatusOK {
 		metadataLogged := false
 		if firstEvent.Status > 0 {
@@ -315,6 +317,9 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 		metadataLogged := false
 		processEvent := func(event wsrelay.StreamEvent) bool {
 			reporter.ObserveResponseModelHeaders(event.Headers)
+			if event.Type == wsrelay.MessageTypeStreamStart || event.Type == wsrelay.MessageTypeHTTPResp {
+				reporter.ObserveHTTPResponseTransport(event.Headers)
+			}
 			if event.Err != nil {
 				helps.RecordAPIResponseError(ctx, e.cfg, event.Err)
 				reporter.PublishFailure(ctx, event.Err)

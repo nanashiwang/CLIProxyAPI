@@ -19,6 +19,7 @@
 | --- | --- | --- |
 | 概览、健康、性能、成本、趋势、维度诊断 | `frontend/src/views/usage/`；`backend/crates/gateway-api/src/admin/observability/`；`backend/crates/gateway-store/src/postgres/observability/queries/usage.rs` | 后端 `internal/usage/`、`internal/api/handlers/management/`；前端 `src/features/usage/` |
 | 分页及筛选 | `frontend/src/views/usage/composables/useUsageRecordsTable.ts`；`frontend/src/api/modules/usage.ts`；上游 observability query/use_case | 后端已有用量存储与管理 API；前端 `src/services/api/usage.ts` |
+| 完整明细列 | `frontend/src/views/usage/constants.ts`、记录表组件与传输信息字段 | 请求级接入元数据快照、上游传输观测、持久化及 React 14 列表格 |
 | 模型对照 | `UsageModelCell.vue`、`utils/records.ts`、上游模型观测和响应元数据解析 | SDK 独立模型字段、执行器原始响应采集、用量持久化及 React 模型列/详情 |
 | 请求详情 | `UsageRecordDetailModal.vue`、`UsageDetailFieldGrid.vue`、`UsageTokenCell.vue`、`UsageBillingCell.vue`、`useUsageRecordDetail.ts` | 后端已有 RequestDetail、billing/token 契约；React 详情界面 |
 | 管理界面组织 | `frontend/src/views/usage/index.vue` 及 components/composables/utils | `src/features/usage/` 与现有 CPA 国际化/组件 |
@@ -93,3 +94,21 @@ python3 .github/scripts/codex-proxy-usage-monitor.py --output-dir /tmp/cpa-codex
 
 
 采集使用已有 HTTP 请求边界及内置 Codex、xAI、AIStudio WebSocket 路径，响应头提供初始报告，流内请求级模型元数据可以更新它；显式头/元数据优先于普通响应正文。HTTP 请求观察只安全重读至多 1 MiB；无可重读正文、multipart、没有显式模型或超出观察能力时保持未知。响应仅保留有限模型字段，不缓存正文，不改传输超时、字节或原计费发布时机。SSE 观测沿用执行器的逐 data 行消费边界，不改变既有流协议行为。
+
+
+## 完整使用明细列
+
+本项单独参考上游 [6659d0c1f9992c690883f07197c7d36b173d6f19](https://github.com/zyycn/codex-proxy-rs/tree/6659d0c1f9992c690883f07197c7d36b173d6f19) 的使用明细字段组织，不据此推进其他功能或全项目审查基线。
+
+管理页按顺序展示账号、平台/类型、模型、推理强度、端点、上游、接入、Token、费用、延迟、时间、IP、User-Agent、操作。原有请求状态、模型对照、总耗时与首字耗时、分页筛选和详情入口保留。宽表可横向滚动，长字段可查看完整值。
+
+- 平台/类型使用既有 `provider` 和 `auth_type`；推理强度展示已经持久化的 `reasoning_effort`，不把推理 token 数量推算成强度。
+- 端点是现有 `endpoint` 请求 API 路径，不含查询参数或凭据。
+- 上游 `upstream_transport` 表示执行器使用的上游 API 传输方式；接入 `client_transport` 表示客户端到 CPA 已选择的请求接入模式（HTTP、SSE 或已升级的 WebSocket）；请求失败返回 JSON 时，仍保留所选接入模式。两者各自取 `http`、`sse`、`ws`，不能从模型、平台、API Key 或另一段传输方式反推。
+- `client_ip` 和 `user_agent` 为请求入口采集的客户端元数据。IP 沿用 CPA 请求日志的连接来源（`RemoteAddr`），不额外信任任意转发头，也不宣称能穿透反向代理还原终端地址。User-Agent 去除控制/格式字符并限制为 512 字节 UTF-8。
+- AIStudio 通过 WebSocket 中继封装 HTTP 请求，上游列依据被代理响应显示 HTTP/SSE；原生 Codex/xAI WebSocket API 才显示 WS。中继说明同时出现在 AIStudio 详情中。
+- 新字段随保留的用量记录持久化，管理端列表、详情、搜索及完整统计备份保持一致。异步用量写入使用请求级快照，不在写入时读取可能已复用的 Gin 上下文。
+- 原有历史或缺失数据保持未采集；不自动补造 IP、User-Agent 或传输方式。未定价费用仍为未知。
+- 脱敏诊断导出保持明确字段白名单，排除 IP、User-Agent 和其他客户端身份信息；完整统计备份仍用于管理员迁移，不视作脱敏诊断。
+
+本项已通过 Go 全量测试、相关 race 检查、管理 API 二进制冒烟、React 544 项测试和桌面/390px 暗色与亮色浏览器验证。来源清单单独记录本项的适配基线；每周全项目跟踪保持不变。新增列不改变路由、传输超时、计费或账号租约规则。

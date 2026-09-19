@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -117,6 +118,11 @@ def verify_usage_insights(request):
                 "upstream_model": "sent-model",
                 "upstream_response_model": "sent-model" if index == 0 else "returned-model",
                 "upstream_response_model_source": "header" if index == 0 else "body",
+                "reasoning_effort": "high" if index == 0 else "low",
+                "client_transport": "ws" if index == 0 else "http",
+                "upstream_transport": "sse" if index == 0 else "http",
+                "client_ip": "192.0.2.41" if index == 0 else "2001:db8::42",
+                "user_agent": "CPA-Usage-Smoke/1.0" if index == 0 else "CPA-Usage-Smoke/2.0",
             })
     imported = request("usage/import", "POST", {
         "version": 2,
@@ -154,6 +160,26 @@ def verify_usage_insights(request):
     if legacy["items"][0].get("model_match") != "unknown":
         raise RuntimeError("legacy usage must not fabricate a model match")
     print("PASS usage model observations: mapped match, mismatch, unknown and model search")
+    expected_metadata = {
+        "reasoning_effort": "high", "client_transport": "ws", "upstream_transport": "sse",
+        "client_ip": "192.0.2.41", "user_agent": "CPA-Usage-Smoke/1.0",
+    }
+    for field, expected in expected_metadata.items():
+        if detail.get(field) != expected or first["items"][0].get(field) != expected:
+            raise RuntimeError(f"usage record metadata must survive import, list and detail: {field}")
+    for term in ("192.0.2.41", "CPA-Usage-Smoke/1.0", "sse", "high"):
+        matches = request("usage/records?range=24h&search=" + urllib.parse.quote(term))
+        if matches.get("total") != 1 or matches["items"][0].get("id") != record_id:
+            raise RuntimeError("usage metadata search must identify the retained record")
+    for field in expected_metadata:
+        if legacy["items"][0].get(field):
+            raise RuntimeError(f"historical usage must not fabricate metadata: {field}")
+    exported = request("usage/export")
+    exported_details = exported["usage"]["apis"]["smoke"]["models"]["smoke-model"]["details"]
+    exported_first = next(row for row in exported_details if row["request_id"] == "smoke-usage-0")
+    if any(exported_first.get(field) != expected for field, expected in expected_metadata.items()):
+        raise RuntimeError("full usage backup must preserve request metadata")
+    print("PASS usage columns: independent transports, reasoning, IP, User-Agent, search and backup")
     try:
         request("usage/records?page=0")
     except urllib.error.HTTPError as error:
