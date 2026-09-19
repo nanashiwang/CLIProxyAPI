@@ -111,6 +111,13 @@ def verify_usage_insights(request):
             "tokens": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
             "billing": {"currency": "USD", "priced": False},
         })
+        if index < 2:
+            records[-1].update({
+                "requested_model": "client-alias",
+                "upstream_model": "sent-model",
+                "upstream_response_model": "sent-model" if index == 0 else "returned-model",
+                "upstream_response_model_source": "header" if index == 0 else "body",
+            })
     imported = request("usage/import", "POST", {
         "version": 2,
         "usage": {"apis": {"smoke": {"models": {"smoke-model": {"details": records}}}}},
@@ -136,6 +143,17 @@ def verify_usage_insights(request):
     detail = request("usage/records/" + record_id)
     if detail.get("id") != record_id:
         raise RuntimeError("usage record detail must resolve the same stable record ID")
+    if detail.get("requested_model") != "client-alias" or detail.get("model_match") != "matched":
+        raise RuntimeError("model matching must compare sent and returned models, not the client alias")
+    if second["items"][0].get("model_match") != "mismatch":
+        raise RuntimeError("usage model mismatch was not preserved")
+    returned = request("usage/records?range=24h&search=returned-model")
+    if returned.get("total") != 1:
+        raise RuntimeError("usage search must find the upstream reported model")
+    legacy = request("usage/records?range=24h&search=smoke-usage-2&include_warmup=true")
+    if legacy["items"][0].get("model_match") != "unknown":
+        raise RuntimeError("legacy usage must not fabricate a model match")
+    print("PASS usage model observations: mapped match, mismatch, unknown and model search")
     try:
         request("usage/records?page=0")
     except urllib.error.HTTPError as error:

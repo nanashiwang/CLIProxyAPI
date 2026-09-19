@@ -26,6 +26,13 @@ type UsageReporter struct {
 	executorType    string
 	model           string
 	alias           string
+	requestedModel  string
+	modelMu         sync.RWMutex
+	modelGeneration uint64
+	upstreamModel   string
+	responseModel   string
+	responseSource  string
+	responseRank    uint8
 	authID          string
 	authIndex       string
 	authMu          sync.RWMutex
@@ -67,16 +74,17 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		alias = model
 	}
 	reporter := &UsageReporter{
-		provider:    provider,
-		model:       model,
-		alias:       strings.TrimSpace(alias),
-		requestedAt: time.Now(),
-		apiKey:      apiKey,
-		source:      resolveUsageSource(auth, apiKey),
-		authType:    resolveUsageAuthType(auth),
-		reasoning:   usage.ReasoningEffortFromContext(ctx),
-		serviceTier: usage.ServiceTierFromContext(ctx),
-		generate:    usage.GenerateFromContext(ctx),
+		provider:       provider,
+		model:          model,
+		alias:          strings.TrimSpace(alias),
+		requestedModel: usage.RequestedModelFromContext(ctx),
+		requestedAt:    time.Now(),
+		apiKey:         apiKey,
+		source:         resolveUsageSource(auth, apiKey),
+		authType:       resolveUsageAuthType(auth),
+		reasoning:      usage.ReasoningEffortFromContext(ctx),
+		serviceTier:    usage.ServiceTierFromContext(ctx),
+		generate:       usage.GenerateFromContext(ctx),
 	}
 	if auth != nil {
 		reporter.authID = auth.ID
@@ -152,12 +160,39 @@ func (r *UsageReporter) TrackHTTPClient(client *http.Client) *http.Client {
 }
 
 func (r *UsageReporter) ObserveResponse(resp *http.Response) {
-	if r == nil || resp == nil || resp.Body == nil {
+	if r == nil || resp == nil {
+		return
+	}
+	r.modelMu.RLock()
+	generation := r.modelGeneration
+	r.modelMu.RUnlock()
+	r.observeResponseForGeneration(resp, generation)
+}
+
+func (r *UsageReporter) observeResponseForGeneration(resp *http.Response, generation uint64) {
+	if r == nil || resp == nil {
+		return
+	}
+	r.observeResponseModelHeaders(resp.Header, generation)
+	if resp.Body == nil {
 		return
 	}
 	r.StartResponseTTFT()
+	observer := newResponseModelObserver(resp.Header.Get("Content-Type"), func(model, source string, rank uint8) {
+		r.observeResponseModel(model, source, rank, generation)
+	})
+	var observe func([]byte)
+	if encoding := strings.TrimSpace(resp.Header.Get("Content-Encoding")); encoding == "" || strings.EqualFold(encoding, "identity") || resp.Uncompressed {
+		observe = observer.Feed
+	}
 	resp.Body = &usageTTFTReadCloser{
 		ReadCloser: resp.Body,
+		observe:    observe,
+		finish: func() {
+			if observe != nil {
+				observer.Finish()
+			}
+		},
 		mark: func() {
 			r.MarkFirstResponseByte()
 		},
@@ -320,27 +355,38 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 	if r == nil {
 		return usage.Record{Model: model, Detail: detail, Failed: failed, Fail: fail, Generate: usage.GenerateFlag(true)}
 	}
+	r.modelMu.RLock()
+	upstreamModel, responseModel, responseSource := r.upstreamModel, r.responseModel, r.responseSource
+	r.modelMu.RUnlock()
+	if model != r.model {
+		// Tool sub-model billing has no independently observed upstream exchange.
+		upstreamModel, responseModel, responseSource = "", "", ""
+	}
 	return usage.Record{
-		Provider:            r.provider,
-		ExecutorType:        r.executorType,
-		Model:               model,
-		Alias:               r.alias,
-		Source:              r.source,
-		APIKey:              r.apiKey,
-		AuthID:              r.authID,
-		AuthIndex:           r.authIndex,
-		AccessTokenSHA256:   r.accessTokenFingerprint(),
-		AuthType:            r.authType,
-		ReasoningEffort:     r.reasoning,
-		ServiceTier:         r.serviceTier,
-		ResponseServiceTier: strings.TrimSpace(detail.ResponseServiceTier),
-		Generate:            usage.GenerateFlag(r.generate),
-		RequestedAt:         r.requestedAt,
-		Latency:             r.latency(),
-		TTFT:                r.ttftDuration(),
-		Failed:              failed,
-		Fail:                fail,
-		Detail:              detail,
+		Provider:                    r.provider,
+		ExecutorType:                r.executorType,
+		Model:                       model,
+		Alias:                       r.alias,
+		RequestedModel:              r.requestedModel,
+		UpstreamModel:               upstreamModel,
+		UpstreamResponseModel:       responseModel,
+		UpstreamResponseModelSource: responseSource,
+		Source:                      r.source,
+		APIKey:                      r.apiKey,
+		AuthID:                      r.authID,
+		AuthIndex:                   r.authIndex,
+		AccessTokenSHA256:           r.accessTokenFingerprint(),
+		AuthType:                    r.authType,
+		ReasoningEffort:             r.reasoning,
+		ServiceTier:                 r.serviceTier,
+		ResponseServiceTier:         strings.TrimSpace(detail.ResponseServiceTier),
+		Generate:                    usage.GenerateFlag(r.generate),
+		RequestedAt:                 r.requestedAt,
+		Latency:                     r.latency(),
+		TTFT:                        r.ttftDuration(),
+		Failed:                      failed,
+		Fail:                        fail,
+		Detail:                      detail,
 	}
 }
 
@@ -401,19 +447,22 @@ type usageTTFTRoundTripper struct {
 }
 
 func (t usageTTFTRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	generation := t.reporter.observeHTTPRequestModel(req)
 	t.reporter.StartResponseTTFT()
 	resp, errRoundTrip := t.base.RoundTrip(req)
 	if errRoundTrip != nil {
 		return resp, errRoundTrip
 	}
-	t.reporter.ObserveResponse(resp)
+	t.reporter.observeResponseForGeneration(resp, generation)
 	return resp, nil
 }
 
 type usageTTFTReadCloser struct {
 	io.ReadCloser
-	once sync.Once
-	mark func()
+	once    sync.Once
+	mark    func()
+	observe func([]byte)
+	finish  func()
 }
 
 func (r *usageTTFTReadCloser) Read(p []byte) (int, error) {
@@ -423,6 +472,12 @@ func (r *usageTTFTReadCloser) Read(p []byte) (int, error) {
 	n, errRead := r.ReadCloser.Read(p)
 	if n > 0 && r.mark != nil {
 		r.once.Do(r.mark)
+	}
+	if n > 0 && r.observe != nil {
+		r.observe(p[:n])
+	}
+	if errRead != nil && r.finish != nil {
+		r.finish()
 	}
 	return n, errRead
 }

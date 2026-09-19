@@ -57,3 +57,33 @@ func TestContextWithRequestedModelAliasPreservesExistingGenerateFalse(t *testing
 		t.Fatalf("generate = %v, want false", got)
 	}
 }
+
+func TestRequestedModelObservationNeverUsesRoutingFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts cliproxyexecutor.Options
+		want string
+	}{
+		{"metadata before translation", cliproxyexecutor.Options{Metadata: map[string]any{cliproxyexecutor.RequestedModelMetadataKey: "client-alias"}, OriginalRequest: []byte(`{"model":"other"}`)}, "client-alias"},
+		{"original payload", cliproxyexecutor.Options{OriginalRequest: []byte(`{"model":"client-original"}`)}, "client-original"},
+		{"unknown SDK request", cliproxyexecutor.Options{}, ""},
+		{"nested tool model is not request model", cliproxyexecutor.Options{OriginalRequest: []byte(`{"tools":[{"model":"not-the-request"}]}`)}, ""},
+		{"invalid type", cliproxyexecutor.Options{OriginalRequest: []byte(`{"model":123}`)}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for attempt := 0; attempt < 3; attempt++ {
+				opts := tc.opts
+				for pass := 0; pass < attempt; pass++ {
+					opts = ensureRequestedModelMetadata(opts, "upstream-route-model")
+				}
+				ctx := contextWithRequestedModelAlias(context.Background(), opts, "upstream-route-model")
+				if got := coreusage.RequestedModelFromContext(ctx); got != tc.want {
+					t.Fatalf("after %d fallback passes: requested model = %q, want %q", attempt, got, tc.want)
+				}
+				if tc.want == "" && coreusage.RequestedModelAliasFromContext(ctx) != "upstream-route-model" {
+					t.Fatal("legacy alias fallback changed")
+				}
+			}
+		})
+	}
+}

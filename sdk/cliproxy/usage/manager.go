@@ -25,9 +25,14 @@ type Record struct {
 	ExecutorType string
 	Model        string
 	Alias        string
-	APIKey       string
-	AuthID       string
-	AuthIndex    string
+	// Model observations are independent of Model, which retains its billing semantics.
+	RequestedModel              string
+	UpstreamModel               string
+	UpstreamResponseModel       string
+	UpstreamResponseModelSource string
+	APIKey                      string
+	AuthID                      string
+	AuthIndex                   string
 	// AccessTokenSHA256 identifies the OAuth token version without exposing the token.
 	AccessTokenSHA256 string
 	AuthType          string
@@ -318,6 +323,18 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 		return
 	}
 	// Normalize accounting and calculate billing before the record enters the async queue.
+	record.RequestedModel = NormalizeObservedModel(record.RequestedModel)
+	record.UpstreamModel = NormalizeObservedModel(record.UpstreamModel)
+	record.UpstreamResponseModel = NormalizeObservedModel(record.UpstreamResponseModel)
+	if record.UpstreamResponseModel == "" {
+		record.UpstreamResponseModelSource = ""
+	} else {
+		switch record.UpstreamResponseModelSource {
+		case "header", "body", "metadata":
+		default:
+			record.UpstreamResponseModelSource = ""
+		}
+	}
 	normalizedDetail := EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType)
 	if strings.TrimSpace(record.ServiceTier) == "" {
 		record.ServiceTier = strings.TrimSpace(record.RequestServiceTier)
