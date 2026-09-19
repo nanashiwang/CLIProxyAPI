@@ -670,6 +670,22 @@ func TestUsageReporterBuildRecordIncludesReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestUsageReporterFinalReasoningReplacesClientSetting(t *testing.T) {
+	for _, tc := range []struct{ format, body, want string }{
+		{"openai", `{}`, "default"},
+		{"claude", `{"thinking":{"type":"adaptive"}}`, "auto"},
+		{"kimi", `{"thinking":{"type":"enabled"}}`, "enabled"},
+		{"claude", `{"thinking":{"type":"disabled"}}`, "none"},
+		{"openai", `{`, ""},
+	} {
+		reporter := NewUsageReporter(usage.WithReasoningEffort(context.Background(), "high"), "openai", "model", nil)
+		reporter.SetTranslatedReasoningEffort([]byte(tc.body), tc.format)
+		if got := reporter.buildRecord(usage.Detail{TotalTokens: 3}, false).ReasoningEffort; got != tc.want {
+			t.Fatalf("format %s, body %s: effort %q, want %q", tc.format, tc.body, got, tc.want)
+		}
+	}
+}
+
 func TestUsageReporterBuildRecordIncludesServiceTier(t *testing.T) {
 	ctx := usage.WithServiceTier(context.Background(), "auto")
 	reporter := NewUsageReporter(ctx, "openai", "gpt-5.4", nil)

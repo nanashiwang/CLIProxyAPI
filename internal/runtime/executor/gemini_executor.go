@@ -404,6 +404,7 @@ func (e *GeminiExecutor) executeInteractions(ctx context.Context, auth *cliproxy
 	fromProtocol := opts.SourceFormat.String()
 	originalTranslated := geminiInteractionsPayloadConfigSource(ctx, e.cfg, targetName, req.Payload, opts, false, helps.APIKeyModelIsCompat(req))
 	body = helps.ApplyPayloadConfigWithRequest(e.cfg, targetName, "interactions", fromProtocol, "", body, originalTranslated, requestedModel, requestPath, opts.Headers)
+	reporter.SetTranslatedReasoningEffort(body, "interactions")
 
 	baseURL := resolveGeminiBaseURL(auth)
 	url := fmt.Sprintf("%s/%s/interactions", baseURL, glAPIVersion)
@@ -484,6 +485,7 @@ func (e *GeminiExecutor) executeInteractionsStream(ctx context.Context, auth *cl
 	fromProtocol := opts.SourceFormat.String()
 	originalTranslated := geminiInteractionsPayloadConfigSource(ctx, e.cfg, targetName, req.Payload, opts, true, helps.APIKeyModelIsCompat(req))
 	body = helps.ApplyPayloadConfigWithRequest(e.cfg, targetName, "interactions", fromProtocol, "", body, originalTranslated, requestedModel, requestPath, opts.Headers)
+	reporter.SetTranslatedReasoningEffort(body, "interactions")
 	body = helps.SetBoolIfDifferent(body, "stream", true)
 	baseURL := resolveGeminiBaseURL(auth)
 	url := fmt.Sprintf("%s/%s/interactions", baseURL, glAPIVersion)
