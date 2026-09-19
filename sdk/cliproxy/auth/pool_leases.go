@@ -335,7 +335,7 @@ func (m *Manager) replaceFailedPoolLease(ctx context.Context, providers []string
 	m.mu.RLock()
 	if a := m.auths[binding.Lease.Credential]; a != nil {
 		if _, unavailable := getAvailableAuths([]*Auth{a}, a.Provider, authSelectionModelFromOptions(opts, req.Model), time.Now()); unavailable != nil || a.Disabled {
-			terminal = terminal || poolLeaseTerminalFailure(a.LastError)
+			terminal = terminal || a.codexQuotaBlocked || poolLeaseTerminalFailure(a.LastError)
 		}
 	}
 	m.mu.RUnlock()

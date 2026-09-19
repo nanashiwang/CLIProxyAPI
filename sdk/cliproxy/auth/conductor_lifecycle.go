@@ -113,6 +113,7 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 	m.authEpochs[auth.ID]++
 	auth.RegistrationEpoch = m.authEpochs[auth.ID]
 	auth.Generation = 1
+	auth.codexQuotaBlocked = auth.CodexQuota != nil && auth.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(auth)
 	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
 	m.mu.Unlock()
@@ -205,6 +206,11 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 		auth.Index = existing.Index
 		auth.indexAssigned = existing.indexAssigned
 	}
+	if codexQuotaIdentity(auth) == codexQuotaIdentity(existing) {
+		auth.CodexQuota = existing.CodexQuota.clone()
+	} else {
+		auth.CodexQuota = nil
+	}
 	auth.Success = existing.Success
 	auth.Failed = existing.Failed
 	auth.recentRequests = existing.recentRequests
@@ -233,6 +239,7 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 		cooldownStateChanged = clearCooldownStateForAuth(auth, now) || cooldownStateChanged
 	}
 	auth.EnsureIndex()
+	auth.codexQuotaBlocked = auth.CodexQuota != nil && auth.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(auth)
 	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
 	m.mu.Unlock()
@@ -271,6 +278,7 @@ func (m *Manager) Remove(ctx context.Context, id string) {
 	}
 	provider := strings.TrimSpace(existing.Provider)
 	delete(m.auths, id)
+	delete(m.codexQuotaRefresh, id)
 	if m.modelPoolOffsets != nil {
 		delete(m.modelPoolOffsets, id)
 	}

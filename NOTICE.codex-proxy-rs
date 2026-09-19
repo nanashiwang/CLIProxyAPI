@@ -29,3 +29,9 @@ No separate upstream NOTICE file was present in either referenced source snapsho
 This attribution was written by CPA maintainers and is not an upstream NOTICE.
 The original CPA MIT license remains in LICENSE. This attribution does not
 relicense the upstream work or remove any terms applicable to adapted material.
+
+Additional quota-refresh reference: d0180b74b3eed06073a65528cbca502f0e1ca6bc
+Source area: backend/crates/providers/openai/src/credential/quota/mod.rs
+CPA selectively adapts reset grace, periodic refresh reservation, and observed
+usage preservation to its Go auth manager, cooldown persistence, and existing
+exclusive account leases. See docs/CODEX_QUOTA_REFRESH_CN.md for the scope.

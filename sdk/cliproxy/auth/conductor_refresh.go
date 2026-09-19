@@ -68,6 +68,8 @@ func (m *Manager) StartAutoRefresh(parent context.Context, interval time.Duratio
 
 	loop.rebuild(time.Now())
 	go loop.run(ctx)
+	go m.runCodexQuotaRefresh(ctx)
+	go m.runCodexQuotaPersistence(ctx)
 }
 
 // StopAutoRefresh cancels the background refresh loop, if running.
@@ -81,6 +83,7 @@ func (m *Manager) StopAutoRefresh() {
 	if cancel != nil {
 		cancel()
 	}
+	m.flushCodexQuotaObservations()
 	// Stop selector if it implements StoppableSelector (e.g., SessionAffinitySelector)
 	if stoppable, ok := m.selector.(StoppableSelector); ok {
 		stoppable.Stop()

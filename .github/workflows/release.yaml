@@ -669,6 +669,9 @@ jobs:
       - build-freebsd
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -708,3 +711,25 @@ jobs:
           else
             python3 "$GITHUB_WORKSPACE/.github/scripts/ensure-release-draft.py" --publish false
           fi
+      - name: Build and verify deployment bundle
+        if: github.repository == 'nanashiwang/CLIProxyAPI'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          bundle_dir="${RUNNER_TEMP}/cpa-deployment"
+          python3 .github/scripts/test_build_deployment_bundle.py
+          python3 .github/scripts/build-deployment-bundle.py \
+            --tag "$GITHUB_REF_NAME" \
+            --management-tag 'v1.22.2-cpa.28' \
+            --output-dir "$bundle_dir"
+          bundle="cpa-deployment-${GITHUB_REF_NAME}.zip"
+          gh release upload "$GITHUB_REF_NAME" "$bundle_dir/$bundle" "$bundle_dir/$bundle.sha256" --clobber
+          verify_dir="${RUNNER_TEMP}/cpa-deployment-verify"
+          mkdir -p "$verify_dir"
+          gh release download "$GITHUB_REF_NAME" --pattern "$bundle" --pattern "$bundle.sha256" --dir "$verify_dir"
+          (cd "$verify_dir" && sha256sum --check "$bundle.sha256")
+          cmp "$bundle_dir/$bundle" "$verify_dir/$bundle"
+          python3 -m zipfile -t "$verify_dir/$bundle"

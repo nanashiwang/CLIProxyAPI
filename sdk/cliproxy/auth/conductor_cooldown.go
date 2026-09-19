@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -259,6 +260,12 @@ func (m *Manager) clearDisabledCooldownStates(cfg *internalconfig.Config) bool {
 		if auth == nil {
 			continue
 		}
+		blocked := auth.CodexQuota != nil && auth.CodexQuota.Exhausted && !quotaCooldownDisabledForAuthWithConfig(auth, cfg)
+		if auth.codexQuotaBlocked != blocked {
+			auth.codexQuotaBlocked = blocked
+			auth.Generation++
+			snapshots = append(snapshots, auth.Clone())
+		}
 		if !quotaCooldownDisabledForAuthWithConfig(auth, cfg) && !auth.Disabled && auth.Status != StatusDisabled {
 			continue
 		}
@@ -304,6 +311,14 @@ func (m *Manager) RestoreCooldownStates(ctx context.Context) error {
 
 	m.mu.Lock()
 	for _, record := range records {
+		if record.Model == "" && record.CodexQuota != nil {
+			if a := m.auths[record.AuthID]; a != nil && codexQuotaOAuth(a) && record.CodexQuota.Identity == codexQuotaIdentity(a) && (a.CodexQuota == nil || !a.CodexQuota.ObservedAt.After(record.CodexQuota.ObservedAt)) {
+				a.CodexQuota = record.CodexQuota.clone()
+				a.codexQuotaBlocked = a.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(a)
+				a.Generation++
+				snapshotsByID[a.ID] = a.Clone()
+			}
+		}
 		if strings.TrimSpace(record.Model) == "" {
 			authLevelRecords = append(authLevelRecords, record)
 			continue
@@ -465,6 +480,15 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		cooldownRecordsBefore = m.cooldownStateRecordsForAuthLocked(auth, now)
 	}
 
+	if auth.CodexQuota != nil {
+		auth.CodexQuota.Exhausted = false
+		auth.CodexQuota.Recovery = nil
+		auth.CodexQuota.RequestStartedAt = now
+		for i := range auth.CodexQuota.Windows {
+			auth.CodexQuota.Windows[i].LimitReached = false
+		}
+		auth.codexQuotaBlocked = false
+	}
 	for modelKey, state := range auth.ModelStates {
 		if strings.TrimSpace(modelKey) == "" {
 			continue
@@ -603,8 +627,14 @@ func (m *Manager) cooldownStateRecordsSnapshot() []CooldownStateRecord {
 }
 
 func (m *Manager) cooldownStateRecordsForAuthLocked(auth *Auth, now time.Time) []CooldownStateRecord {
-	if auth == nil || auth.ID == "" || auth.Disabled || auth.Status == StatusDisabled || m.cooldownDisabledForAuth(auth) {
+	if auth == nil || auth.ID == "" {
 		return nil
+	}
+	if auth.Disabled || auth.Status == StatusDisabled || m.cooldownDisabledForAuth(auth) {
+		if auth.CodexQuota == nil {
+			return nil
+		}
+		return []CooldownStateRecord{{Provider: auth.Provider, AuthID: auth.ID, AuthFile: cooldownAuthFile(auth), UpdatedAt: auth.UpdatedAt, CodexQuota: auth.CodexQuota.clone()}}
 	}
 	records := make([]CooldownStateRecord, 0, 1+len(auth.ModelStates))
 	if record, ok := authCooldownStateRecord(auth, now); ok {
@@ -642,7 +672,7 @@ func cooldownStateRecordEqual(a, b CooldownStateRecord) bool {
 		a.Reason != b.Reason ||
 		!a.NextRetryAfter.Equal(b.NextRetryAfter) ||
 		!a.UpdatedAt.Equal(b.UpdatedAt) ||
-		!cooldownQuotaEqual(a.Quota, b.Quota) {
+		!cooldownQuotaEqual(a.Quota, b.Quota) || !reflect.DeepEqual(a.CodexQuota, b.CodexQuota) {
 		return false
 	}
 	return cooldownErrorEqual(a.LastError, b.LastError)
@@ -666,8 +696,14 @@ func cooldownErrorEqual(a, b *Error) bool {
 }
 
 func authCooldownStateRecord(auth *Auth, now time.Time) (CooldownStateRecord, bool) {
-	if auth == nil || !auth.Unavailable || auth.NextRetryAfter.IsZero() || !auth.NextRetryAfter.After(now) {
+	if auth == nil {
 		return CooldownStateRecord{}, false
+	}
+	if !auth.Unavailable || auth.NextRetryAfter.IsZero() || !auth.NextRetryAfter.After(now) {
+		if auth.CodexQuota == nil {
+			return CooldownStateRecord{}, false
+		}
+		return CooldownStateRecord{Provider: auth.Provider, AuthID: auth.ID, AuthFile: cooldownAuthFile(auth), UpdatedAt: auth.UpdatedAt, CodexQuota: auth.CodexQuota.clone()}, true
 	}
 	return CooldownStateRecord{
 		Provider:       strings.TrimSpace(auth.Provider),
@@ -677,6 +713,7 @@ func authCooldownStateRecord(auth *Auth, now time.Time) (CooldownStateRecord, bo
 		NextRetryAfter: auth.NextRetryAfter,
 		Reason:         cooldownReason(auth.StatusMessage, auth.Quota, auth.LastError),
 		Quota:          auth.Quota,
+		CodexQuota:     auth.CodexQuota.clone(),
 		LastError:      cloneError(auth.LastError),
 		UpdatedAt:      auth.UpdatedAt,
 	}, true
@@ -743,6 +780,10 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 
 	m.mu.Lock()
 	if auth, ok := m.auths[result.AuthID]; ok && auth != nil {
+		if !codexQuotaExecutionMatches(ctx, auth) {
+			m.mu.Unlock()
+			return
+		}
 		if modelKey == "" && strings.TrimSpace(result.RouteModel) != "" {
 			if m != nil {
 				modelKey = m.selectionModelKeyForAuth(auth, result.RouteModel)
@@ -757,6 +798,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		if trackCooldownState {
 			cooldownRecordsBefore = m.cooldownStateRecordsForAuthLocked(auth, now)
 		}
+		m.markCodexQuotaFailureLocked(auth, result, now)
 		auth.recordRecentRequest(now, result.Success)
 		if result.Success {
 			auth.Success++

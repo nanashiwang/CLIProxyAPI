@@ -79,6 +79,9 @@ type Auth struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 	// Quota captures recent quota information for load balancers.
 	Quota QuotaState `json:"quota"`
+	// CodexQuota retains observed windows independently of cooldown deadlines.
+	CodexQuota        *CodexQuotaSnapshot `json:"codex_quota,omitempty"`
+	codexQuotaBlocked bool
 	// LastError stores the last failure encountered while executing or refreshing.
 	LastError *Error `json:"last_error,omitempty"`
 	// CreatedAt is the creation timestamp in UTC.
@@ -268,6 +271,7 @@ func (a *Auth) Clone() *Auth {
 		return nil
 	}
 	copyAuth := *a
+	copyAuth.CodexQuota = a.CodexQuota.clone()
 	if len(a.Attributes) > 0 {
 		copyAuth.Attributes = make(map[string]string, len(a.Attributes))
 		for key, value := range a.Attributes {

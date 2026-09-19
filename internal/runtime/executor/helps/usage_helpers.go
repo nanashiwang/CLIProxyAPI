@@ -48,6 +48,7 @@ type UsageReporter struct {
 	requestedAt       time.Time
 	quotaHeadersMu    sync.RWMutex
 	quotaHeaders      http.Header
+	quotaObserver     func(http.Header)
 	ttftMu            sync.RWMutex
 	ttft              time.Duration
 	ttftStart         time.Time
@@ -90,6 +91,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		generate:       usage.GenerateFromContext(ctx),
 	}
 	if auth != nil {
+		reporter.quotaObserver = cliproxyauth.CodexQuotaObserver(ctx, auth)
 		reporter.authID = auth.ID
 		reporter.authIndex = auth.EnsureIndex()
 		reporter.accessTokenHash = authAccessTokenSHA256(auth)
@@ -175,6 +177,9 @@ func (r *UsageReporter) ObserveResponse(resp *http.Response) {
 func (r *UsageReporter) observeResponseForGeneration(resp *http.Response, generation uint64) {
 	if r == nil || resp == nil {
 		return
+	}
+	if r.quotaObserver != nil {
+		r.quotaObserver(resp.Header)
 	}
 	r.observeHTTPResponseTransport(resp.Header, generation)
 	r.observeResponseModelHeaders(resp.Header, generation)
@@ -309,6 +314,9 @@ func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) 
 func (r *UsageReporter) ObserveQuotaHeaders(headers http.Header) {
 	if r == nil || len(headers) == 0 {
 		return
+	}
+	if r.quotaObserver != nil {
+		r.quotaObserver(headers)
 	}
 	r.quotaHeadersMu.Lock()
 	if r.quotaHeaders == nil {

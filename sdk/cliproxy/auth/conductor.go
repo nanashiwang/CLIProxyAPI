@@ -185,6 +185,9 @@ type Manager struct {
 	// refreshLocks serializes credential refresh per auth ID so concurrent
 	// 401 recoveries and auto-refresh workers do not race the same refresh_token.
 	refreshLocks sync.Map
+	// codexQuotaRefresh reservations are protected by mu.
+	codexQuotaRefresh map[string]*codexQuotaRefreshAttempt
+	codexQuotaDirty   atomic.Bool
 	// persistLocks serializes disk persistence per auth ID and guards against out-of-order writes.
 	persistLocks sync.Map
 }

@@ -48,6 +48,7 @@ func cloneCooldownStateRecords(records []CooldownStateRecord) []CooldownStateRec
 	for i := range records {
 		cloned[i] = records[i]
 		cloned[i].LastError = cloneError(records[i].LastError)
+		cloned[i].CodexQuota = records[i].CodexQuota.clone()
 	}
 	return cloned
 }

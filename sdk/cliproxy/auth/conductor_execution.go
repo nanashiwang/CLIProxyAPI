@@ -386,7 +386,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 		publishSelectedAuthMetadata(opts.Metadata, auth)
 
 		tried[auth.ID] = struct{}{}
-		execCtx := m.accountPoolUsageContext(ctx, auth.ID)
+		execCtx := m.withCodexQuotaObserver(m.accountPoolUsageContext(ctx, auth.ID), auth)
 		if rt := m.roundTripperFor(auth); rt != nil {
 			execCtx = context.WithValue(execCtx, roundTripperContextKey{}, rt)
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
@@ -546,7 +546,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 		publishSelectedAuthMetadata(opts.Metadata, auth)
 
 		tried[auth.ID] = struct{}{}
-		execCtx := m.accountPoolUsageContext(ctx, auth.ID)
+		execCtx := m.withCodexQuotaObserver(m.accountPoolUsageContext(ctx, auth.ID), auth)
 		if rt := m.roundTripperFor(auth); rt != nil {
 			execCtx = context.WithValue(execCtx, roundTripperContextKey{}, rt)
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
@@ -752,7 +752,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 		publishSelectedAuthMetadata(opts.Metadata, auth)
 
 		tried[auth.ID] = struct{}{}
-		execCtx := m.accountPoolUsageContext(ctx, auth.ID)
+		execCtx := m.withCodexQuotaObserver(m.accountPoolUsageContext(ctx, auth.ID), auth)
 		releaseAttempt := func() {}
 		if selection != nil {
 			var errBind error
