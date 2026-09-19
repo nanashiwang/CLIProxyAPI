@@ -168,12 +168,16 @@ func (e *AIStudioExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth,
 		AuthValue: authValue,
 	})
 
+	observedURL, _ := url.Parse(wsReq.URL)
+	reporter.BeginHTTPModelObservation(&http.Request{URL: observedURL})
 	reporter.StartResponseTTFT()
 	wsResp, err := e.relay.NonStream(ctx, authID, wsReq)
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return resp, err
 	}
+	reporter.ObserveResponseModelHeaders(wsResp.Headers)
+	reporter.ObserveResponseModelPayload(wsResp.Body, "body")
 	helps.RecordAPIResponseMetadata(ctx, e.cfg, wsResp.Status, wsResp.Headers.Clone())
 	reporter.StartResponseTTFT()
 	if len(wsResp.Body) > 0 {
@@ -238,6 +242,8 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 		AuthType:  authType,
 		AuthValue: authValue,
 	})
+	observedURL, _ := url.Parse(wsReq.URL)
+	reporter.BeginHTTPModelObservation(&http.Request{URL: observedURL})
 	reporter.StartResponseTTFT()
 	wsStream, err := e.relay.Stream(ctx, authID, wsReq)
 	if err != nil {
@@ -250,6 +256,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return nil, err
 	}
+	reporter.ObserveResponseModelHeaders(firstEvent.Headers)
 	if firstEvent.Status > 0 && firstEvent.Status != http.StatusOK {
 		metadataLogged := false
 		if firstEvent.Status > 0 {
@@ -264,6 +271,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 			body.Write(firstEvent.Payload)
 		}
 		if firstEvent.Type == wsrelay.MessageTypeStreamEnd {
+			reporter.ObserveResponseModelPayload(body.Bytes(), "body")
 			return nil, statusErr{code: firstEvent.Status, msg: body.String()}
 		}
 		for event := range wsStream {
@@ -288,12 +296,15 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 				break
 			}
 		}
+		reporter.ObserveResponseModelPayload(body.Bytes(), "body")
 		return nil, statusErr{code: firstEvent.Status, msg: body.String()}
 	}
 	out := make(chan cliproxyexecutor.StreamChunk)
 	go func(first wsrelay.StreamEvent) {
 		defer close(out)
 		defer reporter.EnsurePublished(ctx)
+		observeModelChunk, finishModelObservation := reporter.NewResponseModelStreamObserver("")
+		defer finishModelObservation()
 		responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 		originalRequest := opts.OriginalRequest
 		if len(originalRequest) == 0 {
@@ -303,6 +314,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 		var param any
 		metadataLogged := false
 		processEvent := func(event wsrelay.StreamEvent) bool {
+			reporter.ObserveResponseModelHeaders(event.Headers)
 			if event.Err != nil {
 				helps.RecordAPIResponseError(ctx, e.cfg, event.Err)
 				reporter.PublishFailure(ctx, event.Err)
@@ -321,6 +333,8 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 				}
 			case wsrelay.MessageTypeStreamChunk:
 				if len(event.Payload) > 0 {
+					observeModelChunk(event.Payload)
+					finishModelObservation()
 					reporter.MarkFirstResponseByte()
 					helps.AppendAPIResponseChunk(ctx, e.cfg, event.Payload)
 					filtered := helps.FilterSSEUsageMetadata(event.Payload)
@@ -340,6 +354,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 			case wsrelay.MessageTypeStreamEnd:
 				return false
 			case wsrelay.MessageTypeHTTPResp:
+				reporter.ObserveResponseModelPayload(event.Payload, "body")
 				if !metadataLogged && event.Status > 0 {
 					helps.RecordAPIResponseMetadata(ctx, e.cfg, event.Status, event.Headers.Clone())
 					reporter.StartResponseTTFT()

@@ -18,6 +18,7 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 )
 
 func claudeOAuthRequestCancellation(ctx context.Context, auth *Auth, err error) error {
@@ -877,6 +878,8 @@ func cloneRequestMetadata(src map[string]any) map[string]any {
 	return dst
 }
 
+const requestedModelFallbackMetadataKey = "usage_requested_model_fallback"
+
 func ensureRequestedModelMetadata(opts cliproxyexecutor.Options, requestedModel string) cliproxyexecutor.Options {
 	opts.Metadata = cloneRequestMetadata(opts.Metadata)
 	requestedModel = strings.TrimSpace(requestedModel)
@@ -887,6 +890,7 @@ func ensureRequestedModelMetadata(opts cliproxyexecutor.Options, requestedModel 
 		return opts
 	}
 	opts.Metadata[cliproxyexecutor.RequestedModelMetadataKey] = requestedModel
+	opts.Metadata[requestedModelFallbackMetadataKey] = true
 	return opts
 }
 
@@ -1082,6 +1086,17 @@ func (m *Manager) prepareRequestAuth(ctx context.Context, executor ProviderExecu
 func contextWithRequestedModelAlias(ctx context.Context, opts cliproxyexecutor.Options, fallback string) context.Context {
 	alias := requestedModelAliasFromOptions(opts, fallback)
 	ctx = coreusage.WithRequestedModelAlias(ctx, alias)
+	// Preserve the actual client model independently from the legacy route fallback.
+	requestedModel := ""
+	if inferred, _ := opts.Metadata[requestedModelFallbackMetadataKey].(bool); !inferred {
+		requestedModel = coreusage.NormalizeObservedModel(requestedModelAliasFromOptions(opts, ""))
+	}
+	if requestedModel == "" && gjson.ValidBytes(opts.OriginalRequest) {
+		if model := gjson.GetBytes(opts.OriginalRequest, "model"); model.Type == gjson.String {
+			requestedModel = coreusage.NormalizeObservedModel(model.String())
+		}
+	}
+	ctx = coreusage.WithRequestedModel(ctx, requestedModel)
 	effort := reasoningEffortFromOptions(opts)
 	if effort != "" {
 		ctx = coreusage.WithReasoningEffort(ctx, effort)

@@ -81,30 +81,34 @@ type TokenStats struct {
 
 // RequestDetail stores one persisted request event without secrets or failure bodies.
 type RequestDetail struct {
-	ClientKeyID         string                    `json:"client_key_id,omitempty"`
-	PoolID              string                    `json:"pool_id,omitempty"`
-	Timestamp           time.Time                 `json:"timestamp"`
-	LatencyMs           int64                     `json:"latency_ms"`
-	TTFTMs              int64                     `json:"ttft_ms"`
-	Provider            string                    `json:"provider"`
-	ExecutorType        string                    `json:"executor_type"`
-	Alias               string                    `json:"alias"`
-	Endpoint            string                    `json:"endpoint"`
-	Source              string                    `json:"source"`
-	AuthID              string                    `json:"auth_id"`
-	AuthIndex           string                    `json:"auth_index"`
-	AuthType            string                    `json:"auth_type"`
-	RequestID           string                    `json:"request_id,omitempty"`
-	ServiceTier         string                    `json:"service_tier"`
-	ResponseServiceTier string                    `json:"response_service_tier,omitempty"`
-	ReasoningEffort     string                    `json:"reasoning_effort,omitempty"`
-	Tokens              TokenStats                `json:"tokens"`
-	TokenBreakdown      *coreusage.TokenBreakdown `json:"token_breakdown,omitempty"`
-	Failed              bool                      `json:"failed"`
-	StatusCode          int                       `json:"status_code"`
-	Generate            bool                      `json:"generate"`
-	Billing             coreusage.Billing         `json:"billing"`
-	CostUSD             *float64                  `json:"cost_usd,omitempty"`
+	ClientKeyID                 string                    `json:"client_key_id,omitempty"`
+	PoolID                      string                    `json:"pool_id,omitempty"`
+	Timestamp                   time.Time                 `json:"timestamp"`
+	LatencyMs                   int64                     `json:"latency_ms"`
+	TTFTMs                      int64                     `json:"ttft_ms"`
+	Provider                    string                    `json:"provider"`
+	ExecutorType                string                    `json:"executor_type"`
+	Alias                       string                    `json:"alias"`
+	RequestedModel              string                    `json:"requested_model,omitempty"`
+	UpstreamModel               string                    `json:"upstream_model,omitempty"`
+	UpstreamResponseModel       string                    `json:"upstream_response_model,omitempty"`
+	UpstreamResponseModelSource string                    `json:"upstream_response_model_source,omitempty"`
+	Endpoint                    string                    `json:"endpoint"`
+	Source                      string                    `json:"source"`
+	AuthID                      string                    `json:"auth_id"`
+	AuthIndex                   string                    `json:"auth_index"`
+	AuthType                    string                    `json:"auth_type"`
+	RequestID                   string                    `json:"request_id,omitempty"`
+	ServiceTier                 string                    `json:"service_tier"`
+	ResponseServiceTier         string                    `json:"response_service_tier,omitempty"`
+	ReasoningEffort             string                    `json:"reasoning_effort,omitempty"`
+	Tokens                      TokenStats                `json:"tokens"`
+	TokenBreakdown              *coreusage.TokenBreakdown `json:"token_breakdown,omitempty"`
+	Failed                      bool                      `json:"failed"`
+	StatusCode                  int                       `json:"status_code"`
+	Generate                    bool                      `json:"generate"`
+	Billing                     coreusage.Billing         `json:"billing"`
+	CostUSD                     *float64                  `json:"cost_usd,omitempty"`
 }
 
 // UnmarshalJSON preserves the generation default of historical exports that
@@ -1161,30 +1165,34 @@ func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
 		API:     apiIdentifier(record.APIKey, endpoint, provider),
 		Model:   model,
 		Detail: RequestDetail{
-			Timestamp:           timestamp.UTC(),
-			LatencyMs:           durationMilliseconds(record.Latency),
-			TTFTMs:              durationMilliseconds(record.TTFT),
-			Provider:            provider,
-			ExecutorType:        valueOrUnknown(record.ExecutorType),
-			Alias:               alias,
-			Endpoint:            endpoint,
-			Source:              strings.TrimSpace(record.Source),
-			AuthID:              strings.TrimSpace(record.AuthID),
-			AuthIndex:           strings.TrimSpace(record.AuthIndex),
-			ClientKeyID:         attribution.ClientKeyID,
-			PoolID:              attribution.PoolID,
-			AuthType:            valueOrUnknown(record.AuthType),
-			RequestID:           strings.TrimSpace(internallogging.GetRequestID(ctx)),
-			ServiceTier:         serviceTier,
-			ResponseServiceTier: strings.TrimSpace(record.ResponseServiceTier),
-			ReasoningEffort:     strings.TrimSpace(record.ReasoningEffort),
-			Tokens:              tokens,
-			TokenBreakdown:      tokenBreakdown,
-			Failed:              failed,
-			StatusCode:          statusCode,
-			Generate:            coreusage.GenerateEnabled(record.Generate),
-			Billing:             billing,
-			CostUSD:             costUSD,
+			Timestamp:                   timestamp.UTC(),
+			LatencyMs:                   durationMilliseconds(record.Latency),
+			TTFTMs:                      durationMilliseconds(record.TTFT),
+			Provider:                    provider,
+			ExecutorType:                valueOrUnknown(record.ExecutorType),
+			Alias:                       alias,
+			RequestedModel:              record.RequestedModel,
+			UpstreamModel:               record.UpstreamModel,
+			UpstreamResponseModel:       record.UpstreamResponseModel,
+			UpstreamResponseModelSource: record.UpstreamResponseModelSource,
+			Endpoint:                    endpoint,
+			Source:                      strings.TrimSpace(record.Source),
+			AuthID:                      strings.TrimSpace(record.AuthID),
+			AuthIndex:                   strings.TrimSpace(record.AuthIndex),
+			ClientKeyID:                 attribution.ClientKeyID,
+			PoolID:                      attribution.PoolID,
+			AuthType:                    valueOrUnknown(record.AuthType),
+			RequestID:                   strings.TrimSpace(internallogging.GetRequestID(ctx)),
+			ServiceTier:                 serviceTier,
+			ResponseServiceTier:         strings.TrimSpace(record.ResponseServiceTier),
+			ReasoningEffort:             strings.TrimSpace(record.ReasoningEffort),
+			Tokens:                      tokens,
+			TokenBreakdown:              tokenBreakdown,
+			Failed:                      failed,
+			StatusCode:                  statusCode,
+			Generate:                    coreusage.GenerateEnabled(record.Generate),
+			Billing:                     billing,
+			CostUSD:                     costUSD,
 		},
 	})
 }
@@ -1211,6 +1219,7 @@ func normalizeStoredEvent(event storedEvent) storedEvent {
 	if event.Detail.Alias == "" {
 		event.Detail.Alias = event.Model
 	}
+	normalizeModelObservation(&event.Detail)
 	if event.Detail.StatusCode <= 0 {
 		if event.Detail.Failed {
 			event.Detail.StatusCode = 500

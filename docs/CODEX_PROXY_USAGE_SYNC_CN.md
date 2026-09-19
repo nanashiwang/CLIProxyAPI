@@ -9,7 +9,7 @@
 
 本次只适配使用统计相关能力：健康/性能/成本/趋势/维度诊断、服务端分页筛选、请求详情与 token/费用拆分、React 使用统计界面、脱敏诊断导出。账号调度、鉴权、租约、OAuth、代理传输和模型转换不在本次适配范围。
 
-后续更新跟踪覆盖整个上游项目，包含源码、功能、修复、依赖、文档、CI 与正式 Release。已实现的五项用量功能继续单独记录适配来源；整个项目纳入跟踪，不代表其他模块已经审查或迁入 CPA。
+后续更新跟踪覆盖整个上游项目，包含源码、功能、修复、依赖、文档、CI 与正式 Release。已登记的用量功能继续单独记录适配来源；整个项目纳入跟踪，不代表其他模块已经审查或迁入 CPA。
 
 机器可读状态以 [codex-proxy-usage.json](../.github/upstream/codex-proxy-usage.json) 为准。最初登记为 `in_progress`；只有对应前后端实现及验证完成才改为 `adapted`。本说明不以参考源码已下载、代码已编写或构建已触发作为完成证明。
 
@@ -19,11 +19,12 @@
 | --- | --- | --- |
 | 概览、健康、性能、成本、趋势、维度诊断 | `frontend/src/views/usage/`；`backend/crates/gateway-api/src/admin/observability/`；`backend/crates/gateway-store/src/postgres/observability/queries/usage.rs` | 后端 `internal/usage/`、`internal/api/handlers/management/`；前端 `src/features/usage/` |
 | 分页及筛选 | `frontend/src/views/usage/composables/useUsageRecordsTable.ts`；`frontend/src/api/modules/usage.ts`；上游 observability query/use_case | 后端已有用量存储与管理 API；前端 `src/services/api/usage.ts` |
+| 模型对照 | `UsageModelCell.vue`、`utils/records.ts`、上游模型观测和响应元数据解析 | SDK 独立模型字段、执行器原始响应采集、用量持久化及 React 模型列/详情 |
 | 请求详情 | `UsageRecordDetailModal.vue`、`UsageDetailFieldGrid.vue`、`UsageTokenCell.vue`、`UsageBillingCell.vue`、`useUsageRecordDetail.ts` | 后端已有 RequestDetail、billing/token 契约；React 详情界面 |
 | 管理界面组织 | `frontend/src/views/usage/index.vue` 及 components/composables/utils | `src/features/usage/` 与现有 CPA 国际化/组件 |
 | 诊断导出 | `frontend/src/views/usage/utils/diagnosticsBundle.ts`、`RequestDiagnosticsPanel.vue` | 基于 CPA 实际可用字段构建明确白名单的脱敏导出 |
 
-这五项功能的来源筛选同时覆盖上游存储查询、领域模型、token/计费、接口测试、迁移、前端基础组件和依赖锁文件。这些路径只用于判断现有适配项可能受哪些变化影响，不限制全仓更新报告。依赖发生变化只是待审查信号，不意味着全部需要引入 CPA。
+这些功能的来源筛选同时覆盖上游存储查询、领域模型、token/计费、接口测试、迁移、前端基础组件和依赖锁文件。这些路径只用于判断现有适配项可能受哪些变化影响，不限制全仓更新报告。依赖发生变化只是待审查信号，不意味着全部需要引入 CPA。
 
 ## 必须保留的 CPA 语义
 
@@ -40,7 +41,7 @@
 - `monitor_scope`：固定为 `entire_repository`，所有上游路径均纳入全仓更新检查。
 - `repository_tracking_commit`、`repository_tracking_release`：全仓跟踪起点，首次启用沿用已知源码 `7f320797…` 和正式 Release `v3.10.0`。该提交当时只审查了用量范围，不能据此声称全仓已经审查。
 - `repository_reviewed_commit`、`repository_reviewed_release`：全项目变化完成审查后才登记的基线，初始为 `null`。全仓差异优先对比此提交；未登记时对比跟踪起点。
-- `reviewed_commit`：原有功能审查基线，仍只表示已经按 `review_scope` 审查五项登记功能及依赖闭包；既不代表全仓审查，也不代表全仓适配。`review_notes` 继续限定在这些功能的审查范围。
+- `reviewed_commit`：原有功能审查基线，仍只表示已经按 `review_scope` 审查登记功能及依赖闭包；既不代表全仓审查，也不代表全仓适配。`review_notes` 继续限定在这些功能的审查范围。
 - `source_commit`：该功能本轮参考的候选上游提交。
 - `adapted_commit`：该功能已经验证完成的上游来源 SHA；不是 CPA 本地提交号。未完成时为 `null`。
 - `status`：`in_progress`、`adapted`、`deferred` 或 `rejected`。
@@ -52,7 +53,7 @@
 
 [codex-proxy-usage-monitor.yml](../.github/workflows/codex-proxy-usage-monitor.yml) 的工作流名称为 `codex-proxy-project-monitor`，每周一 UTC 02:43（北京时间 10:43）及手动运行。它只读取上游默认分支、正式 Release 和全仓提交差异，产出 Actions summary 与保留 30 天的 JSON/Markdown artifact；不写 Issue、不评论、不合并、不更新基线，也不部署。沿用已有文件名以兼容链接和调用。
 
-检查分为三层：报告的 `review` 对比全仓基线与当前 HEAD，不按用量路径过滤；`feature_review` 对比原有 `reviewed_commit`，只判断登记功能范围；`features` 则逐项对比其 `adapted_commit`，未适配时对比候选 `source_commit` 并明确标注“尚未适配”。全仓有变化不会自动把五项功能都标记为需要移植。
+检查分为三层：报告的 `review` 对比全仓基线与当前 HEAD，不按用量路径过滤；`feature_review` 对比原有 `reviewed_commit`，只判断登记功能范围；`features` 则逐项对比其 `adapted_commit`，未适配时对比候选 `source_commit` 并明确标注“尚未适配”。全仓有变化不会自动把登记功能都标记为需要移植。
 
 正式 Release 与全仓 Release 基线单独比较，即使 HEAD 和净文件差异没有变化，新 Release 仍令顶层 `review_required` 为真，并在 Markdown 报告中明确展示前后版本。Release 推进不会自动提高任何功能的适配状态。净文件差异为空但存在新提交（例如变更后又回退）时，也保留全仓审查信号。
 
@@ -74,3 +75,21 @@ python3 .github/scripts/codex-proxy-usage-monitor.py --output-dir /tmp/cpa-codex
 后端 `auto-personal-release.yml` 在 `main` 验证 `go test ./...`、构建及管理 API 冒烟后创建个人标签，再调度 `release.yaml`。正式发布要求标签属于 main 历史，所有 10 个平台包完成后发布最终 checksums 并取消 draft。前端 `auto-cpa-release.yml` 在验证后创建 CPA 标签，`release.yml` 再执行 `bun run verify` 生成 `management.html`。
 
 后端每个平台包包含两个来源/许可证文件；前端 Release 单独附带这两个文件和原 MIT LICENSE。配套部署包还应包含源码补丁、这次管理页面、部署说明、构建参数、来源记录及上述许可证，并附 SHA-256。不得加入真实配置、认证文件或密钥。下载发布附件后核对 SHA-256 与归档内容；CI 成功、公开发布和生产部署分别报告。本次发布不自动更新线上服务。
+
+
+## 请求模型与上游回报模型对照
+
+统计明细新增独立观测字段，保留既有 `model` 作为聚合和定价依据：
+
+- `requested_model`：从原始客户端请求或请求元数据捕获的模型名，不以路由模型兜底。
+- `upstream_model`：经过映射和协议适配后实际发送给上游的模型名。
+- `upstream_response_model`：上游响应明确声明的模型名，在客户端响应别名重写前捕获。
+- `upstream_response_model_source`：`header`、`body` 或 `metadata`，描述回报信息来源。
+- `model_match`：统计明细 API 根据实际发送与回报字符串计算，值为 `matched`、`mismatch`、`unknown`。先去除首尾空白，随后精确比较，不擅自忽略大小写、日期版本或模型后缀。
+
+客户端别名与发送模型不同属于路由映射，单独展示，不直接认定为不匹配。匹配只表示上游所声明的模型名与发送名一致；价格表的 `matched_model` 不参与比较。响应中没有模型、采集不可用或旧记录没有观测字段时显示未知，不反推或填造历史数据。
+
+新字段随统计 JSONL、导入导出、列表、详情和搜索保存和查询，不改变原统计主键、费用或 token 口径。脱敏诊断仅导出比较状态与来源，继续排除模型名称和原始请求/响应。完整 attempt 与 trace 采集仍不在本次范围。
+
+
+采集使用已有 HTTP 请求边界及内置 Codex、xAI、AIStudio WebSocket 路径，响应头提供初始报告，流内请求级模型元数据可以更新它；显式头/元数据优先于普通响应正文。HTTP 请求观察只安全重读至多 1 MiB；无可重读正文、multipart、没有显式模型或超出观察能力时保持未知。响应仅保留有限模型字段，不缓存正文，不改传输超时、字节或原计费发布时机。SSE 观测沿用执行器的逐 data 行消费边界，不改变既有流协议行为。

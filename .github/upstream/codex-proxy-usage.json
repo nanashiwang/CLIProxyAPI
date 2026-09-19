@@ -12,7 +12,7 @@
   "reviewed_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
   "reviewed_on": "2026-09-19",
   "reviewed_release": "v3.10.0",
-  "review_scope": "Usage screens and their API, observability, token accounting, pricing, storage, test and UI dependencies; adaptation covers the five registered CPA features, not the entire source project.",
+  "review_scope": "Usage screens and their API, observability, token accounting, pricing, storage, test and UI dependencies; adaptation covers the registered CPA usage features, not the entire source project.",
   "shared_watch_paths": [
     "LICENSE*",
     "NOTICE*",
@@ -172,6 +172,41 @@
         "Browser synthetic fixture: all-time pagination, request search/detail, empty state, failed/warmup filters, management tools and redacted diagnostic download passed"
       ],
       "notes": "Export an explicit safe field set; omit credentials, request/response bodies and raw identity headers."
+    },
+    {
+      "id": "usage-model-observation",
+      "title": "Requested, sent and upstream-reported model observation and comparison",
+      "status": "adapted",
+      "source_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "adapted_commit": "7f320797a06226d01ca77d1ff73980a843ee3efb",
+      "local_areas": [
+        "CLIProxyAPI/sdk/cliproxy/usage",
+        "CLIProxyAPI/internal/runtime/executor",
+        "CLIProxyAPI/internal/usage",
+        "Cli-Proxy-API-Management-Center/src/features/usage"
+      ],
+      "watch_paths": [
+        "frontend/src/views/usage/components/UsageModelCell.vue",
+        "frontend/src/views/usage/utils/records.ts",
+        "frontend/src/views/usage/components/UsageRecordDetailModal.vue",
+        "frontend/src/api/modules/usage.ts",
+        "backend/crates/gateway-core/src/event.rs",
+        "backend/crates/gateway-core/src/engine/**",
+        "backend/crates/gateway-admin/src/model/observability.rs",
+        "backend/crates/gateway-store/src/postgres/observability/**",
+        "backend/crates/providers/*/src/**/canonical.rs",
+        "backend/crates/providers/*/src/**/response_meta.rs",
+        "backend/crates/providers/*/src/**/observation.rs",
+        "backend/crates/providers/*/tests/**"
+      ],
+      "validation": [
+        "Go full suite and management API binary smoke passed",
+        "Model observation regression and race: HTTP/SSE, Kimi wire normalization, Claude decoded responses, Codex/xAI reused WebSockets and AIStudio relay",
+        "Storage reload/export/import and stable IDs; mapped match, mismatch, historical unknown and upstream model search",
+        "React verify: 535 tests, types and production build passed; existing unrelated lint warning only",
+        "Browser synthetic fixture: five model states, detail source, upstream model search and 390px mobile layout passed"
+      ],
+      "notes": "Compare explicit outbound and upstream-reported models only. Preserve pricing/aggregation model semantics and leave missing or historical observations unknown; model names remain omitted from redacted diagnostic exports."
     }
   ],
   "review_notes": [

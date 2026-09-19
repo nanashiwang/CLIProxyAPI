@@ -32,20 +32,22 @@ type UsageQuery struct {
 // UsageRecord is a retained usage event, not an inferred upstream attempt.
 type UsageRecord struct {
 	RequestDetail
-	ID      string `json:"id"`
-	Model   string `json:"model"`
-	API     string `json:"api"`
-	Account string `json:"account"`
+	ID         string `json:"id"`
+	Model      string `json:"model"`
+	API        string `json:"api"`
+	Account    string `json:"account"`
+	ModelMatch string `json:"model_match"`
 }
 
 // UnmarshalJSON must decode the outer fields explicitly because the embedded
 // RequestDetail has a legacy-default decoder of its own.
 func (r *UsageRecord) UnmarshalJSON(data []byte) error {
 	var fields struct {
-		ID      string `json:"id"`
-		Model   string `json:"model"`
-		API     string `json:"api"`
-		Account string `json:"account"`
+		ID         string `json:"id"`
+		Model      string `json:"model"`
+		API        string `json:"api"`
+		Account    string `json:"account"`
+		ModelMatch string `json:"model_match"`
 	}
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
@@ -54,7 +56,7 @@ func (r *UsageRecord) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &detail); err != nil {
 		return err
 	}
-	*r = UsageRecord{RequestDetail: detail, ID: fields.ID, Model: fields.Model, API: fields.API, Account: fields.Account}
+	*r = UsageRecord{RequestDetail: detail, ID: fields.ID, Model: fields.Model, API: fields.API, Account: fields.Account, ModelMatch: fields.ModelMatch}
 	return nil
 }
 
@@ -192,7 +194,7 @@ func (q UsageQuery) matches(event storedEvent) bool {
 	if q.Search == "" {
 		return true
 	}
-	for _, value := range []string{d.RequestID, event.Model, d.Alias, d.Provider, d.AuthID, d.AuthIndex, d.Source, d.Endpoint, event.API, d.ClientKeyID, d.PoolID} {
+	for _, value := range []string{d.RequestID, event.Model, d.Alias, d.RequestedModel, d.UpstreamModel, d.UpstreamResponseModel, d.Provider, d.AuthID, d.AuthIndex, d.Source, d.Endpoint, event.API, d.ClientKeyID, d.PoolID} {
 		if strings.Contains(strings.ToLower(value), q.Search) {
 			return true
 		}
@@ -251,7 +253,7 @@ func usageRecord(event storedEvent) UsageRecord {
 		cost := *detail.CostUSD
 		detail.CostUSD = &cost
 	}
-	return UsageRecord{RequestDetail: detail, ID: usageRecordID(event), Model: event.Model, API: event.API, Account: usageAccountKey(detail)}
+	return UsageRecord{RequestDetail: detail, ID: usageRecordID(event), Model: event.Model, API: event.API, Account: usageAccountKey(detail), ModelMatch: modelMatch(detail)}
 }
 
 // QueryRecords filters on the server and copies only the requested page. The
