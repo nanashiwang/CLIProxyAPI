@@ -564,34 +564,13 @@ func ExtractReasoningEffort(body []byte, provider, model string) string {
 		return effort
 	}
 
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	config := extractThinkingConfig(body, provider)
-	if !hasThinkingConfig(config) {
-		switch provider {
-		case "openai-response":
-			config = extractCodexConfig(body)
-		case "openai":
-			config = extractCodexConfig(body)
-		}
-	}
-	return reasoningEffortFromConfig(config)
+	return ExtractTranslatedReasoningEffort(body, provider)
 }
 
 // ExtractTranslatedReasoningEffort returns the final provider payload's thinking
 // setting as a canonical reasoning_effort label for usage logging.
 func ExtractTranslatedReasoningEffort(body []byte, provider string) string {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	config := extractThinkingConfig(body, provider)
-	if !hasThinkingConfig(config) {
-		switch provider {
-		case "openai", "openai-response":
-			config = extractCodexConfig(body)
-			if !hasThinkingConfig(config) {
-				config = extractOpenAIConfig(body)
-			}
-		}
-	}
-	return reasoningEffortFromConfig(config)
+	return usageReasoningEffort(body, provider)
 }
 
 func reasoningEffortFromSuffix(suffix SuffixResult) string {

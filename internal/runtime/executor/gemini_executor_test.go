@@ -7,11 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	_ "github.com/router-for-me/CLIProxyAPI/v7/internal/translator"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	"github.com/tidwall/gjson"
 )
@@ -628,6 +632,9 @@ func TestGeminiExecutorNativeInteractionsTranslatesClaudeRequest(t *testing.T) {
 }
 
 func TestGeminiExecutorNativeInteractionsAppliesThinkingSuffix(t *testing.T) {
+	authID := uuid.NewString()
+	recorder := &captureKimiModelObservationUsage{authID: authID, records: make(chan usage.Record, 1)}
+	usage.RegisterPlugin(recorder)
 	var upstreamBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, errRead := io.ReadAll(r.Body)
@@ -642,6 +649,7 @@ func TestGeminiExecutorNativeInteractionsAppliesThinkingSuffix(t *testing.T) {
 
 	exec := NewGeminiInteractionsExecutor(&config.Config{})
 	auth := &cliproxyauth.Auth{
+		ID:       authID,
 		Provider: "gemini-interactions",
 		Attributes: map[string]string{
 			"api_key":  "test-key",
@@ -673,6 +681,14 @@ func TestGeminiExecutorNativeInteractionsAppliesThinkingSuffix(t *testing.T) {
 	}
 	if gjson.GetBytes(upstreamBody, "generation_config.thinking_summaries").Exists() {
 		t.Fatalf("thinking_summaries should be absent without explicit summary intent. Body: %s", string(upstreamBody))
+	}
+	select {
+	case record := <-recorder.records:
+		if record.ReasoningEffort != "high" {
+			t.Fatalf("recorded effort = %q, want high", record.ReasoningEffort)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for usage record")
 	}
 }
 
@@ -823,6 +839,9 @@ func TestGeminiExecutorNativeInteractionsRequestApiRevisionDoesNotOverrideAuthHe
 }
 
 func TestGeminiExecutorNativeInteractionsStreamParsesUsage(t *testing.T) {
+	authID := uuid.NewString()
+	recorder := &captureKimiModelObservationUsage{authID: authID, records: make(chan usage.Record, 1)}
+	usage.RegisterPlugin(recorder)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("event: interaction.created\ndata: {\"event_type\":\"interaction.created\",\"interaction\":{\"id\":\"i1\"}}\n\n"))
@@ -832,6 +851,7 @@ func TestGeminiExecutorNativeInteractionsStreamParsesUsage(t *testing.T) {
 
 	exec := NewGeminiInteractionsExecutor(&config.Config{})
 	auth := &cliproxyauth.Auth{
+		ID:       authID,
 		Provider: "gemini-interactions",
 		Attributes: map[string]string{
 			"api_key":  "test-key",
@@ -878,6 +898,14 @@ func TestGeminiExecutorNativeInteractionsStreamParsesUsage(t *testing.T) {
 	}
 	if got := gjson.GetBytes(completed, "interaction.usage.total_tokens").Int(); got != 5 {
 		t.Fatalf("total_tokens = %d, want 5", got)
+	}
+	select {
+	case record := <-recorder.records:
+		if record.ReasoningEffort != "default" {
+			t.Fatalf("recorded effort = %q, want default", record.ReasoningEffort)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for usage record")
 	}
 }
 
