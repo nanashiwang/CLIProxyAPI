@@ -184,3 +184,20 @@ func TestNormalizeCacheWriteTokensPrefersCanonicalField(t *testing.T) {
 		t.Fatalf("detail = %+v", detail)
 	}
 }
+
+func TestSubsetAccountingRejectsOverflowAndNegativeCache(t *testing.T) {
+	for _, cache := range [][2]int64{{9223372036854775807, 9223372036854775807}, {-1, 10}, {10, -1}, {60, 50}} {
+		b := NewSubsetTokenBreakdown(100, cache[0], cache[1], 20, 0, 120)
+		if !b.Valid() || b.Quality != TokenAccountingQualityInconsistent || b.UnclassifiedTokens != 120 {
+			t.Fatalf("cache %v: want preserved unclassified total, got %+v", cache, b)
+		}
+	}
+	// Three positive buckets can wrap to a positive total; validity must reject it.
+	b := NewSubsetTokenBreakdown(100, 0, 0, 20, 0, 120)
+	b.Input.UncachedTokens = 102
+	b.Input.CacheReadTokens = 9223372036854775807
+	b.Input.CacheWriteTokens = 9223372036854775807
+	if b.Valid() {
+		t.Fatal("accepted overflowing input buckets")
+	}
+}

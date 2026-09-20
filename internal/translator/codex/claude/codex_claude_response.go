@@ -811,15 +811,20 @@ func extractResponsesUsage(usage gjson.Result) (int64, int64, int64, int64) {
 	outputTokens := usage.Get("output_tokens").Int()
 	cachedTokens := usage.Get("input_tokens_details.cached_tokens").Int()
 	cacheWriteTokens := usage.Get("input_tokens_details.cache_write_tokens").Int()
-	if cacheWriteTokens == 0 {
+	if cacheWriteTokens <= 0 {
 		cacheWriteTokens = usage.Get("input_tokens_details.cache_creation_tokens").Int()
 	}
 
-	if cachedTokens > 0 {
-		if inputTokens >= cachedTokens {
-			inputTokens -= cachedTokens
-		} else {
-			inputTokens = 0
+	if inputTokens < 0 {
+		inputTokens = 0
+	}
+	for _, tokens := range []int64{cachedTokens, cacheWriteTokens} {
+		if tokens > 0 {
+			if tokens >= inputTokens {
+				inputTokens = 0
+			} else {
+				inputTokens -= tokens
+			}
 		}
 	}
 

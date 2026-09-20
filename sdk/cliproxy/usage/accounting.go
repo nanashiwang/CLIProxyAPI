@@ -60,13 +60,16 @@ func (b TokenBreakdown) Valid() bool {
 		b.Output.ReasoningTokens < 0 {
 		return false
 	}
-	if b.Input.TotalTokens != b.Input.UncachedTokens+b.Input.CacheReadTokens+b.Input.CacheWriteTokens {
+	input, okInput := nonNegativeSum(b.Input.UncachedTokens, b.Input.CacheReadTokens, b.Input.CacheWriteTokens)
+	if !okInput || b.Input.TotalTokens != input {
 		return false
 	}
-	if b.Output.TotalTokens != b.Output.NonReasoningTokens+b.Output.ReasoningTokens {
+	output, okOutput := nonNegativeSum(b.Output.NonReasoningTokens, b.Output.ReasoningTokens)
+	if !okOutput || b.Output.TotalTokens != output {
 		return false
 	}
-	if b.TotalTokens != b.Input.TotalTokens+b.Output.TotalTokens+b.UnclassifiedTokens {
+	total, okTotal := nonNegativeSum(b.Input.TotalTokens, b.Output.TotalTokens, b.UnclassifiedTokens)
+	if !okTotal || b.TotalTokens != total {
 		return false
 	}
 	if b.Quality == TokenAccountingQualityComplete && b.UnclassifiedTokens != 0 {
@@ -88,8 +91,9 @@ func validTokenAccountingQuality(quality TokenAccountingQuality) bool {
 // in input totals and reasoning tokens are included in output totals.
 func NewSubsetTokenBreakdown(inputTotal, cacheRead, cacheWrite, outputTotal, reasoning, total int64) TokenBreakdown {
 	expectedTotal, okExpected := nonNegativeSum(inputTotal, outputTotal)
-	if !okExpected || cacheRead < 0 || cacheWrite < 0 || reasoning < 0 ||
-		cacheRead+cacheWrite > inputTotal || reasoning > outputTotal {
+	cacheTotal, okCache := nonNegativeSum(cacheRead, cacheWrite)
+	if !okExpected || !okCache || reasoning < 0 ||
+		cacheTotal > inputTotal || reasoning > outputTotal {
 		return inconsistentTokenBreakdown(total, expectedTotal)
 	}
 	resolvedTotal, okTotal := resolveAccountingTotal(total, expectedTotal)

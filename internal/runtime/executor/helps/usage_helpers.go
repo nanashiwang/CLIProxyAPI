@@ -744,6 +744,15 @@ func parseOpenAIStyleUsageNode(usageNode gjson.Result) usage.Detail {
 		"input_tokens_details.cache_creation_tokens",
 		"prompt_tokens_details.cache_creation_tokens",
 	)
+	if cacheWrite.Int() <= 0 {
+		alias := firstExistingUsageNode(usageNode,
+			"input_tokens_details.cache_creation_tokens",
+			"prompt_tokens_details.cache_creation_tokens",
+		)
+		if alias.Int() > 0 {
+			cacheWrite = alias
+		}
+	}
 	if cacheWrite.Exists() {
 		detail.CacheWriteTokens = cacheWrite.Int()
 		detail.CacheCreationTokens = detail.CacheWriteTokens
