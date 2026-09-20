@@ -324,6 +324,7 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth) gin.H {
 	if name == "" {
 		name = auth.ID
 	}
+	unavailable, status, statusMessage, nextRetryAfter := auth.AvailabilityView(time.Now().UTC())
 	entry := gin.H{
 		"id":             auth.ID,
 		"auth_index":     auth.Index,
@@ -331,10 +332,10 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth) gin.H {
 		"type":           strings.TrimSpace(auth.Provider),
 		"provider":       strings.TrimSpace(auth.Provider),
 		"label":          auth.Label,
-		"status":         auth.Status,
-		"status_message": auth.StatusMessage,
+		"status":         status,
+		"status_message": statusMessage,
 		"disabled":       auth.Disabled,
-		"unavailable":    auth.Unavailable,
+		"unavailable":    unavailable,
 		"runtime_only":   runtimeOnly,
 		"source":         "memory",
 		"size":           int64(0),
@@ -372,8 +373,8 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth) gin.H {
 	if auth.CodexQuota != nil {
 		entry["codex_quota"] = auth.CodexQuota
 	}
-	if !auth.NextRetryAfter.IsZero() {
-		entry["next_retry_after"] = auth.NextRetryAfter
+	if !nextRetryAfter.IsZero() {
+		entry["next_retry_after"] = nextRetryAfter
 	}
 	if path != "" {
 		entry["path"] = path

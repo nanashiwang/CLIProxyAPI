@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -96,7 +97,8 @@ func (h *Handler) GetAccountPools(c *gin.Context) {
 			if name == "" {
 				name = a.ID
 			}
-			credentials = append(credentials, gin.H{"id": a.ID, "name": name, "provider": a.Provider, "disabled": a.Disabled, "unavailable": a.Unavailable, "group-id": group})
+			unavailable, _, _, _ := a.AvailabilityView(time.Now().UTC())
+			credentials = append(credentials, gin.H{"id": a.ID, "name": name, "provider": a.Provider, "disabled": a.Disabled, "unavailable": unavailable, "group-id": group})
 		}
 	}
 	present := make(map[string]bool)
