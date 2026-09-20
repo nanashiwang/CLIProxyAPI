@@ -503,3 +503,26 @@ func TestTemporaryQuotaFailoverDoesNotLeaveHourLease(t *testing.T) {
 		t.Fatal("temporary failover retained lease", rows)
 	}
 }
+
+func TestTemporaryLeaseRejectsDuplexBeforeAllocation(t *testing.T) {
+	m, _, e := leaseManager(t)
+	ctx := coreexecutor.WithWebsocketInput(leaseCaller("key-all", "1"), make(chan coreexecutor.WebsocketInput))
+	_, err := m.ExecuteStream(ctx, []string{"pool-test"}, coreexecutor.Request{Model: "pool-model", Payload: []byte(`{"input":[]}`)}, coreexecutor.Options{})
+	var poolErr *Error
+	if !errors.As(err, &poolErr) || poolErr.Code != "pool_temporary_session_unsupported" {
+		t.Fatalf("temporary duplex was not rejected: %v", err)
+	}
+	leases, err := m.AccountPoolLeases()
+	if err != nil || len(leases) != 0 || len(e.ids) != 0 {
+		t.Fatalf("rejected duplex allocated or executed: leases=%v calls=%v err=%v", leases, e.ids, err)
+	}
+}
+
+func TestLeaseRequestScopedFailureCannotReplaceAccount(t *testing.T) {
+	for _, status := range []int{401, 403, 429} {
+		err := &requestScopedStatusError{status: status, message: "account_deactivated usage_limit_reached"}
+		if poolLeaseTerminalFailure(err) {
+			t.Fatalf("request-scoped %d failure can replace an exclusive account", status)
+		}
+	}
+}

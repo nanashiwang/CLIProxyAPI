@@ -194,7 +194,10 @@ type AntigravityConfig struct {
 
 // CodexConfig configures provider-wide Codex request behavior.
 type CodexConfig struct {
-	IdentityConfuse bool `yaml:"identity-confuse" json:"identity-confuse"`
+	// ResponseSteering enables full-duplex Codex WebSockets on one account/model/socket.
+	// It is experimental and disabled by default.
+	ResponseSteering bool `yaml:"response-steering" json:"response-steering"`
+	IdentityConfuse  bool `yaml:"identity-confuse" json:"identity-confuse"`
 	// DisableCodexCloaking disables forcing the official Codex identity headers on HTTP/SSE and WebSocket requests.
 	DisableCodexCloaking bool `yaml:"disable-codex-cloaking" json:"disable-codex-cloaking"`
 	// StreamBootstrapBuffering holds back initial handshake events (response.created,

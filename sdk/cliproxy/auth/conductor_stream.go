@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
@@ -188,7 +189,10 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 				return
 			}
 		}
-		if !failed && (ephemeralResult || claudeOAuthRequestCancellation(ctx, auth, nil) == nil) {
+		// A cancelled duplex socket says nothing about account recovery. In particular,
+		// it must not clear a cooldown established by a concurrent request.
+		duplexCancelled := cliproxyexecutor.WebsocketInputFromContext(ctx) != nil && ctx.Err() != nil
+		if !failed && !duplexCancelled && (ephemeralResult || claudeOAuthRequestCancellation(ctx, auth, nil) == nil) {
 			m.recordExecutionResult(ctx, Result{AuthID: auth.ID, Provider: provider, Model: resultModel, RouteModel: routeModel, Success: true, Options: opts}, auth, ephemeralResult)
 		}
 	}()
@@ -208,6 +212,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		return nil, &Error{Code: "executor_not_found", Message: "executor not registered"}
 	}
 	ctx = contextWithRequestedModelAlias(ctx, opts, routeModel)
+	admittedCtx := ctx
 	var lastErr error
 	didRefreshOnUnauthorized := false
 	if auth != nil && unauthorizedRefreshTried != nil {
@@ -215,6 +220,18 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 	}
 	for idx, execModel := range execModels {
 		resultModel := m.stateModelForExecution(auth, routeModel, execModel, pooled)
+		if cliproxyexecutor.WebsocketInputFromContext(ctx) != nil {
+			ctx = cliproxyexecutor.WithWebsocketAuthCheck(ctx, func(authID string) bool {
+				if !cliproxyexecutor.WebsocketAuthEnabled(admittedCtx, authID) || m.CheckAccountPoolAccess(admittedCtx, authID) != nil {
+					return false
+				}
+				if current, ok := m.GetByID(authID); ok {
+					available, err := getAvailableAuths([]*Auth{current}, provider, resultModel, time.Now())
+					return err == nil && len(available) == 1
+				}
+				return ephemeralResult
+			})
+		}
 		execReq := req
 		execReq.Model = execModel
 		if executionModel != "" {

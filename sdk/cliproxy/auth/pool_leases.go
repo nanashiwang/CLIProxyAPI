@@ -162,6 +162,9 @@ func (m *Manager) beginPoolLease(ctx context.Context, providers []string, req co
 		return ctx, noop, leaseError("pool_unavailable", "no lease pools configured", 503)
 	}
 	temporary := sdkaccess.GetGatewayIdentity(ctx).User == "1"
+	if temporary && coreexecutor.WebsocketInputFromContext(ctx) != nil {
+		return ctx, noop, leaseError("pool_temporary_session_unsupported", "temporary account access does not support duplex websocket sessions", http.StatusConflict)
+	}
 	if temporary && (gjson.GetBytes(req.Payload, "previous_response_id").String() != "" || gjson.GetBytes(opts.OriginalRequest, "previous_response_id").String() != "") {
 		return ctx, noop, leaseError("pool_temporary_session_unsupported", "temporary account access requires full conversation history; previous_response_id is not supported", http.StatusConflict)
 	}
@@ -301,7 +304,7 @@ func (m *Manager) poolLeaseCandidates(ctx context.Context, scope *config.Account
 // Only explicit account quota/authentication failures permit replacement.
 // Generic 429s, transport errors, overload and request policy errors do not.
 func poolLeaseTerminalFailure(err error) bool {
-	if err == nil {
+	if err == nil || isRequestScopedError(err) {
 		return false
 	}
 	var e *Error
