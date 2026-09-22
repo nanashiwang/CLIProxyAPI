@@ -426,6 +426,12 @@ func TestCodexQuotaSingleExclusiveLeaseRecoversWithoutRebindingOrReleasingStream
 	retry := 7 * 24 * time.Hour
 	m.MarkResult(context.Background(), Result{AuthID: before.Credential, Provider: "codex", Model: "pool-model", CredentialScope: true, RetryAfter: &retry, Error: &Error{HTTPStatus: 429, Message: "usage_limit_reached"}})
 	a, _ := m.GetByID(before.Credential)
+	if a.NextRetryAfter.After(time.Now().Add(time.Hour)) || a.CodexQuota == nil || !a.CodexQuota.Exhausted || a.CodexQuota.DeniedResetAt.Before(time.Now().Add(6*24*time.Hour)) {
+		t.Fatal("quota ceiling changed observed reset or failed to bound retry", a)
+	}
+	if unavailable, status, _, _ := a.AvailabilityView(time.Now().Add(2 * time.Hour)); !unavailable || status != StatusError {
+		t.Fatal("quota ceiling hid exhaustion from management")
+	}
 	if blocked, _, _ := isAuthBlockedForModel(a, "pool-model", time.Now().Add(8*24*time.Hour)); !blocked {
 		t.Fatal("old reset silently unblocked exhausted account")
 	}

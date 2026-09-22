@@ -673,3 +673,41 @@ func TestCooldownViewsConcurrentReadsAndResults(t *testing.T) {
 		t.Fatal("concurrent reads erased terminal failure", file)
 	}
 }
+
+func TestQuotaCeilingManagementEndpointsRetainCooldown(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	cfg := &config.Config{AuthDir: t.TempDir()}
+	manager.SetConfig(cfg)
+	registerAuthForLookupTest(t, manager, &coreauth.Auth{ID: "ceiling", FileName: "ceiling.json", Provider: "claude", Status: coreauth.StatusActive, Attributes: map[string]string{"runtime_only": "true"}})
+	retry := 18 * 24 * time.Hour
+	start := time.Now()
+	manager.MarkResult(context.Background(), coreauth.Result{AuthID: "ceiling", Model: "model-a", CredentialScope: true, RetryAfter: &retry, Error: &coreauth.Error{HTTPStatus: 429, Message: "quota exhausted"}})
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			manager.MarkResult(context.Background(), coreauth.Result{AuthID: "ceiling", Model: "model-b", Success: true})
+		}()
+	}
+	wg.Wait()
+	h := NewHandlerWithoutConfigFilePath(cfg, manager)
+	before, _ := manager.GetByID("ceiling")
+	file := requestAuthFilesCooldowns(t, h, "").Files[0]
+	var credentials []struct {
+		Unavailable bool `json:"unavailable"`
+	}
+	if err := json.Unmarshal(getPoolView(t, h)["credentials"], &credentials); err != nil {
+		t.Fatal(err)
+	}
+	if !file.Unavailable || file.Status != string(coreauth.StatusError) || file.NextRetryAfter.Before(start.Add(time.Hour)) || file.NextRetryAfter.After(time.Now().Add(time.Hour)) {
+		t.Fatal("auth file lost bounded cooldown", file)
+	}
+	if len(credentials) != 1 || !credentials[0].Unavailable {
+		t.Fatal("pool and auth file availability differs", credentials, file)
+	}
+	after, _ := manager.GetByID("ceiling")
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("management read changed quota state")
+	}
+}
