@@ -16,6 +16,15 @@ import (
 )
 
 func TestClaudeFableFromOpenAIUsesCompatibleDefaultFingerprint(t *testing.T) {
+	testClaudeFromOpenAIUsesCompatibleDefaultFingerprint(t, "claude-fable-5-1")
+}
+
+func TestClaudeOpus55FromOpenAIUsesCompatibleDefaultFingerprint(t *testing.T) {
+	testClaudeFromOpenAIUsesCompatibleDefaultFingerprint(t, "claude-opus-5-5")
+}
+
+func testClaudeFromOpenAIUsesCompatibleDefaultFingerprint(t *testing.T, model string) {
+	t.Helper()
 	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "nonstream", true: "stream"}[stream], func(t *testing.T) {
 			var headers http.Header
@@ -23,22 +32,22 @@ func TestClaudeFableFromOpenAIUsesCompatibleDefaultFingerprint(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				headers = r.Header.Clone()
 				body, _ = io.ReadAll(r.Body)
-				if headers.Get("User-Agent") != "claude-cli/2.1.258 (external, cli)" {
+				if headers.Get("User-Agent") != "claude-cli/2.1.280 (external, cli)" {
 					http.Error(w, "Claude Code version too old", 400)
 					return
 				}
 				if gjson.GetBytes(body, "stream").Bool() {
 					w.Header().Set("Content-Type", "text/event-stream")
-					io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fable\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-fable-5-1\",\"content\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+					io.WriteString(w, strings.ReplaceAll("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fable\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-fable-5-1\",\"content\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n", "claude-fable-5-1", model))
 				} else {
 					w.Header().Set("Content-Type", "application/json")
-					io.WriteString(w, `{"id":"msg_fable","type":"message","role":"assistant","model":"claude-fable-5-1","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+					io.WriteString(w, strings.ReplaceAll(`{"id":"msg_fable","type":"message","role":"assistant","model":"claude-fable-5-1","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`, "claude-fable-5-1", model))
 				}
 			}))
 			defer server.Close()
 			e := NewClaudeExecutor(&config.Config{})
 			auth := &cliproxyauth.Auth{ID: "fable-test", Provider: "claude", Metadata: claudeOAuthTestMetadata(), Attributes: map[string]string{"api_key": "sk-ant-oat-fable-test", "base_url": server.URL}}
-			req := cliproxyexecutor.Request{Model: "claude-fable-5-1", Payload: []byte(`{"model":"claude-fable-5-1","messages":[{"role":"user","content":"hello"}],"max_tokens":16}`)}
+			req := cliproxyexecutor.Request{Model: model, Payload: []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"hello"}],"max_tokens":16}`)}
 			opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, Stream: stream}
 			if stream {
 				result, err := e.ExecuteStream(context.Background(), auth, req, opts)
@@ -58,10 +67,13 @@ func TestClaudeFableFromOpenAIUsesCompatibleDefaultFingerprint(t *testing.T) {
 			if headers.Get("X-Stainless-Package-Version") != "0.112.1" {
 				t.Fatal("SDK baseline not upgraded")
 			}
-			if gjson.GetBytes(body, "model").String() != "claude-fable-5-1" {
-				t.Fatal("Fable model changed")
+			if headers.Get("X-Stainless-Runtime-Version") != "v26.3.0" {
+				t.Fatal("runtime baseline does not match Claude Code 2.1.280")
 			}
-			if !strings.Contains(string(body), "cc_version=2.1.258.") {
+			if got := gjson.GetBytes(body, "model").String(); got != model {
+				t.Fatalf("upstream model = %q, want %q", got, model)
+			}
+			if !strings.Contains(string(body), "cc_version=2.1.280.") {
 				t.Fatal("billing fingerprint version does not match User-Agent")
 			}
 		})

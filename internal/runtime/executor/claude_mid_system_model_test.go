@@ -281,7 +281,9 @@ func TestClaudeExecutor_PayloadOverrideReconcilesRelocatedSystemPrompt(t *testin
 // itself, so CPA forwards the body untouched and lets the upstream answer.
 func TestClaudeExecutor_ConfirmedNativeLegacyMidSystemMessageForwarded(t *testing.T) {
 	upstream := &midSystemUpstream{}
-	ex := NewClaudeExecutor(midSystemConfig())
+	cfg := midSystemConfig()
+	cfg.ClaudeHeaderDefaults.UserAgent = "claude-cli/2.1.258 (external, cli)"
+	ex := NewClaudeExecutor(cfg)
 	headers := claudeNativeHelperHeaders("claude-code-20250219,"+claudeNativeHelperCoreBetas, "gzip", false)
 
 	if _, err := ex.Execute(upstream.context(t, headers), midSystemAuth(), cliproxyexecutor.Request{
