@@ -56,3 +56,16 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - Use logrus structured logging; avoid leaking secrets/tokens in logs
 - Avoid panics in HTTP handlers; prefer logged errors and meaningful HTTP status codes
 - Timeouts are allowed only during credential acquisition; after an upstream connection is established, do not set timeouts for any subsequent network behavior. Intentional exceptions that must remain allowed are the Codex websocket liveness deadlines in `internal/runtime/executor/codex_websockets_executor.go`, the wsrelay session deadlines in `internal/wsrelay/session.go`, the management APICall timeout in `internal/api/handlers/management/api_tools.go`, and the `cmd/fetch_antigravity_models` utility timeouts
+
+
+## Capability review and decision notes
+
+- Start from the business outcome, not the first page or implementation mentioned. Use [the capability map](docs/FEATURE_MAP.md), then verify current UI/entry points, routes, permissions, services and data sources for the affected scope.
+- Before implementation, briefly describe existing capabilities, real alternatives, reuse/extension/migration choices and affected entry points. Explain why an independent new implementation is needed. Do not expand small fixes into unrelated rewrites.
+- For non-trivial behavior, architecture, contract or tooling decisions, use the [project-local Skill](.agents/skills/write-notes-like-deepseek/SKILL.md) and [workflow guide](docs/AGENT_NOTES.md). Search active notes first: `rg --hidden --glob '!**/archived/**' '<topic>' .agents/notes`. Update an existing owner note when its rationale still holds.
+- New decisions start in proposed; move and rewrite them as implemented only after implementation and relevant verification, in the same commit as the change. Record genuine alternatives and costs; do not invent historical rationale or create notes for purely mechanical edits.
+- User instructions and existing project rules take precedence over imported Skill defaults. Continue within existing authorization without repeated approval gates; ask only for material unresolved decisions or actions outside that scope. This workflow does not grant deployment, release or cross-project write permission.
+- Validate complete affected user flows and adjacent entry points, including shared definitions, filtering, permissions and failure behavior where relevant. Structural note checks do not prove design quality or guarantee all important decisions were recorded.
+- Update affected capability-map entries and notes alongside code. Run `bash .agents/verify-notes.sh` plus the existing checks required for the change. Existing architecture, language, build, release and subdirectory rules remain in force.
+
+Project-specific context: Use personal/main, not upstream origin, for project pushes. The parent CPA scope includes only this backend and Cli-Proxy-API-Management-Center. Retain English authored docs/comments and required Go compile checks.
