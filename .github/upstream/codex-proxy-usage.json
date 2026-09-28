@@ -122,7 +122,7 @@
         "React verify: 525 tests, lint, TypeScript and production build passed",
         "Browser synthetic fixture: all-time pagination, request search/detail, empty state, failed/warmup filters, management tools and redacted diagnostic download passed"
       ],
-      "notes": "No new upstream-attempt capture is included. Uncollected attempts and trace phases must be shown as unavailable, never fabricated from selection_seq."
+      "notes": "CPA follow-up adds bounded actual executor-call attempts and events (32/96), persisted at usage publication. Detail lookup returns the latest retained trace snapshot; internal sends are events and duplex is session-scoped. Historical missing facts remain unknown; no raw bodies/errors. This local extension does not advance the adapted upstream baseline."
     },
     {
       "id": "usage-react-interface",
@@ -171,7 +171,7 @@
         "React verify: 525 tests, lint, TypeScript and production build passed",
         "Browser synthetic fixture: all-time pagination, request search/detail, empty state, failed/warmup filters, management tools and redacted diagnostic download passed"
       ],
-      "notes": "Export an explicit safe field set; omit credentials, request/response bodies and raw identity headers."
+      "notes": "Export an explicit safe field set; omit credentials, request/response bodies and raw identity headers. New locally collected attempts/events are exported through strict enum/metric allowlists; identifiers, model/provider names and arbitrary error text are excluded. Historical absence remains unavailable."
     },
     {
       "id": "usage-model-observation",
@@ -241,7 +241,7 @@
         "390px browser QA found and fixed sticky actions obscuring expanded User-Agent; narrow layouts now keep the full value readable",
         "Weekly monitor fifteen regressions passed, including independently advancing candidate and adapted feature baselines"
       ],
-      "notes": "Expose all fourteen requested columns while retaining CPA status, TTFT and model comparison. Client/upstream transports describe distinct connection legs, never inferred from API keys or provider names. Persist only bounded client IP and User-Agent metadata; historical missing values remain unknown and redacted diagnostics omit client identifiers."
+      "notes": "Expose all fourteen requested columns while retaining CPA status, TTFT and model comparison. Client/upstream transports describe distinct connection legs, never inferred from API keys or provider names. Persist only bounded client IP and User-Agent metadata; historical missing values remain unknown and redacted diagnostics omit client identifiers. Browser-local hide/order/pin preferences now preserve all fourteen defaults and always-visible actions; pinning pauses on narrow screens. No source baseline advancement."
     },
     {
       "id": "codex-oversized-transport",
@@ -304,7 +304,7 @@
         "Execution producer cancellation, idle duplex and unchanged availability contracts",
         "React 561 tests, types and production build; desktop, 390px dark, refresh, keyboard, legacy data and failure browser QA"
       ],
-      "notes": "Local observed execution only; no queue/lease inference or new scheduler cap. Home shared limit remains unknown. Layout also references 2a65b53b44b3e15551746ed0424e96aef5f35b34; do not claim every change through that commit is adapted."
+      "notes": "Local observed execution only; no queue/lease inference or new scheduler cap. Home shared limit remains unknown. Layout also references 2a65b53b44b3e15551746ed0424e96aef5f35b34; do not claim every change through that commit is adapted. Follow-up uses a read-only visible-account batch endpoint (maximum 200 IDs) every five seconds; hidden pages pause, failures mark stale, unsupported backends stop. Original source baseline unchanged."
     }
   ],
   "review_notes": [

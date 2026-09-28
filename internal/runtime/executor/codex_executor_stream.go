@@ -13,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -143,6 +144,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	var outputItemsFallback [][]byte
 
 	var bufferedChunks [][]byte
+	var bufferBudget helps.CodexBootstrapBudget
 	var initialChunks [][]byte
 	streamStarted := false
 	immediateTerminal := false
@@ -172,6 +174,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				translatedLine = append([]byte("data: "), data...)
 				eventType := gjson.GetBytes(data, "type").String()
 				if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(data, e.modelLevelCooling()); ok {
+					usage.ObserveDiagnosticEvent(ctx, "buffer_upstream_error")
 					closeBootstrapBody()
 					if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, streamErr.StatusCode(), terminalBody); errClearReplay != nil {
 						helps.RecordAPIResponseError(ctx, e.cfg, errClearReplay)
@@ -195,6 +198,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 					sawOutputDelta = true
 				}
 				if helps.IsCodexTerminalEmptyIncomplete(data, len(outputItemsByIndex)+len(outputItemsFallback), sawOutputDelta) {
+					usage.ObserveDiagnosticEvent(ctx, "buffer_upstream_error")
 					closeBootstrapBody()
 					streamErr := newCodexEmptyIncompleteStreamError()
 					helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
@@ -209,6 +213,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 					collectCodexOutputItemDone(data, outputItemsByIndex, &outputItemsFallback)
 				case "response.completed", "response.incomplete":
 					terminalSuccess = true
+					usage.ObserveDiagnosticEvent(ctx, "buffer_terminal")
 					if detail, ok := helps.ParseCodexUsage(data); ok {
 						reporter.Publish(ctx, detail)
 					}
@@ -228,13 +233,18 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 			translatedLine = applyCodexIdentityExposeResponsePayload(translatedLine, identityState)
 			chunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, originalPayload, body, translatedLine, &param, claudeInputTokens)
 			if isHandshake && !terminalSuccess {
-				if len(bufferedChunks) < codexBootstrapMaxBufferedEvents {
+				if accepted, reason := bufferBudget.Accept(chunks); accepted {
 					bufferedChunks = append(bufferedChunks, chunks...)
 					continue
+				} else {
+					usage.ObserveDiagnosticEvent(ctx, reason)
 				}
-				helps.LogWithRequestID(ctx).Debugf("codex executor: bootstrap buffer limit %d reached, releasing stream without overload probing", codexBootstrapMaxBufferedEvents)
+				helps.LogWithRequestID(ctx).Debugf("codex executor: bootstrap event/byte budget reached, releasing stream without overload probing")
 			}
 
+			if !terminalSuccess && !isHandshake {
+				usage.ObserveDiagnosticEvent(ctx, "buffer_output")
+			}
 			initialChunks = chunks
 			streamStarted = true
 			if terminalSuccess {

@@ -14,6 +14,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -155,6 +156,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 			}
 			model := strings.TrimSpace(gjson.GetBytes(payload, "model").String())
 			if model != "" && model != req.Model && model != gjson.GetBytes(initial.originalPayload, "model").String() {
+				usage.ObserveDiagnosticEvent(ctx, "replay_required")
 				fail(cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError())
 				return false
 			}
@@ -199,11 +201,13 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				return false
 			}
 			if prepared.wsURL != initial.wsURL {
+				usage.ObserveDiagnosticEvent(ctx, "replay_required")
 				fail(cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError())
 				return false
 			}
 			payload = buildCodexWebsocketRequestBody(prepared.upstreamBody)
 			if auth.AuthKind() == cliproxyauth.AuthKindOAuth && len(payload) >= helps.CodexWebsocketHTTPThreshold {
+				usage.ObserveDiagnosticEvent(ctx, "replay_required")
 				fail(cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError())
 				return false
 			}
@@ -292,6 +296,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 					}
 					metadataMu.Unlock()
 					if !valid {
+						usage.ObserveDiagnosticEvent(ctx, "interrupt_rejected")
 						if !reject("response.interrupt requires the active response_id and mode discard_partial_items; only one interrupt may be pending") {
 							return
 						}
@@ -303,6 +308,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 						fail(mapCodexWebsocketWriteError(sess, conn, errWrite))
 						return
 					}
+					usage.ObserveDiagnosticEvent(ctx, "interrupt_sent")
 					continue
 
 				case "response.steer":
@@ -418,6 +424,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 			eventType := gjson.GetBytes(payload, "type").String()
 			establishing := firstResponse && eventType == "response.created"
 			if eventType == "response.created" {
+				usage.ObserveDiagnosticEvent(ctx, "response_started")
 				metadataMu.Lock()
 				parent := gjson.GetBytes(payload, "response.previous_response_id").String()
 				if parent == "" {
@@ -622,6 +629,9 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				metadataMu.Lock()
 				confirmedInterrupt := interruptPending && interruptibleResponseID != "" && gjson.GetBytes(payload, "response.id").String() == interruptibleResponseID
 				metadataMu.Unlock()
+				if interrupted && confirmedInterrupt {
+					usage.ObserveDiagnosticEvent(ctx, "interrupt_confirmed")
+				}
 				if interrupted && !confirmedInterrupt {
 					connectionErr := &codexDuplexConnectionError{cause: fmt.Errorf("upstream interruption does not match a pending response.interrupt")}
 					reporter.PublishFailure(ctx, connectionErr)

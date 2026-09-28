@@ -245,6 +245,7 @@ func usageQueryBounds(events []storedEvent, query UsageQuery) (int, int) {
 
 func usageRecord(event storedEvent) UsageRecord {
 	detail := event.Detail
+	detail.Diagnostics = coreusage.NormalizeDiagnostics(detail.Diagnostics)
 	if detail.TokenBreakdown != nil {
 		breakdown := *detail.TokenBreakdown
 		detail.TokenBreakdown = &breakdown
@@ -381,7 +382,13 @@ func (s *RequestStatistics) RecordByID(id string) (UsageRecord, bool) {
 	start := sort.Search(len(s.events), func(i int) bool { return s.events[i].Detail.Timestamp.UnixMilli() >= int64(millis) })
 	for index := start; index < len(s.events) && s.events[index].Detail.Timestamp.UnixMilli() == int64(millis); index++ {
 		if usageRecordID(s.events[index]) == id {
-			return usageRecord(s.events[index]), true
+			record := usageRecord(s.events[index])
+			if record.Diagnostics != nil {
+				if latest, ok := s.diagnosticTraces[record.Diagnostics.TraceID]; ok {
+					record.Diagnostics = coreusage.NormalizeDiagnostics(latest.snapshot)
+				}
+			}
+			return record, true
 		}
 	}
 	return UsageRecord{}, false

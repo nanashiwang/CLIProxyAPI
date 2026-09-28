@@ -34,6 +34,7 @@ func (r *UsageReporter) ObserveUpstreamTransport(transport string) {
 	if r == nil {
 		return
 	}
+	usage.ObserveDiagnosticEvent(r.diagnosticContext, "upstream_request")
 	r.modelMu.RLock()
 	generation := r.modelGeneration
 	r.modelMu.RUnlock()
@@ -49,5 +50,6 @@ func (r *UsageReporter) observeUpstreamTransport(transport string, generation ui
 	defer r.modelMu.Unlock()
 	if generation == r.modelGeneration {
 		r.upstreamTransport = transport
+		usage.ObserveDiagnosticTransport(r.diagnosticContext, transport)
 	}
 }

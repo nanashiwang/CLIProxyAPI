@@ -178,6 +178,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.DELETE("/oauth-model-alias", s.mgmt.DeleteOAuthModelAlias)
 
 		mgmt.GET("/auth-files", s.mgmt.ListAuthFiles)
+		mgmt.POST("/auth-files/capacity", s.mgmt.GetAuthFileCapacity)
 		mgmt.GET("/auth-files/models", s.mgmt.GetAuthFileModels)
 		mgmt.GET("/model-definitions/:channel", s.mgmt.GetStaticModelDefinitions)
 		mgmt.GET("/auth-files/download", s.mgmt.DownloadAuthFile)

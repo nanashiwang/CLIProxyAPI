@@ -46,3 +46,9 @@ Source areas: backend/crates/providers/openai/src/transport/,
 CPA selectively adapts these behaviors to its Go execution and request-scoped
 replay contracts, preserving existing pool permissions, leases and accounting.
 See docs/CODEX_PROXY_SEP28_CN.md for the precise adaptation boundaries.
+
+Additional stream-buffer observation reference:
+  3bf7030fba6273553cfbd021fd7d3390b81d0308
+Source area: backend/crates/providers/openai/src/provider/execution.rs
+CPA adds a local 1 MiB converted-output budget and bounded release-reason events;
+it does not import the upstream replay-grace timeout or retry strategy wholesale.

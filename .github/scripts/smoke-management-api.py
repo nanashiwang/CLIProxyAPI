@@ -81,6 +81,9 @@ def main():
                     if not isinstance(data, dict) or any(field not in data for field in fields):
                         raise RuntimeError(f"{path} response does not satisfy the management contract")
                     print(f"PASS /v0/management/{path}")
+                capacity = request("auth-files/capacity", "POST", {"ids": ["smoke-missing"]})
+                assert capacity == {"accounts": {}}, "unknown account capacity must remain unavailable"
+                print("PASS /v0/management/auth-files/capacity")
                 verify_usage_insights(request)
             finally:
                 process.terminate()

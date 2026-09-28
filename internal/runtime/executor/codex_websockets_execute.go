@@ -13,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -108,8 +109,10 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	// use HTTP before send; continuation/control requests must ask for replay.
 	if auth != nil && auth.AuthKind() == cliproxyauth.AuthKindOAuth && len(buildCodexWebsocketRequestBody(upstreamBody)) >= helps.CodexWebsocketHTTPThreshold {
 		if helps.CodexOversizedContinuation(ctx, req.Payload, opts.OriginalRequest, upstreamBody) {
+			usage.ObserveDiagnosticEvent(ctx, "replay_required")
 			return resp, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
 		}
+		usage.ObserveDiagnosticEvent(ctx, "http_size_fallback")
 		delegatedHTTP = true
 		cliproxyexecutor.ObserveUpstreamTransport(ctx, "sse")
 		return e.CodexExecutor.Execute(ctx, auth, req, opts)
@@ -152,6 +155,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	if cliproxyexecutor.RequiredUpstreamWebsocket(ctx) {
 		conn, closer = existingWebsocketSessionConn(sess, authID, wsURL)
 		if conn == nil {
+			usage.ObserveDiagnosticEvent(ctx, "replay_required")
 			return resp, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
 		}
 	} else {
@@ -215,6 +219,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 					helps.RecordAPIWebsocketError(ctx, e.cfg, "send", errSend)
 					return resp, errSend
 				}
+				usage.ObserveDiagnosticEvent(ctx, "replay_required")
 				return resp, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
 			}
 			e.invalidateUpstreamConn(sess, conn, "send_error", errSend)

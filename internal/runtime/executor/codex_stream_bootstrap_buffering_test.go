@@ -4,16 +4,20 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	_ "github.com/router-for-me/CLIProxyAPI/v7/internal/translator"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
@@ -526,5 +530,101 @@ func TestCodexWebsocketsExecutor_BootstrapNonOverload_StillNotifiesDownstreamDis
 	}
 	if !notified {
 		t.Fatal("a terminal failure that is delivered in-stream must still signal the downstream disconnect")
+	}
+}
+
+// Releasing a large handshake commits the stream: later overload must not become a retry.
+func TestCodexBootstrapByteLimitCommitsHTTPAndWebsocket(t *testing.T) {
+	for _, ws := range []bool{false, true} {
+		t.Run(fmt.Sprint(ws), func(t *testing.T) {
+			large := `{"type":"response.in_progress","response":{"id":"resp_1","metadata":{"padding":"` + strings.Repeat("x", helps.CodexBootstrapMaxBytes) + `"}}}`
+			var server *httptest.Server
+			if ws {
+				server = codexWebsocketServer(t, large, codexOverloadEvent)
+			} else {
+				server = codexSSEServer(large, codexOverloadEvent)
+			}
+			defer server.Close()
+			ctx := usage.StartDiagnosticAttempt(usage.WithExecutionDiagnostics(context.Background()), "codex", "test", "gpt-test")
+			var result *cliproxyexecutor.StreamResult
+			var err error
+			if ws {
+				req, opts := codexWebsocketRequest()
+				result, err = NewCodexWebsocketsExecutor(codexBufferingConfig(true)).ExecuteStream(ctx, codexTestAuth(server.URL), req, opts)
+			} else {
+				req, opts := codexTestRequest()
+				result, err = NewCodexExecutor(codexBufferingConfig(true)).ExecuteStream(ctx, codexTestAuth(server.URL), req, opts)
+			}
+			if err != nil || result == nil {
+				t.Fatalf("large metadata must release the stream: %v", err)
+			}
+			output, streamErr := drainChunks(result)
+			if !strings.Contains(output, "response.in_progress") || streamErr == nil {
+				t.Fatal("large handshake or later error lost")
+			}
+			d := usage.CaptureExecutionDiagnostics(ctx, usage.Record{Failed: true})
+			found := false
+			for _, e := range d.Events {
+				if e.Kind == "buffer_byte_limit" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("byte release reason not observed")
+			}
+		})
+	}
+}
+
+func TestCodexBootstrapReleaseReasonPresentAtUsagePublication(t *testing.T) {
+	for _, ws := range []bool{false, true} {
+		for _, terminal := range []string{codexOverloadEvent, codexInvalidEvent, codexCompletedEventBody} {
+			t.Run(fmt.Sprintf("%v-%s", ws, terminal[:20]), func(t *testing.T) {
+				authID := uuid.NewString()
+				plugin := &captureCodexModelObservationUsage{authID: authID, records: make(chan usage.Record, 2)}
+				usage.RegisterPlugin(plugin)
+				var server *httptest.Server
+				if ws {
+					server = codexWebsocketServer(t, codexCreatedEvent, terminal)
+				} else {
+					server = codexSSEServer(codexCreatedEvent, terminal)
+				}
+				defer server.Close()
+				auth := codexTestAuth(server.URL)
+				auth.ID = authID
+				ctx := usage.StartDiagnosticAttempt(usage.WithExecutionDiagnostics(context.Background()), "codex", authID, "model")
+				var result *cliproxyexecutor.StreamResult
+				if ws {
+					req, opts := codexWebsocketRequest()
+					result, _ = NewCodexWebsocketsExecutor(codexBufferingConfig(true)).ExecuteStream(ctx, auth, req, opts)
+				} else {
+					req, opts := codexTestRequest()
+					result, _ = NewCodexExecutor(codexBufferingConfig(true)).ExecuteStream(ctx, auth, req, opts)
+				}
+				if result != nil {
+					drainChunks(result)
+				}
+				select {
+				case record := <-plugin.records:
+					want := "buffer_upstream_error"
+					if terminal == codexCompletedEventBody {
+						want = "buffer_terminal"
+					}
+					found := false
+					if record.Diagnostics != nil {
+						for _, event := range record.Diagnostics.Events {
+							if event.Kind == want {
+								found = true
+							}
+						}
+					}
+					if !found {
+						t.Fatalf("release event %s missing from published usage", want)
+					}
+				case <-time.After(3 * time.Second):
+					t.Fatal("no usage publication")
+				}
+			})
+		}
 	}
 }

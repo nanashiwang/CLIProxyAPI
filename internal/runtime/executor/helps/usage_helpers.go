@@ -22,6 +22,7 @@ import (
 )
 
 type UsageReporter struct {
+	diagnosticContext context.Context
 	provider          string
 	executorType      string
 	model             string
@@ -77,18 +78,19 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		alias = model
 	}
 	reporter := &UsageReporter{
-		provider:       provider,
-		model:          model,
-		alias:          strings.TrimSpace(alias),
-		requestedModel: usage.RequestedModelFromContext(ctx),
-		clientMetadata: usage.ClientRequestMetadataFromContext(ctx),
-		requestedAt:    time.Now(),
-		apiKey:         apiKey,
-		source:         resolveUsageSource(auth, apiKey),
-		authType:       resolveUsageAuthType(auth),
-		reasoning:      usage.ReasoningEffortFromContext(ctx),
-		serviceTier:    usage.ServiceTierFromContext(ctx),
-		generate:       usage.GenerateFromContext(ctx),
+		diagnosticContext: ctx,
+		provider:          provider,
+		model:             model,
+		alias:             strings.TrimSpace(alias),
+		requestedModel:    usage.RequestedModelFromContext(ctx),
+		clientMetadata:    usage.ClientRequestMetadataFromContext(ctx),
+		requestedAt:       time.Now(),
+		apiKey:            apiKey,
+		source:            resolveUsageSource(auth, apiKey),
+		authType:          resolveUsageAuthType(auth),
+		reasoning:         usage.ReasoningEffortFromContext(ctx),
+		serviceTier:       usage.ServiceTierFromContext(ctx),
+		generate:          usage.GenerateFromContext(ctx),
 	}
 	if auth != nil {
 		reporter.quotaObserver = cliproxyauth.CodexQuotaObserver(ctx, auth)
@@ -178,6 +180,7 @@ func (r *UsageReporter) observeResponseForGeneration(resp *http.Response, genera
 	if r == nil || resp == nil {
 		return
 	}
+	usage.ObserveDiagnosticEvent(r.diagnosticContext, "upstream_headers")
 	if r.quotaObserver != nil {
 		r.quotaObserver(resp.Header)
 	}
@@ -443,6 +446,7 @@ func (r *UsageReporter) setTTFT(ttft time.Duration) {
 		return
 	}
 	r.ttft = ttft
+	usage.ObserveDiagnosticEvent(r.diagnosticContext, "first_byte")
 	r.ttftSet = true
 	r.ttftStart = time.Time{}
 	r.ttftMu.Unlock()
@@ -463,6 +467,7 @@ type usageTTFTRoundTripper struct {
 }
 
 func (t usageTTFTRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	usage.ObserveDiagnosticEvent(t.reporter.diagnosticContext, "upstream_request")
 	generation := t.reporter.observeHTTPRequestModel(req)
 	t.reporter.StartResponseTTFT()
 	resp, errRoundTrip := t.base.RoundTrip(req)

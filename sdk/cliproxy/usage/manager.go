@@ -20,7 +20,8 @@ const AutoServiceTier = "auto"
 
 // Record contains the usage statistics captured for a single provider request.
 type Record struct {
-	Provider string
+	Diagnostics *Diagnostics
+	Provider    string
 	// ExecutorType stores the concrete executor type that handled the request.
 	ExecutorType string
 	Model        string
@@ -329,6 +330,11 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 	}
 	// Normalize accounting and calculate billing before the record enters the async queue.
 	normalizeRecordRequestMetadata(ctx, &record)
+	if record.Diagnostics == nil {
+		record.Diagnostics = CaptureExecutionDiagnostics(ctx, record)
+	} else {
+		record.Diagnostics = NormalizeDiagnostics(record.Diagnostics)
+	}
 	record.RequestedModel = NormalizeObservedModel(record.RequestedModel)
 	record.UpstreamModel = NormalizeObservedModel(record.UpstreamModel)
 	record.UpstreamResponseModel = NormalizeObservedModel(record.UpstreamResponseModel)

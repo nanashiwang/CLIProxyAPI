@@ -460,7 +460,7 @@ func parseCodexRetryAfter(statusCode int, errorBody []byte, now time.Time) *time
 // transport prefixes response events with codex.response.metadata and codex.rate_limits frames,
 // so the limit must comfortably exceed the four handshake frames observed in practice. Once the
 // limit is reached the stream is released and the original unbuffered semantics apply.
-const codexBootstrapMaxBufferedEvents = 16
+const codexBootstrapMaxBufferedEvents = helps.CodexBootstrapMaxEvents
 
 // isCodexHandshakeMetadataEvent reports whether an event carries no generated output and is
 // therefore safe to hold back before the downstream response headers are committed. Keeping a type
