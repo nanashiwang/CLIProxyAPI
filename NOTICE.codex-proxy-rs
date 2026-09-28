@@ -35,3 +35,14 @@ Source area: backend/crates/providers/openai/src/credential/quota/mod.rs
 CPA selectively adapts reset grace, periodic refresh reservation, and observed
 usage preservation to its Go auth manager, cooldown persistence, and existing
 exclusive account leases. See docs/CODEX_QUOTA_REFRESH_CN.md for the scope.
+
+Additional transport, interruption and capacity references:
+  ca90f2b586fe075f5ccb5e8d0fee865b0fcd5411
+  e830b2ef482a5426db3102f1e5f7ef70d51c4b77
+  ea4e3059db5d2e744518fec5dd8df10b5905b867
+Source areas: backend/crates/providers/openai/src/transport/,
+  backend/crates/gateway-api/src/openai/responses/websocket/,
+  frontend/src/views/accounts/components/AccountCapacityIndicator.vue
+CPA selectively adapts these behaviors to its Go execution and request-scoped
+replay contracts, preserving existing pool permissions, leases and accounting.
+See docs/CODEX_PROXY_SEP28_CN.md for the precise adaptation boundaries.

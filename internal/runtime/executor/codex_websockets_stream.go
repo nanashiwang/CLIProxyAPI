@@ -29,7 +29,12 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
-	defer reporter.TrackFailure(ctx, &err)
+	delegatedHTTP := false
+	defer func() {
+		if !delegatedHTTP {
+			reporter.TrackFailure(ctx, &err)
+		}
+	}()
 
 	prepared, err := e.prepareCodexWebsocketStream(ctx, auth, req, opts)
 	if err != nil {
@@ -54,6 +59,17 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 	authID = auth.ID
 	authLabel = auth.Label
 	authType, authValue = auth.AccountInfo()
+
+	// API-key upstreams have their own transport limits. OAuth new chains can
+	// use HTTP before send; continuation/control requests must ask for replay.
+	if auth != nil && auth.AuthKind() == cliproxyauth.AuthKindOAuth && len(buildCodexWebsocketRequestBody(prepared.upstreamBody)) >= helps.CodexWebsocketHTTPThreshold {
+		if helps.CodexOversizedContinuation(ctx, req.Payload, opts.OriginalRequest, prepared.upstreamBody) {
+			return nil, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
+		}
+		delegatedHTTP = true
+		cliproxyexecutor.ObserveUpstreamTransport(ctx, "sse")
+		return e.CodexExecutor.ExecuteStream(ctx, auth, req, opts)
+	}
 
 	executionSessionID := executionSessionIDFromOptions(opts)
 	var sess *codexWebsocketSession
@@ -716,6 +732,7 @@ func (e *CodexWebsocketsExecutor) prepareCodexWebsocketStream(ctx context.Contex
 	if errPromptCache != nil {
 		return nil, errPromptCache
 	}
+	body = helps.ScopeCodexAccountBody(ctx, body)
 	clientBody := body
 	var identityState codexIdentityConfuseState
 	upstreamBody, identityState := applyCodexIdentityConfuseBody(e.cfg, auth, originalPayloadSource, body)

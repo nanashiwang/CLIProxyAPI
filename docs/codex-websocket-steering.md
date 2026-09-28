@@ -74,3 +74,34 @@ part of the full suite.
 Enable the flag only when clients support this protocol. Keep the existing lease
 state and lock files during deployment. Drain active sockets before rollback or
 restart. Release publication does not deploy the service or enable the feature.
+
+## Response interruption
+
+The same opt-in duplex mode accepts `response.interrupt` with the current active
+`response_id` and `mode: "discard_partial_items"`. The control frame stays on the
+original account and socket. Wrong/stale response IDs, duplicate pending controls
+and unsupported modes produce local errors without cooling an account.
+
+Only a matching upstream `response.incomplete` with reason `interrupted` confirms
+the interruption. Partial output is not reconstructed after this confirmation.
+The response ID can then be continued on that socket; an unsolicited or mismatched
+interruption terminates the connection without silently moving it to another
+account. Execution occupancy ends at the confirmed terminal event, while the
+exclusive lease stays active until the entire socket producer drains.
+
+OAuth requests whose final encoded WebSocket frame reaches 15 MiB choose HTTP/SSE
+before sending, when the initial request is self-contained. Connection-bound
+continuations, appends and prewarm frames require full replay instead. Later large
+creates inside an established duplex session also request replay without sending.
+The downstream WebSocket uses the existing 1012 full-HTTP-replay close contract;
+the SDK uses its typed request-scoped 426 signal. API-key transport limits are not
+changed. There is no retry of an input already accepted by upstream.
+
+On a proven account switch during request retries, CPA removes inherited
+account-owned response/routing state, including Guardian's top-level
+`client_metadata.parent_response_id`. Native requests with same-account or unknown
+provenance retain their payloads. Nested turn-metadata parent correlation IDs and
+unknown extensions remain intact. Connection-bound continuations cannot rotate
+accounts. Optional existing identity mapping remains independent.
+
+Source references and validation: [September 28 adaptation](CODEX_PROXY_SEP28_CN.md).

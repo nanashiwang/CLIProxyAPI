@@ -141,7 +141,7 @@ func (m *Manager) executeHome(ctx context.Context, providers []string, req clipr
 				if countTokens {
 					return selection.Executor.CountTokens(executorCtx, preparedAuth, execReq, execOpts)
 				}
-				return selection.Executor.Execute(execCtx, preparedAuth, execReq, execOpts)
+				return m.executeObserved(execCtx, selection.Executor, preparedAuth, execReq, execOpts)
 			}
 			response, errExecute = execute()
 			refreshAuth := preparedAuth

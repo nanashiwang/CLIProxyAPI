@@ -39,7 +39,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 	input <-chan cliproxyexecutor.WebsocketInput, initial *codexWebsocketPrepared,
 	initialReporter *helps.UsageReporter, headers http.Header, unlock func(),
 ) *cliproxyexecutor.StreamResult {
-	streamCtx, cancel := context.WithCancel(ctx)
+	streamCtx, cancel := context.WithCancel(cliproxyexecutor.WithAccountSwitched(ctx, false))
 	out := make(chan cliproxyexecutor.StreamChunk)
 	// This first frame was successfully written by ExecuteStream before handoff.
 	log.Infof("codex websockets: request forwarded session=%s auth=%s url=%s event=response.create", sess.sessionID, auth.ID, initial.wsURL)
@@ -54,6 +54,8 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 	acceptedSteers := make(map[string]string)
 	current := initial
 	responseID := ""
+	interruptibleResponseID := ""
+	interruptPending := false
 	responseSettings := make(map[string]*codexWebsocketPrepared)
 	steeringSettings := make(map[string]*codexWebsocketPrepared)
 	var responseOrder []string
@@ -102,7 +104,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 	readyForCreate := func() bool {
 		metadataMu.Lock()
 		defer metadataMu.Unlock()
-		if len(unacknowledgedSteers) > 0 || automaticActive {
+		if len(unacknowledgedSteers) > 0 || automaticActive || interruptPending {
 			return false
 		}
 		for _, parent := range acceptedSteers {
@@ -201,6 +203,10 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				return false
 			}
 			payload = buildCodexWebsocketRequestBody(prepared.upstreamBody)
+			if auth.AuthKind() == cliproxyauth.AuthKindOAuth && len(payload) >= helps.CodexWebsocketHTTPThreshold {
+				fail(cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError())
+				return false
+			}
 			metadataMu.Lock()
 			if len(pending) >= 16 {
 				metadataMu.Unlock()
@@ -276,6 +282,29 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 					continue
 				}
 				switch gjson.GetBytes(payload, "type").String() {
+				case "response.interrupt":
+					id := gjson.GetBytes(payload, "response_id")
+					mode := gjson.GetBytes(payload, "mode")
+					metadataMu.Lock()
+					valid := id.Type == gjson.String && id.String() != "" && id.String() == interruptibleResponseID && mode.String() == "discard_partial_items" && !interruptPending
+					if valid {
+						interruptPending = true
+					}
+					metadataMu.Unlock()
+					if !valid {
+						if !reject("response.interrupt requires the active response_id and mode discard_partial_items; only one interrupt may be pending") {
+							return
+						}
+						continue
+					}
+					// A control frame is written unchanged on the admitted connection.
+					// Only the upstream terminal event releases execution occupancy.
+					if errWrite := writeCodexWebsocketMessage(sess, conn, payload); errWrite != nil {
+						fail(mapCodexWebsocketWriteError(sess, conn, errWrite))
+						return
+					}
+					continue
+
 				case "response.steer":
 					metadataMu.Lock()
 					steerQueueFull := len(unacknowledgedSteers)+len(acceptedSteers) >= 16
@@ -419,6 +448,8 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 					current, pending = pending[0], pending[1:]
 				}
 				responseID = gjson.GetBytes(payload, "response.id").String()
+				interruptibleResponseID = responseID
+				interruptPending = false
 				// Retain response settings, not request history or authorization headers.
 				// In-flight steering pins its parent's settings independently of this window.
 				snapshot := *current
@@ -451,6 +482,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				}
 				firstResponse = false
 				responseActive = true
+				cliproxyexecutor.ObserveExecutionActivity(ctx, true)
 				outputItems = make(map[int64][]byte)
 				outputFallback = nil
 			}
@@ -528,12 +560,15 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				// A rejection before response.created instead owns the oldest pending
 				// create, including its identity mapping and reasoning replay scope.
 				currentFailure := failedID != "" && failedID == responseID
-				ambiguous := failedID == "" && ((len(pending) > 0 && responseActive) || len(unacknowledgedSteers) > 0)
+				ambiguous := (eventType == "error" && interruptPending) || failedID == "" && ((len(pending) > 0 && responseActive) || len(unacknowledgedSteers) > 0)
 				if len(pending) > 0 && !currentFailure && !ambiguous {
 					eventPrepared, pending = pending[0], pending[1:]
 					eventReporter = helps.NewExecutorUsageReporter(ctx, e, req.Model, auth)
 					eventReporter.SetTranslatedReasoningEffort(eventPrepared.clientBody, eventPrepared.to.String())
 				} else if !ambiguous {
+					interruptibleResponseID = ""
+					interruptPending = false
+					cliproxyexecutor.ObserveExecutionActivity(ctx, false)
 					responseActive = false
 					automaticActive = false
 				}
@@ -583,13 +618,26 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				collectCodexOutputItemDone(payload, outputItems, &outputFallback)
 			}
 			if eventType == "response.completed" || eventType == "response.done" || eventType == "response.incomplete" {
-				responseActive = false
+				interrupted := eventType == "response.incomplete" && gjson.GetBytes(payload, "response.incomplete_details.reason").String() == "interrupted"
 				metadataMu.Lock()
+				confirmedInterrupt := interruptPending && interruptibleResponseID != "" && gjson.GetBytes(payload, "response.id").String() == interruptibleResponseID
+				metadataMu.Unlock()
+				if interrupted && !confirmedInterrupt {
+					connectionErr := &codexDuplexConnectionError{cause: fmt.Errorf("upstream interruption does not match a pending response.interrupt")}
+					reporter.PublishFailure(ctx, connectionErr)
+					send(cliproxyexecutor.StreamChunk{Err: connectionErr})
+					return
+				}
+				responseActive = false
+				cliproxyexecutor.ObserveExecutionActivity(ctx, false)
+				metadataMu.Lock()
+				interruptibleResponseID = ""
+				interruptPending = false
 				automaticActive = false
 				metadataMu.Unlock()
 				wakeWriter()
 				payload = normalizeCodexWebsocketCompletion(payload)
-				if !current.preserveNativeOutput {
+				if !current.preserveNativeOutput && !interrupted {
 					payload = patchCodexCompletedOutput(payload, outputItems, outputFallback)
 				}
 				if eventType != "response.incomplete" {

@@ -1,5 +1,7 @@
 # codex-proxy-rs 全项目更新跟踪与用量功能适配
 
+2026-09-28 新增三个独立适配项，见 [大请求、中断与账号并发](CODEX_PROXY_SEP28_CN.md)。此前用量功能来源与全仓基线不因此推进。
+
 ## 来源与本次范围
 
 - 来源项目：[zyycn/codex-proxy-rs](https://github.com/zyycn/codex-proxy-rs)。

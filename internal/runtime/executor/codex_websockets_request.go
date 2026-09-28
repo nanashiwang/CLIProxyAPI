@@ -143,6 +143,7 @@ func applyCodexWebsocketHeaders(ctx context.Context, headers http.Header, auth *
 	}
 	util.ApplyCustomHeadersFromAttrs(&http.Request{Header: headers}, attrs)
 	applyCodexCloakingHeaders(headers, cfg)
+	helps.ScopeCodexAccountHeaders(ctx, headers)
 
 	return headers
 }

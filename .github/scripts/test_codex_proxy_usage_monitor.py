@@ -131,7 +131,9 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(report["repository_comparison_basis"], "reviewed_repository")
         self.assertFalse(report["review_required"])
         self.assertTrue(report["feature_review"]["review_required"])
-        self.assertTrue(all(feature["source_delta"]["review_required"] for feature in report["features"]))
+        for feature in report["features"]:
+            self.assertEqual(feature["source_delta"]["review_required"],
+                             feature["id"].startswith("usage-"))
         self.assertEqual(report["reviewed_commit"], self.manifest["reviewed_commit"])
 
     def test_release_only_update_requires_review_and_is_visible(self):
