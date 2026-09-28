@@ -83,6 +83,7 @@ func validateStreamResult(result *cliproxyexecutor.StreamResult, err error) (*cl
 }
 
 func readStreamBootstrap(ctx context.Context, ch <-chan cliproxyexecutor.StreamChunk) ([]cliproxyexecutor.StreamChunk, bool, error) {
+	ctx = cliproxyexecutor.StreamDeliveryContext(ctx)
 	if ch == nil {
 		return nil, true, nil
 	}
@@ -115,6 +116,7 @@ func readStreamBootstrap(ctx context.Context, ch <-chan cliproxyexecutor.StreamC
 }
 
 func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, resultModel, routeModel string, headers http.Header, buffered []cliproxyexecutor.StreamChunk, remaining <-chan cliproxyexecutor.StreamChunk, aliasResult OAuthModelAliasResult, ephemeralResult bool, opts cliproxyexecutor.Options) *cliproxyexecutor.StreamResult {
+	deliveryCtx := cliproxyexecutor.StreamDeliveryContext(ctx)
 	out := make(chan cliproxyexecutor.StreamChunk)
 	go func() {
 		defer close(out)
@@ -144,7 +146,7 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 					return true
 				}
 				select {
-				case <-ctx.Done():
+				case <-deliveryCtx.Done():
 					forward = false
 					return false
 				case out <- chunk:
@@ -164,7 +166,7 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 				return true
 			}
 			select {
-			case <-ctx.Done():
+			case <-deliveryCtx.Done():
 				forward = false
 				return false
 			case out <- chunk:

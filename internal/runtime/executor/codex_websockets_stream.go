@@ -506,6 +506,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 			}
 		}()
 
+		deliveryCtx := cliproxyexecutor.StreamDeliveryContext(ctx)
 		send := func(chunk cliproxyexecutor.StreamChunk) bool {
 			if ctx == nil {
 				out <- chunk
@@ -514,7 +515,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 			select {
 			case out <- chunk:
 				return true
-			case <-ctx.Done():
+			case <-deliveryCtx.Done():
 				return false
 			}
 		}

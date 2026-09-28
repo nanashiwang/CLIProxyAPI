@@ -389,11 +389,12 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 			sess.clearActive(conn, readCh)
 			unlock()
 		}()
+		deliveryCtx := cliproxyexecutor.StreamDeliveryContext(ctx)
 		send := func(chunk cliproxyexecutor.StreamChunk) bool {
 			select {
 			case out <- chunk:
 				return true
-			case <-ctx.Done():
+			case <-deliveryCtx.Done():
 				return false
 			}
 		}

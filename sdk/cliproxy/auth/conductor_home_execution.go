@@ -223,7 +223,11 @@ func homeExecutionAttemptContext(ctx context.Context, selection *HomeDispatchSel
 	if selection == nil {
 		return nil, func() {}, fmt.Errorf("Home dispatch selection is nil")
 	}
-	return selection.AttemptContext(ctx)
+	attempt, release, err := selection.AttemptContext(ctx)
+	if err != nil {
+		return nil, release, err
+	}
+	return cliproxyexecutor.WithStreamDeliveryParent(attempt, ctx), release, nil
 }
 
 func wrapHomeStream(ctx context.Context, result *cliproxyexecutor.StreamResult, selection *HomeDispatchSelection, releaseAttempt func()) *cliproxyexecutor.StreamResult {
