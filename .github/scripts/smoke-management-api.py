@@ -134,6 +134,18 @@ def verify_usage_insights(request):
     if imported.get("added") != 3:
         raise RuntimeError("usage insights fixture import failed")
     dashboard = request("usage/dashboard?range=24h")
+    assert dashboard.get("timezone") == "UTC", "old clients must retain UTC buckets"
+    local_dashboard = request("usage/dashboard?range=7d&timezone=Asia%2FAlmaty")
+    assert local_dashboard.get("timezone") == "Asia/Almaty", "dashboard must declare its calendar timezone"
+    assert all(datetime.fromisoformat(point["timestamp"].replace("Z", "+00:00")).hour == 19 for point in local_dashboard["trend"]), "Almaty calendar days must start at 19:00 UTC"
+    for endpoint in ("usage/dashboard", "usage/records"):
+        try:
+            request(endpoint + "?timezone=Invalid%2FZone")
+        except urllib.error.HTTPError as error:
+            assert error.code == 400
+        else:
+            raise RuntimeError("usage queries must reject an invalid timezone")
+    print("PASS usage timezone: legacy UTC, explicit Almaty, shared validation")
     summary = dashboard.get("summary", {})
     if summary.get("total_requests") != 2 or summary.get("success_count") != 1:
         raise RuntimeError("usage dashboard must exclude prewarm records from inference totals")

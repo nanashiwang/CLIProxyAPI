@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // Keep IANA queries available in minimal release containers.
 
 	"github.com/gin-gonic/gin"
 	internalusage "github.com/router-for-me/CLIProxyAPI/v7/internal/usage"
@@ -76,6 +77,15 @@ func parseUsageQuery(c *gin.Context, now time.Time) (internalusage.UsageQuery, e
 		Pool: strings.TrimSpace(c.Query("pool")), Status: strings.TrimSpace(c.Query("status")),
 		Search: strings.TrimSpace(c.Query("search")),
 	}
+	zone := strings.TrimSpace(c.DefaultQuery("timezone", "UTC"))
+	if len(zone) > 100 || zone == "" || zone == "Local" {
+		return query, fmt.Errorf("timezone must be an IANA timezone")
+	}
+	location, errLocation := time.LoadLocation(zone)
+	if errLocation != nil {
+		return query, fmt.Errorf("timezone must be an IANA timezone")
+	}
+	query.Location = location
 	for _, value := range []string{query.Provider, query.Model, query.Account, query.APIKey, query.Pool, query.Search} {
 		if len(value) > 512 {
 			return query, fmt.Errorf("filter values must not exceed 512 bytes")

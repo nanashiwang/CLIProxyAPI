@@ -72,3 +72,23 @@ func TestUsageDetailMissingRecordReturnsNotFound(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+func TestUsageTimezoneContract(t *testing.T) {
+	for _, tc := range []struct{ query, want string }{
+		{"", "UTC"}, {"timezone=Asia%2FAlmaty", "Asia/Almaty"},
+		{"timezone=Invalid%2FZone", ""}, {"timezone=Local", ""}, {"timezone=", ""}, {"timezone=..%2Fetc%2Fpasswd", ""},
+	} {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/usage/dashboard?"+tc.query, nil)
+		q, err := parseUsageQuery(ctx, time.Now())
+		if tc.want == "" {
+			if err == nil {
+				t.Fatalf("accepted %q", tc.query)
+			}
+			continue
+		}
+		if err != nil || q.Location.String() != tc.want {
+			t.Fatalf("%q: location=%v err=%v", tc.query, q.Location, err)
+		}
+	}
+}

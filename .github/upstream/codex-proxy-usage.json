@@ -49,7 +49,8 @@
     "backend/crates/providers/*/tests/**/usage.rs",
     "backend/crates/providers/*/src/transport/client*.rs",
     "backend/crates/providers/*/src/transport/response_meta.rs",
-    "backend/crates/providers/*/src/**/observation.rs"
+    "backend/crates/providers/*/src/**/observation.rs",
+    "frontend/src/components/usage/**"
   ],
   "features": [
     {
@@ -305,6 +306,107 @@
         "React 561 tests, types and production build; desktop, 390px dark, refresh, keyboard, legacy data and failure browser QA"
       ],
       "notes": "Local observed execution only; no queue/lease inference or new scheduler cap. Home shared limit remains unknown. Layout also references 2a65b53b44b3e15551746ed0424e96aef5f35b34; do not claim every change through that commit is adapted. Follow-up uses a read-only visible-account batch endpoint (maximum 200 IDs) every five seconds; hidden pages pause, failures mark stale, unsupported backends stop. Original source baseline unchanged."
+    },
+    {
+      "id": "usage-explicit-timezone",
+      "title": "Explicit query timezone with DST-aware chart buckets",
+      "status": "adapted",
+      "source_commit": "ab3a2e30c5941801bc553bab35bd2074047d3270",
+      "adapted_commit": "ab3a2e30c5941801bc553bab35bd2074047d3270",
+      "local_areas": [
+        "CLIProxyAPI/internal/usage",
+        "CLIProxyAPI/internal/api/handlers/management",
+        "Cli-Proxy-API-Management-Center/src/features/usage"
+      ],
+      "watch_paths": [
+        "frontend/src/views/usage/**",
+        "frontend/src/api/modules/usage.ts",
+        "backend/crates/gateway-store/src/postgres/observability/**"
+      ],
+      "validation": [
+        "Go full suite, related race and binary API smoke; DST calendar/midnight/repeated-hour/half-hour transitions and invalid zone regressions",
+        "React verify: 572 tests, TypeScript and build; browser Asia/Almaty, old-backend UTC fallback, refresh, narrow dark and failure states"
+      ],
+      "notes": "Per-query browser timezone only. Missing API parameter stays UTC; absolute filters and stored timestamps do not change. No global scheduler/log timezone."
+    },
+    {
+      "id": "usage-fast-billing-badge",
+      "title": "Fast badge from effective billing or observed service tier",
+      "status": "adapted",
+      "source_commit": "d37dc3273147e5d472c4894578a7e0269445fbc9",
+      "adapted_commit": "d37dc3273147e5d472c4894578a7e0269445fbc9",
+      "local_areas": [
+        "Cli-Proxy-API-Management-Center/src/features/usage"
+      ],
+      "watch_paths": [
+        "frontend/src/views/usage/**",
+        "frontend/src/components/usage/**"
+      ],
+      "validation": [
+        "React 572 tests and build; effective snapshot precedence and requested-only exclusion",
+        "Browser real local usage API: visible badge and price popover retained at desktop and 390px dark"
+      ],
+      "notes": "CPA pricing snapshot is authoritative, with observed response tier as fallback. A requested fast tier alone does not prove Fast billing."
+    },
+    {
+      "id": "codex-credit-balance",
+      "title": "Codex credit balance distinct from manual quota resets",
+      "status": "adapted",
+      "source_commit": "0490e28cfc14f08232a84c52e8c3f8693285b994",
+      "adapted_commit": "0490e28cfc14f08232a84c52e8c3f8693285b994",
+      "local_areas": [
+        "Cli-Proxy-API-Management-Center/src/features/quota/providers/codex",
+        "Cli-Proxy-API-Management-Center/src/types/quota.ts"
+      ],
+      "watch_paths": [
+        "frontend/src/views/accounts/**",
+        "frontend/src/api/modules/accounts.ts",
+        "backend/crates/providers/openai/src/credential/**"
+      ],
+      "validation": [
+        "React parser, state and rendered-body regressions; exact decimals, zero, unlimited and unknown",
+        "Browser synthetic quota: exact precision, zero, unlimited, missing, failure clears balance, 390px dark"
+      ],
+      "notes": "Reuse the existing official usage response without extra calls. Preserve decimal strings and reset-card eligibility; never derive balance from reset counts or pool capacity."
+    },
+    {
+      "id": "usage-modal-exit-content",
+      "title": "Keep usage details visible through modal exit animation",
+      "status": "adapted",
+      "source_commit": "318f8a748e0ec389ce1e3ae6fca1c1d0819272f2",
+      "adapted_commit": "318f8a748e0ec389ce1e3ae6fca1c1d0819272f2",
+      "local_areas": [
+        "Cli-Proxy-API-Management-Center/src/features/usage",
+        "Cli-Proxy-API-Management-Center/src/components/ui/Modal.tsx"
+      ],
+      "watch_paths": [
+        "frontend/src/views/usage/**",
+        "frontend/src/components/base/**"
+      ],
+      "validation": [
+        "React 572 tests, TypeScript and production build",
+        "Browser footer close retains record until exit; reopening and immediate Escape complete without reopening race"
+      ],
+      "notes": "Track open state separately from retained detail; clear after close. Shared React modal recognizes opening transitions so rerenders do not cancel an active close."
+    },
+    {
+      "id": "gpt-6-1-sol-pricing-fallback",
+      "title": "Officially verified GPT-6.1 Sol embedded token pricing",
+      "status": "adapted",
+      "source_commit": "71c3b03878c36931eab71f4a7bd841202e7dfbdb",
+      "adapted_commit": "71c3b03878c36931eab71f4a7bd841202e7dfbdb",
+      "local_areas": [
+        "CLIProxyAPI/internal/pricing"
+      ],
+      "watch_paths": [
+        "backend/crates/gateway-host/src/pricing/**",
+        "backend/crates/gateway-store/src/postgres/pricing.rs"
+      ],
+      "validation": [
+        "Official OpenAI model and pricing documentation checked on 2026-10-05",
+        "Go full suite and pricing race; all short/long context service tiers, dynamic catalog precedence and immutable historical billing"
+      ],
+      "notes": "Dynamic LiteLLM catalog already contains the model. Add only offline fallback with 272k threshold, four token buckets and priority/fast/flex/batch tiers. Tool charges and residency premiums remain outside CPA token-only costs."
     }
   ],
   "review_notes": [

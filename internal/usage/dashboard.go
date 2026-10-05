@@ -18,6 +18,7 @@ import (
 // UsageQuery applies the same half-open time range and dimensions to all views.
 type UsageQuery struct {
 	From, To      time.Time
+	Location      *time.Location
 	Provider      string
 	Model         string
 	Account       string
@@ -162,6 +163,7 @@ type UsageFilterOptions struct {
 }
 
 type UsageDashboard struct {
+	Timezone    string             `json:"timezone"`
 	Summary     UsageSummary       `json:"summary"`
 	Performance UsagePerformance   `json:"performance"`
 	Health      UsageHealth        `json:"health"`
@@ -494,8 +496,12 @@ func dashboardPercentile(sorted []int64, percentile float64) *float64 {
 // Dashboard scans the retained time range once. It does not copy request details
 // into the response or infer attempts, cancellations, or cache prices.
 func (s *RequestStatistics) Dashboard(query UsageQuery, now time.Time) UsageDashboard {
+	location := query.Location
+	if location == nil {
+		location = time.UTC
+	}
 	query.Search = strings.ToLower(strings.TrimSpace(query.Search))
-	result := UsageDashboard{From: query.From, To: query.To,
+	result := UsageDashboard{From: query.From, To: query.To, Timezone: location.String(),
 		Health: UsageHealth{StatusCodes: make(map[string]int64)}, Trend: make([]UsageTrendPoint, 0)}
 	if result.To.IsZero() {
 		result.To = now.UTC()
@@ -581,7 +587,7 @@ func (s *RequestStatistics) Dashboard(query UsageQuery, now time.Time) UsageDash
 			addDashboardDimension(models, event.Model, event.Model, event)
 			addDashboardDimension(providers, d.Provider, d.Provider, event)
 			addDashboardDimension(accounts, accountOption.Value, accountOption.Label, event)
-			bucket := dashboardBucket(d.Timestamp, result.Granularity)
+			bucket := dashboardBucketIn(d.Timestamp, result.Granularity, location)
 			if bucketTotals[bucket] == nil {
 				bucketTotals[bucket] = &dashboardAggregate{}
 			}
@@ -623,11 +629,17 @@ func (s *RequestStatistics) Dashboard(query UsageQuery, now time.Time) UsageDash
 	if result.Granularity == "hour" {
 		step = time.Hour
 	}
-	start := dashboardBucket(result.From, result.Granularity)
+	start := dashboardBucketIn(result.From, result.Granularity, location)
 	if result.To.Sub(start)/step <= 366 {
-		for bucket := start; bucket.Before(result.To); bucket = bucket.Add(step) {
+		for bucket, count := start, 0; bucket.Before(result.To) && count <= 366; count++ {
 			if bucketTotals[bucket] == nil {
 				bucketTotals[bucket] = &dashboardAggregate{}
+			}
+			if result.Granularity == "hour" {
+				bucket = dashboardNextHour(bucket, location)
+			} else {
+				local := bucket.In(location)
+				bucket = dashboardDayStart(local.Year(), local.Month(), local.Day()+1, location)
 			}
 		}
 	}
@@ -646,11 +658,42 @@ func (s *RequestStatistics) Dashboard(query UsageQuery, now time.Time) UsageDash
 }
 
 func dashboardBucket(timestamp time.Time, granularity string) time.Time {
-	timestamp = timestamp.UTC()
+	return dashboardBucketIn(timestamp, granularity, time.UTC)
+}
+
+func dashboardBucketIn(timestamp time.Time, granularity string, location *time.Location) time.Time {
+	timestamp = timestamp.In(location)
 	if granularity == "hour" {
-		return timestamp.Truncate(time.Hour)
+		// Keep repeated hours distinct, including half-hour DST transitions.
+		start := timestamp.Add(-time.Duration(timestamp.Minute())*time.Minute - time.Duration(timestamp.Second())*time.Second - time.Duration(timestamp.Nanosecond()))
+		if zoneStart, _ := timestamp.ZoneBounds(); zoneStart.After(start) {
+			start = zoneStart
+		}
+		return start.UTC()
 	}
-	return time.Date(timestamp.Year(), timestamp.Month(), timestamp.Day(), 0, 0, 0, 0, time.UTC)
+	return dashboardDayStart(timestamp.Year(), timestamp.Month(), timestamp.Day(), location)
+}
+
+func dashboardNextHour(bucket time.Time, location *time.Location) time.Time {
+	local := bucket.In(location)
+	next := bucket.Add(time.Hour - time.Duration(local.Minute())*time.Minute - time.Duration(local.Second())*time.Second - time.Duration(local.Nanosecond()))
+	if _, zoneEnd := local.ZoneBounds(); zoneEnd.After(bucket) && zoneEnd.Before(next) {
+		next = zoneEnd
+	}
+	return next.UTC()
+}
+
+func dashboardDayStart(year int, month time.Month, day int, location *time.Location) time.Time {
+	wanted := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	start := time.Date(year, month, day, 0, 0, 0, 0, location)
+	wallDate := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
+	if wallDate.Before(wanted) {
+		// A midnight DST gap can resolve to the previous day. Use the first valid instant.
+		if _, end := start.ZoneBounds(); end.After(start) {
+			return end.UTC()
+		}
+	}
+	return start.UTC()
 }
 
 func addDashboardDimension(values map[string]*dashboardAggregate, key, label string, event storedEvent) {

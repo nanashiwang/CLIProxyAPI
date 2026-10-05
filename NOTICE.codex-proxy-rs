@@ -52,3 +52,17 @@ Additional stream-buffer observation reference:
 Source area: backend/crates/providers/openai/src/provider/execution.rs
 CPA adds a local 1 MiB converted-output budget and bounded release-reason events;
 it does not import the upstream replay-grace timeout or retry strategy wholesale.
+
+Additional October 5 usage and account-fact references:
+  ab3a2e30c5941801bc553bab35bd2074047d3270 (explicit usage timezone)
+  d37dc3273147e5d472c4894578a7e0269445fbc9 (Fast billing presentation)
+  0490e28cfc14f08232a84c52e8c3f8693285b994 (Codex credit balance)
+  318f8a748e0ec389ce1e3ae6fca1c1d0819272f2 (modal exit content)
+  71c3b03878c36931eab71f4a7bd841202e7dfbdb (GPT-6.1 Sol pricing)
+  9c5fbdba70eed5575cb102922e29bf221e3c9c7d (shared usage component paths)
+Source areas: frontend/src/views/usage/, frontend/src/components/usage/,
+  frontend/src/views/accounts/, backend/crates/gateway-host/src/pricing/.
+CPA implements these behaviors in its existing Go/React contracts. Timezone is
+per usage query; credit balance does not replace manual quota resets. Pricing
+was independently checked against official OpenAI documentation on 2026-10-05.
+The paired backend docs/CODEX_PROXY_OCT05_CN.md records the precise scope.

@@ -396,7 +396,7 @@ func serviceTierSuffix(tier string) string {
 	switch strings.ToLower(strings.TrimSpace(tier)) {
 	case "flex":
 		return "_flex"
-	case "priority":
+	case "priority", "fast":
 		return "_priority"
 	case "batch":
 		return "_batches"

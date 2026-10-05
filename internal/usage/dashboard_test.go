@@ -270,3 +270,87 @@ func TestUsageSortedPagesKeepTiesAndUnknownCostsStable(t *testing.T) {
 		})
 	}
 }
+
+func TestDashboardCalendarDaysAcrossTimezones(t *testing.T) {
+	for _, tc := range []struct {
+		zone     string
+		year     int
+		month    time.Month
+		day      int
+		dayHours int
+	}{
+		{"America/New_York", 2026, time.March, 7, 23},
+		{"America/New_York", 2026, time.October, 31, 25},
+		{"Asia/Kathmandu", 2026, time.October, 4, 24},
+		{"America/Sao_Paulo", 2018, time.November, 3, 23},
+	} {
+		t.Run(tc.zone+tc.month.String(), func(t *testing.T) {
+			location, err := time.LoadLocation(tc.zone)
+			if err != nil {
+				t.Fatal(err)
+			}
+			from := time.Date(tc.year, tc.month, tc.day, 0, 0, 0, 0, location)
+			to := from.AddDate(0, 0, 4)
+			stats := NewRequestStatistics()
+			for i := 0; i < 4; i++ {
+				at := time.Date(tc.year, tc.month, tc.day+i, 12, 0, 0, 0, location)
+				stats.events = append(stats.events, dashboardTestEvent(at, "m", "a", false, true, 10, true))
+			}
+			d := stats.Dashboard(UsageQuery{From: from, To: to, Location: location}, to)
+			if d.Timezone != tc.zone || len(d.Trend) != 4 || d.Summary.TotalRequests != 4 {
+				t.Fatalf("dashboard = %+v", d)
+			}
+			for i, point := range d.Trend {
+				if point.TotalRequests != 1 || point.Timestamp.In(location).Day() != time.Date(tc.year, tc.month, tc.day+i, 12, 0, 0, 0, location).Day() {
+					t.Fatalf("point %d = %+v", i, point)
+				}
+			}
+			if duration := d.Trend[2].Timestamp.Sub(d.Trend[1].Timestamp); duration != time.Duration(tc.dayHours)*time.Hour {
+				t.Fatalf("calendar day length = %v", duration)
+			}
+		})
+	}
+}
+
+func TestDashboardHourOffsetsAndRepeatedHour(t *testing.T) {
+	for _, tc := range []struct{ zone, instant, want string }{
+		{"Asia/Kathmandu", "2026-10-05T01:35:12Z", "2026-10-05T01:15:00Z"},
+		{"America/New_York", "2026-11-01T05:30:00Z", "2026-11-01T05:00:00Z"},
+		{"America/New_York", "2026-11-01T06:30:00Z", "2026-11-01T06:00:00Z"},
+	} {
+		location, _ := time.LoadLocation(tc.zone)
+		at, _ := time.Parse(time.RFC3339, tc.instant)
+		if got := dashboardBucketIn(at, "hour", location).Format(time.RFC3339); got != tc.want {
+			t.Fatalf("%s: %s != %s", tc.zone, got, tc.want)
+		}
+	}
+	if got := NewRequestStatistics().Dashboard(UsageQuery{}, time.Now()).Timezone; got != "UTC" {
+		t.Fatalf("legacy timezone = %s", got)
+	}
+}
+
+func TestDashboardHalfHourDSTBuckets(t *testing.T) {
+	location, err := time.LoadLocation("Australia/Lord_Howe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ instant, bucket, next string }{
+		{"2026-04-04T14:45:00Z", "2026-04-04T14:00:00Z", "2026-04-04T15:00:00Z"},
+		{"2026-04-04T15:15:00Z", "2026-04-04T15:00:00Z", "2026-04-04T15:30:00Z"},
+		{"2026-04-04T15:45:00Z", "2026-04-04T15:30:00Z", "2026-04-04T16:30:00Z"},
+		{"2026-10-03T15:15:00Z", "2026-10-03T14:30:00Z", "2026-10-03T15:30:00Z"},
+		{"2026-10-03T15:45:00Z", "2026-10-03T15:30:00Z", "2026-10-03T16:00:00Z"},
+	} {
+		instant, err := time.Parse(time.RFC3339, tc.instant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bucket := dashboardBucketIn(instant, "hour", location)
+		if got := bucket.Format(time.RFC3339); got != tc.bucket {
+			t.Fatalf("%s: bucket %s, want %s", tc.instant, got, tc.bucket)
+		}
+		if got := dashboardNextHour(bucket, location).Format(time.RFC3339); got != tc.next {
+			t.Fatalf("%s: next %s, want %s", tc.instant, got, tc.next)
+		}
+	}
+}

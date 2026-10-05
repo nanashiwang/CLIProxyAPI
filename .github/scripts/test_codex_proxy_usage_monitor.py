@@ -91,6 +91,11 @@ class MonitorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 monitor.validate_manifest(manifest)
 
+    def test_shared_usage_components_remain_watched_after_move(self):
+        for path in ("frontend/src/components/usage/UsageBillingCell.vue", "frontend/src/components/usage/UsageTokenCell.vue", "frontend/src/components/usage/shared/presenter.ts"):
+            result = monitor.evaluate_comparison({"status": "ahead", "files": [{"filename": path, "status": "modified"}]}, self.checked_in_manifest["shared_watch_paths"])
+            self.assertTrue(result["review_required"], path)
+
     def test_shared_dependency_changes_require_review(self):
         result = monitor.evaluate_comparison({"status": "ahead", "files": [{"filename": "backend/Cargo.lock", "status": "modified"}]}, self.manifest["shared_watch_paths"])
         self.assertTrue(result["review_required"])
@@ -126,6 +131,10 @@ class MonitorTests(unittest.TestCase):
         manifest = copy.deepcopy(self.manifest)
         manifest["repository_reviewed_commit"] = "a" * 40
         manifest["repository_reviewed_release"] = "v3.11.0"
+        # Scenario matching is explicit; new feature IDs do not imply API dependencies.
+        affected = {feature["id"] for feature in manifest["features"][::2]}
+        for feature in manifest["features"]:
+            feature["watch_paths"] = ["frontend/src/api/modules/usage.ts" if feature["id"] in affected else "unrelated/**"]
         report = monitor.build_report(manifest, "a" * 40, {"tag_name": "v3.11.0"},
                                       lambda *args: {"status": "ahead", "files": [{"filename": "frontend/src/api/modules/usage.ts"}]})
         self.assertEqual(report["repository_comparison_basis"], "reviewed_repository")
@@ -133,7 +142,7 @@ class MonitorTests(unittest.TestCase):
         self.assertTrue(report["feature_review"]["review_required"])
         for feature in report["features"]:
             self.assertEqual(feature["source_delta"]["review_required"],
-                             feature["id"].startswith("usage-"))
+                             feature["id"] in affected)
         self.assertEqual(report["reviewed_commit"], self.manifest["reviewed_commit"])
 
     def test_release_only_update_requires_review_and_is_visible(self):

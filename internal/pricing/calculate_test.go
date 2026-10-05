@@ -262,3 +262,39 @@ func assertFloatClose(t *testing.T, got, want float64) {
 		t.Fatalf("value = %.15f, want %.15f", got, want)
 	}
 }
+
+// Prices verified against the official GPT-6.1 Sol model page on 2026-10-05.
+func TestGPT61SolFallbackPricesAndSnapshots(t *testing.T) {
+	s := NewService()
+	for _, tier := range []struct {
+		name       string
+		multiplier float64
+	}{
+		{"standard", 1}, {"priority", 2}, {"fast", 2}, {"flex", .5}, {"batch", .5},
+	} {
+		for _, input := range []int64{272000, 272001} {
+			r := coreusage.Record{Provider: "openai", Model: "gpt-6.1-sol", ServiceTier: tier.name, Detail: coreusage.Detail{TokenBreakdown: coreusage.NewSubsetTokenBreakdown(input, 1000, 500, 100, 10, input+100)}}
+			b := s.CalculateUsageCost(r)
+			if !b.Priced || !b.Pricing.Estimated {
+				t.Fatalf("billing = %+v", b)
+			}
+			rates := []float64{2, 10, .1, 2.5}
+			if input > 272000 {
+				rates = []float64{4, 15, .2, 5}
+			}
+			p := b.Pricing.UnitPricesUSDPerMillion
+			for i, got := range []float64{p.Input, p.Output, p.CacheRead, p.CacheWrite} {
+				assertFloatClose(t, got, rates[i]*tier.multiplier)
+			}
+			want := (float64(input-1500)*rates[0] + 100*rates[1] + 1000*rates[2] + 500*rates[3]) * tier.multiplier / 1e6
+			assertFloatClose(t, b.TotalUSD, want)
+		}
+	}
+	r := coreusage.Record{Provider: "openai", Model: "gpt-6.1-sol", Detail: coreusage.Detail{TokenBreakdown: coreusage.NewSubsetTokenBreakdown(1000, 0, 0, 100, 0, 1100)}}
+	old := s.CalculateUsageCost(r)
+	if err := s.applyCatalog([]byte(`{"gpt-6.1-sol":{"litellm_provider":"openai","input_cost_per_token":0.000003,"output_cost_per_token":0.000012}}`), "remote"); err != nil {
+		t.Fatal(err)
+	}
+	assertFloatClose(t, s.CalculateUsageCost(r).TotalUSD, .0042)
+	assertFloatClose(t, old.TotalUSD, .003)
+}
