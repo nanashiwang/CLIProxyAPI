@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: read
 
 concurrency:
   group: opencode2api-monitor
@@ -29,6 +30,7 @@ jobs:
           fetch-depth: 1
 
       - name: Check upstream and open an issue when review is needed
+        id: review
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -77,7 +79,26 @@ jobs:
           fi
 
           title="[Upstream review] opencode2api update pending"
-          existing_number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "[Upstream review] opencode2api update pending") | .number' 2>/dev/null | head -n 1 || true)"
+          issues_enabled="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.has_issues')"
+          existing_number=""
+          if [[ "${issues_enabled}" == false ]]; then
+            # Use the exact Issue status marker as the artifact deduplication key.
+            artifact_name="opencode2api-review-$(printf '%s' "${status_marker}" | sha256sum | cut -d ' ' -f 1)"
+            artifacts_json="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100")"
+            recorded_run="$(jq -r --arg name "${artifact_name}" '
+              .artifacts[]? | select(.name == $name and .expired == false) | .workflow_run.id
+            ' <<<"${artifacts_json}" | sort -nr | head -n 1)"
+            if [[ -n "${recorded_run}" ]]; then
+              printf 'Current upstream status is already recorded: [review artifact](%s/%s/actions/runs/%s).\n' \
+                "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${recorded_run}" >> "${GITHUB_STEP_SUMMARY}"
+              exit 0
+            fi
+          elif [[ "${issues_enabled}" == true ]]; then
+            existing_number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "[Upstream review] opencode2api update pending") | .number' 2>/dev/null | head -n 1 || true)"
+          else
+            echo "Unexpected has_issues value: ${issues_enabled}" >&2
+            exit 1
+          fi
           if [[ -n "${existing_number}" ]]; then
             existing_issue="$(gh issue view "${existing_number}" --json body,comments 2>/dev/null || printf '{}')"
             if jq -e --arg marker "${status_marker}" '
@@ -143,4 +164,19 @@ jobs:
           - 本 Issue 由自动监控创建，不应直接复制上游代码；请进行行为级审查和重实现。
           EOF2
 
-          gh issue create --title "${title}" --body-file issue.md
+          if [[ "${issues_enabled}" == false ]]; then
+            printf 'Issues are disabled; the review is saved below and in artifact `%s` (90-day retention).\n\n' "${artifact_name}" >> "${GITHUB_STEP_SUMMARY}"
+            cat issue.md >> "${GITHUB_STEP_SUMMARY}"
+            printf 'artifact_name=%s\n' "${artifact_name}" >> "${GITHUB_OUTPUT}"
+          else
+            gh issue create --title "${title}" --body-file issue.md
+          fi
+
+      - name: Preserve review when Issues are disabled
+        if: steps.review.outputs.artifact_name != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.review.outputs.artifact_name }}
+          path: issue.md
+          if-no-files-found: error
+          retention-days: 90
