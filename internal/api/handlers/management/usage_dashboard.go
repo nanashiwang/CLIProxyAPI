@@ -124,6 +124,7 @@ func parseUsageQuery(c *gin.Context, now time.Time) (internalusage.UsageQuery, e
 		if !ok {
 			return query, fmt.Errorf("range must be 24h, 7d, 30d, or all")
 		}
+		query.CacheWindow = normalized
 		switch normalized {
 		case "24h":
 			from = now.Add(-24 * time.Hour)

@@ -17,6 +17,7 @@ import (
 
 // UsageQuery applies the same half-open time range and dimensions to all views.
 type UsageQuery struct {
+	CacheWindow   string `json:"-"` // Internal rolling-window cache identity; never read from clients directly.
 	From, To      time.Time
 	Location      *time.Location
 	Provider      string
@@ -88,18 +89,21 @@ type UsageSummary struct {
 // UsagePerformance only includes successful generation events with reported
 // positive timings. Coverage uses successful events as the denominator.
 type UsagePerformance struct {
-	LatencyP50Ms          *float64 `json:"latency_p50_ms"`
-	LatencyP95Ms          *float64 `json:"latency_p95_ms"`
-	LatencyP99Ms          *float64 `json:"latency_p99_ms"`
-	TTFTP50Ms             *float64 `json:"ttft_p50_ms"`
-	TTFTP95Ms             *float64 `json:"ttft_p95_ms"`
-	TTFTP99Ms             *float64 `json:"ttft_p99_ms"`
-	LatencySamples        int      `json:"latency_samples"`
-	TTFTSamples           int      `json:"ttft_samples"`
-	LatencyCoverage       float64  `json:"latency_coverage"`
-	TTFTCoverage          float64  `json:"ttft_coverage"`
-	OutputTokensPerSecond *float64 `json:"output_tokens_per_second"`
-	ThroughputSamples     int      `json:"throughput_samples"`
+	TimingSemantics            string   `json:"timing_semantics"`
+	LocalOutputTokensPerSecond *float64 `json:"local_output_tokens_per_second"`
+	LocalThroughputSamples     int      `json:"local_throughput_samples"`
+	LatencyP50Ms               *float64 `json:"latency_p50_ms"`
+	LatencyP95Ms               *float64 `json:"latency_p95_ms"`
+	LatencyP99Ms               *float64 `json:"latency_p99_ms"`
+	TTFTP50Ms                  *float64 `json:"ttft_p50_ms"`
+	TTFTP95Ms                  *float64 `json:"ttft_p95_ms"`
+	TTFTP99Ms                  *float64 `json:"ttft_p99_ms"`
+	LatencySamples             int      `json:"latency_samples"`
+	TTFTSamples                int      `json:"ttft_samples"`
+	LatencyCoverage            float64  `json:"latency_coverage"`
+	TTFTCoverage               float64  `json:"ttft_coverage"`
+	OutputTokensPerSecond      *float64 `json:"output_tokens_per_second"`
+	ThroughputSamples          int      `json:"throughput_samples"`
 }
 
 type UsageHealth struct {
@@ -163,6 +167,8 @@ type UsageFilterOptions struct {
 }
 
 type UsageDashboard struct {
+	ComputedAt  time.Time          `json:"computed_at"`
+	CacheHit    bool               `json:"cache_hit"`
 	Timezone    string             `json:"timezone"`
 	Summary     UsageSummary       `json:"summary"`
 	Performance UsagePerformance   `json:"performance"`
@@ -346,6 +352,9 @@ func (h usageRecordCandidates) better(leftIndex, rightIndex int) bool {
 		return left.CostUSD != nil
 	}
 	lv, rv := usageSortValue(left, h.sortBy), usageSortValue(right, h.sortBy)
+	if h.sortBy == "ttft" && (lv < 0) != (rv < 0) {
+		return lv >= 0
+	}
 	if lv == rv {
 		return leftIndex > rightIndex
 	}
@@ -360,7 +369,10 @@ func usageSortValue(detail RequestDetail, sortBy string) float64 {
 	case "latency":
 		return float64(detail.LatencyMs)
 	case "ttft":
-		return float64(detail.TTFTMs)
+		if detail.Timing != nil && detail.Timing.FirstOutputMs != nil {
+			return *detail.Timing.FirstOutputMs
+		}
+		return -1
 	case "tokens":
 		return float64(detail.Tokens.TotalTokens)
 	case "cost":
@@ -408,7 +420,10 @@ type dashboardAggregate struct {
 	cacheHits          int64
 	successGenerations int64
 	throughputTokens   int64
-	throughputDuration int64
+	throughputDuration float64
+	localDuration      float64
+	localTokens        int64
+	localSamples       int
 	throughputSamples  int
 }
 
@@ -423,14 +438,21 @@ func (a *dashboardAggregate) addSamples(detail RequestDetail) {
 	if detail.LatencyMs > 0 {
 		a.latencies = append(a.latencies, detail.LatencyMs)
 	}
-	if detail.TTFTMs > 0 {
-		a.ttfts = append(a.ttfts, detail.TTFTMs)
+	if detail.Timing != nil && detail.Timing.FirstOutputMs != nil {
+		a.ttfts = append(a.ttfts, int64(*detail.Timing.FirstOutputMs))
 	}
 	output := detail.Tokens.OutputTokens + detail.Tokens.ReasoningTokens
-	if detail.TTFTMs > 0 && detail.LatencyMs > detail.TTFTMs && output > 0 && detail.TokenBreakdown != nil && detail.TokenBreakdown.Valid() && detail.TokenBreakdown.Quality == coreusage.TokenAccountingQualityComplete {
-		a.throughputSamples++
-		a.throughputTokens += output
-		a.throughputDuration += detail.LatencyMs - detail.TTFTMs
+	if output > 0 && detail.TokenBreakdown != nil && detail.TokenBreakdown.Valid() && detail.TokenBreakdown.Quality == coreusage.TokenAccountingQualityComplete && detail.Timing != nil {
+		if duration := detail.Timing.UpstreamResponseMs; duration != nil && *duration > 0 {
+			a.throughputSamples++
+			a.throughputTokens += output
+			a.throughputDuration += *duration
+		}
+		if first := detail.Timing.FirstOutputMs; first != nil && float64(detail.LatencyMs) > *first {
+			a.localSamples++
+			a.localTokens += output
+			a.localDuration += float64(detail.LatencyMs) - *first
+		}
 	}
 }
 
@@ -438,6 +460,7 @@ func (a *dashboardAggregate) performance() UsagePerformance {
 	sort.Slice(a.latencies, func(i, j int) bool { return a.latencies[i] < a.latencies[j] })
 	sort.Slice(a.ttfts, func(i, j int) bool { return a.ttfts[i] < a.ttfts[j] })
 	result := UsagePerformance{
+		TimingSemantics: "output_v1", LocalThroughputSamples: a.localSamples,
 		LatencyP50Ms: dashboardPercentile(a.latencies, .50), LatencyP95Ms: dashboardPercentile(a.latencies, .95), LatencyP99Ms: dashboardPercentile(a.latencies, .99),
 		TTFTP50Ms: dashboardPercentile(a.ttfts, .50), TTFTP95Ms: dashboardPercentile(a.ttfts, .95), TTFTP99Ms: dashboardPercentile(a.ttfts, .99),
 		LatencySamples: len(a.latencies), TTFTSamples: len(a.ttfts), LatencyCoverage: dashboardRatio(int64(len(a.latencies)), a.successGenerations), TTFTCoverage: dashboardRatio(int64(len(a.ttfts)), a.successGenerations),
@@ -446,6 +469,10 @@ func (a *dashboardAggregate) performance() UsagePerformance {
 	if a.throughputDuration > 0 {
 		value := float64(a.throughputTokens) * 1000 / float64(a.throughputDuration)
 		result.OutputTokensPerSecond = &value
+	}
+	if a.localDuration > 0 {
+		value := float64(a.localTokens) * 1000 / a.localDuration
+		result.LocalOutputTokensPerSecond = &value
 	}
 	return result
 }
@@ -462,8 +489,8 @@ func (a *dashboardAggregate) add(event storedEvent) {
 			a.latencyTotal += d.LatencyMs
 			a.latencyCount++
 		}
-		if d.TTFTMs > 0 {
-			a.ttftTotal += d.TTFTMs
+		if d.Timing != nil && d.Timing.FirstOutputMs != nil {
+			a.ttftTotal += int64(*d.Timing.FirstOutputMs)
 			a.ttftCount++
 		}
 	}
@@ -495,7 +522,7 @@ func dashboardPercentile(sorted []int64, percentile float64) *float64 {
 
 // Dashboard scans the retained time range once. It does not copy request details
 // into the response or infer attempts, cancellations, or cache prices.
-func (s *RequestStatistics) Dashboard(query UsageQuery, now time.Time) UsageDashboard {
+func buildDashboard(events []storedEvent, query UsageQuery, now time.Time) UsageDashboard {
 	location := query.Location
 	if location == nil {
 		location = time.UTC
@@ -517,84 +544,80 @@ func (s *RequestStatistics) Dashboard(query UsageQuery, now time.Time) UsageDash
 	statusCodes := make(map[int]int64)
 	type accountIdentity struct{ provider, index, id, source string }
 	accountOptions := make(map[accountIdentity]UsageFilterOption)
-	if s != nil {
-		s.mu.RLock()
-		if result.From.IsZero() && len(s.events) > 0 {
-			result.From = s.events[0].Detail.Timestamp
+	if result.From.IsZero() && len(events) > 0 {
+		result.From = events[0].Detail.Timestamp
+	}
+	if result.From.IsZero() || result.From.After(result.To) {
+		result.From = result.To.Add(-24 * time.Hour)
+	}
+	result.Granularity = "day"
+	if result.To.Sub(result.From) <= 48*time.Hour {
+		result.Granularity = "hour"
+	}
+	eventStart, eventEnd := usageQueryBounds(events, query)
+	for _, event := range events[eventStart:eventEnd] {
+		if !query.matchesTime(event) {
+			continue
 		}
-		if result.From.IsZero() || result.From.After(result.To) {
-			result.From = result.To.Add(-24 * time.Hour)
+		d := event.Detail
+		identity := accountIdentity{d.Provider, d.AuthIndex, d.AuthID, d.Source}
+		accountOption, ok := accountOptions[identity]
+		if !ok {
+			accountOption = UsageFilterOption{Value: usageAccountKey(d), Label: usageAccountLabel(d)}
+			accountOptions[identity] = accountOption
 		}
-		result.Granularity = "day"
-		if result.To.Sub(result.From) <= 48*time.Hour {
-			result.Granularity = "hour"
+		optionMaps[0][d.Provider] = d.Provider
+		optionMaps[1][event.Model] = event.Model
+		optionMaps[2][accountOption.Value] = accountOption.Label
+		optionMaps[3][usageAPIKey(event)] = usageAPIKey(event)
+		if d.PoolID != "" {
+			optionMaps[4][d.PoolID] = d.PoolID
 		}
-		start, end := usageQueryBounds(s.events, query)
-		for _, event := range s.events[start:end] {
-			if !query.matchesTime(event) {
-				continue
-			}
-			d := event.Detail
-			identity := accountIdentity{d.Provider, d.AuthIndex, d.AuthID, d.Source}
-			accountOption, ok := accountOptions[identity]
-			if !ok {
-				accountOption = UsageFilterOption{Value: usageAccountKey(d), Label: usageAccountLabel(d)}
-				accountOptions[identity] = accountOption
-			}
-			optionMaps[0][d.Provider] = d.Provider
-			optionMaps[1][event.Model] = event.Model
-			optionMaps[2][accountOption.Value] = accountOption.Label
-			optionMaps[3][usageAPIKey(event)] = usageAPIKey(event)
-			if d.PoolID != "" {
-				optionMaps[4][d.PoolID] = d.PoolID
-			}
-			if !query.matches(event) {
-				continue
-			}
-			summary.add(event)
-			summary.addSamples(d)
-			result.Summary.Estimated = result.Summary.Estimated || d.Billing.Pricing.Estimated
-			result.Summary.CacheWriteUnreported = result.Summary.CacheWriteUnreported || d.Billing.Reason == "cache_write_tokens_unreported"
-			quality := &result.Summary.TokenQuality
-			if d.TokenBreakdown == nil || !d.TokenBreakdown.Valid() {
-				quality.Unavailable++
-			} else {
-				switch d.TokenBreakdown.Quality {
-				case coreusage.TokenAccountingQualityComplete:
-					quality.Complete++
-				case coreusage.TokenAccountingQualityInconsistent:
-					quality.Inconsistent++
-				case coreusage.TokenAccountingQualityUnclassified:
-					quality.Unclassified++
-				}
-			}
-			statusCodes[d.StatusCode]++
-			if d.StatusCode >= 400 && d.StatusCode < 500 {
-				result.Health.ClientErrorCount++
-			}
-			if d.StatusCode >= 500 && d.StatusCode < 600 {
-				result.Health.ServerErrorCount++
-			}
-			if d.StatusCode == 429 {
-				result.Health.RateLimitedCount++
-			}
-			if d.Billing.Priced {
-				result.Cost.Breakdown.InputUSD += d.Billing.Breakdown.InputUSD
-				result.Cost.Breakdown.OutputUSD += d.Billing.Breakdown.OutputUSD
-				result.Cost.Breakdown.CacheReadUSD += d.Billing.Breakdown.CacheReadUSD
-				result.Cost.Breakdown.CacheWriteUSD += d.Billing.Breakdown.CacheWriteUSD
-			}
-			addDashboardDimension(models, event.Model, event.Model, event)
-			addDashboardDimension(providers, d.Provider, d.Provider, event)
-			addDashboardDimension(accounts, accountOption.Value, accountOption.Label, event)
-			bucket := dashboardBucketIn(d.Timestamp, result.Granularity, location)
-			if bucketTotals[bucket] == nil {
-				bucketTotals[bucket] = &dashboardAggregate{}
-			}
-			bucketTotals[bucket].add(event)
-			bucketTotals[bucket].addSamples(d)
+		if !query.matches(event) {
+			continue
 		}
-		s.mu.RUnlock()
+		summary.add(event)
+		summary.addSamples(d)
+		result.Summary.Estimated = result.Summary.Estimated || d.Billing.Pricing.Estimated
+		result.Summary.CacheWriteUnreported = result.Summary.CacheWriteUnreported || d.Billing.Reason == "cache_write_tokens_unreported"
+		quality := &result.Summary.TokenQuality
+		if d.TokenBreakdown == nil || !d.TokenBreakdown.Valid() {
+			quality.Unavailable++
+		} else {
+			switch d.TokenBreakdown.Quality {
+			case coreusage.TokenAccountingQualityComplete:
+				quality.Complete++
+			case coreusage.TokenAccountingQualityInconsistent:
+				quality.Inconsistent++
+			case coreusage.TokenAccountingQualityUnclassified:
+				quality.Unclassified++
+			}
+		}
+		statusCodes[d.StatusCode]++
+		if d.StatusCode >= 400 && d.StatusCode < 500 {
+			result.Health.ClientErrorCount++
+		}
+		if d.StatusCode >= 500 && d.StatusCode < 600 {
+			result.Health.ServerErrorCount++
+		}
+		if d.StatusCode == 429 {
+			result.Health.RateLimitedCount++
+		}
+		if d.Billing.Priced {
+			result.Cost.Breakdown.InputUSD += d.Billing.Breakdown.InputUSD
+			result.Cost.Breakdown.OutputUSD += d.Billing.Breakdown.OutputUSD
+			result.Cost.Breakdown.CacheReadUSD += d.Billing.Breakdown.CacheReadUSD
+			result.Cost.Breakdown.CacheWriteUSD += d.Billing.Breakdown.CacheWriteUSD
+		}
+		addDashboardDimension(models, event.Model, event.Model, event)
+		addDashboardDimension(providers, d.Provider, d.Provider, event)
+		addDashboardDimension(accounts, accountOption.Value, accountOption.Label, event)
+		bucket := dashboardBucketIn(d.Timestamp, result.Granularity, location)
+		if bucketTotals[bucket] == nil {
+			bucketTotals[bucket] = &dashboardAggregate{}
+		}
+		bucketTotals[bucket].add(event)
+		bucketTotals[bucket].addSamples(d)
 	}
 	if result.From.IsZero() {
 		result.From = result.To.Add(-24 * time.Hour)

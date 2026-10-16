@@ -81,21 +81,22 @@ type TokenStats struct {
 
 // RequestDetail stores one persisted request event without secrets or failure bodies.
 type RequestDetail struct {
-	Diagnostics                 *coreusage.Diagnostics `json:"diagnostics,omitempty"`
-	ClientKeyID                 string                 `json:"client_key_id,omitempty"`
-	PoolID                      string                 `json:"pool_id,omitempty"`
-	Timestamp                   time.Time              `json:"timestamp"`
-	LatencyMs                   int64                  `json:"latency_ms"`
-	TTFTMs                      int64                  `json:"ttft_ms"`
-	Provider                    string                 `json:"provider"`
-	ExecutorType                string                 `json:"executor_type"`
-	Alias                       string                 `json:"alias"`
-	RequestedModel              string                 `json:"requested_model,omitempty"`
-	UpstreamModel               string                 `json:"upstream_model,omitempty"`
-	UpstreamResponseModel       string                 `json:"upstream_response_model,omitempty"`
-	UpstreamResponseModelSource string                 `json:"upstream_response_model_source,omitempty"`
-	ClientTransport             string                 `json:"client_transport,omitempty"`
-	UpstreamTransport           string                 `json:"upstream_transport,omitempty"`
+	Timing                      *coreusage.ResponseTiming `json:"timing,omitempty"`
+	Diagnostics                 *coreusage.Diagnostics    `json:"diagnostics,omitempty"`
+	ClientKeyID                 string                    `json:"client_key_id,omitempty"`
+	PoolID                      string                    `json:"pool_id,omitempty"`
+	Timestamp                   time.Time                 `json:"timestamp"`
+	LatencyMs                   int64                     `json:"latency_ms"`
+	TTFTMs                      int64                     `json:"ttft_ms"`
+	Provider                    string                    `json:"provider"`
+	ExecutorType                string                    `json:"executor_type"`
+	Alias                       string                    `json:"alias"`
+	RequestedModel              string                    `json:"requested_model,omitempty"`
+	UpstreamModel               string                    `json:"upstream_model,omitempty"`
+	UpstreamResponseModel       string                    `json:"upstream_response_model,omitempty"`
+	UpstreamResponseModelSource string                    `json:"upstream_response_model_source,omitempty"`
+	ClientTransport             string                    `json:"client_transport,omitempty"`
+	UpstreamTransport           string                    `json:"upstream_transport,omitempty"`
 	// ClientIP is the connection peer address, matching request logs, not an untrusted forwarding header.
 	ClientIP            string                    `json:"client_ip,omitempty"`
 	UserAgent           string                    `json:"user_agent,omitempty"`
@@ -256,8 +257,11 @@ type cachedWindowSnapshot struct {
 }
 
 type RequestStatistics struct {
-	opMu sync.Mutex
-	mu   sync.RWMutex
+	dashboardMu    sync.Mutex
+	dashboardCache map[string]dashboardCacheEntry
+	version        uint64 // Protected by mu; changes with every source mutation.
+	opMu           sync.Mutex
+	mu             sync.RWMutex
 
 	events           []storedEvent
 	diagnosticTraces map[string]retainedDiagnosticTrace
@@ -323,6 +327,7 @@ func (s *RequestStatistics) Configure(options Options) error {
 	loaded = pruneEvents(loaded, options, time.Now())
 
 	s.mu.Lock()
+	s.version++
 	s.events = loaded
 	s.rebuildDiagnosticIndex()
 	s.mu.Unlock()
@@ -354,6 +359,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	defer s.opMu.Unlock()
 
 	s.mu.Lock()
+	s.version++
 	s.events = insertEventSorted(s.events, event)
 	s.addDiagnosticIndex(event)
 	before := len(s.events)
@@ -640,6 +646,7 @@ func cloneSnapshot(source StatisticsSnapshot) StatisticsSnapshot {
 			value.Details = append([]RequestDetail(nil), value.Details...)
 			for i := range value.Details {
 				value.Details[i].Diagnostics = coreusage.NormalizeDiagnostics(value.Details[i].Diagnostics)
+				value.Details[i].Timing = coreusage.NormalizeResponseTiming(value.Details[i].Timing)
 			}
 			api.Models[model] = value
 		}
@@ -704,6 +711,7 @@ func appendRecentDetails(snapshot *StatisticsSnapshot, events []storedEvent, fro
 		}
 		detail := event.Detail
 		detail.Diagnostics = coreusage.NormalizeDiagnostics(detail.Diagnostics)
+		detail.Timing = coreusage.NormalizeResponseTiming(detail.Timing)
 		model.Details = append(model.Details, detail)
 		api.Models[event.Model] = model
 		snapshot.APIs[event.API] = api
@@ -826,6 +834,7 @@ func (s *RequestStatistics) Clear() error {
 	defer s.opMu.Unlock()
 
 	s.mu.Lock()
+	s.version++
 	s.events = nil
 	s.diagnosticTraces = nil
 	s.mu.Unlock()
@@ -866,6 +875,7 @@ func (s *RequestStatistics) MergeSnapshot(snapshot StatisticsSnapshot) (MergeRes
 					continue
 				}
 				seen[key] = struct{}{}
+				s.version++
 				s.events = append(s.events, event)
 				result.Added++
 			}
@@ -874,6 +884,7 @@ func (s *RequestStatistics) MergeSnapshot(snapshot StatisticsSnapshot) (MergeRes
 	sort.SliceStable(s.events, func(i, j int) bool {
 		return s.events[i].Detail.Timestamp.Before(s.events[j].Detail.Timestamp)
 	})
+	s.version++
 	s.events = pruneEvents(s.events, s.options, time.Now())
 	s.rebuildDiagnosticIndex()
 	events := append([]storedEvent(nil), s.events...)
@@ -1194,6 +1205,7 @@ func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
 			Timestamp:                   timestamp.UTC(),
 			LatencyMs:                   durationMilliseconds(record.Latency),
 			TTFTMs:                      durationMilliseconds(record.TTFT),
+			Timing:                      coreusage.NormalizeResponseTiming(record.Timing),
 			Provider:                    provider,
 			ExecutorType:                valueOrUnknown(record.ExecutorType),
 			Alias:                       alias,
@@ -1252,6 +1264,7 @@ func normalizeStoredEvent(event storedEvent) storedEvent {
 	normalizeModelObservation(&event.Detail)
 	normalizeRequestMetadata(&event.Detail)
 	event.Detail.Diagnostics = coreusage.NormalizeDiagnostics(event.Detail.Diagnostics)
+	event.Detail.Timing = coreusage.NormalizeResponseTiming(event.Detail.Timing)
 	if event.Detail.StatusCode <= 0 {
 		if event.Detail.Failed {
 			event.Detail.StatusCode = 500
@@ -1302,6 +1315,7 @@ func addEventToSnapshot(snapshot *StatisticsSnapshot, event storedEvent) {
 	addEventToAggregate(snapshot, event)
 	detail := event.Detail
 	detail.Diagnostics = coreusage.NormalizeDiagnostics(detail.Diagnostics)
+	detail.Timing = coreusage.NormalizeResponseTiming(detail.Timing)
 	apiSnapshot := snapshot.APIs[event.API]
 	modelSnapshot := apiSnapshot.Models[event.Model]
 	modelSnapshot.Details = append(modelSnapshot.Details, detail)

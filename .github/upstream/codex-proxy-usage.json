@@ -407,6 +407,89 @@
         "Go full suite and pricing race; all short/long context service tiers, dynamic catalog precedence and immutable historical billing"
       ],
       "notes": "Dynamic LiteLLM catalog already contains the model. Add only offline fallback with 272k threshold, four token buckets and priority/fast/flex/batch tiers. Tool charges and residency premiums remain outside CPA token-only costs."
+    },
+    {
+      "id": "frontend-source-map-security",
+      "title": "Patched source-map-js build dependency",
+      "status": "adapted",
+      "source_commit": "5cfe0c68cc0c4328a845a97222dfe41709d5085b",
+      "adapted_commit": "5cfe0c68cc0c4328a845a97222dfe41709d5085b",
+      "local_areas": [
+        "Cli-Proxy-API-Management-Center/package.json",
+        "Cli-Proxy-API-Management-Center/bun.lock"
+      ],
+      "watch_paths": [
+        "frontend/pnpm-lock.yaml",
+        "frontend/package.json"
+      ],
+      "validation": [
+        "Go full suite, targeted race tests, binary build and real management API smoke",
+        "React 577 tests, TypeScript, lint and production build; real local management UI with synthetic data"
+      ],
+      "notes": "Bun override covers all transitive instances; source-map-js 1.2.2 resolves GHSA-68fv-2mgg-jv7q. No runtime incident is inferred."
+    },
+    {
+      "id": "observed-output-timing",
+      "title": "Separate first byte, output and upstream response timing",
+      "status": "adapted",
+      "source_commit": "98704dfde8b774f693fec138d67a718f47ad35d1",
+      "adapted_commit": "98704dfde8b774f693fec138d67a718f47ad35d1",
+      "local_areas": [
+        "CLIProxyAPI/internal/runtime/executor/helps",
+        "CLIProxyAPI/internal/usage",
+        "CLIProxyAPI/sdk/cliproxy/usage",
+        "Cli-Proxy-API-Management-Center/src/features/usage"
+      ],
+      "watch_paths": [
+        "backend/crates/providers/openai/src/provider/**",
+        "backend/crates/providers/openai/src/transport/protocol/**",
+        "frontend/src/views/usage/**"
+      ],
+      "validation": [
+        "Go full suite, targeted race tests, binary build and real management API smoke",
+        "React 577 tests, TypeScript, lint and production build; real local management UI with synthetic data"
+      ],
+      "notes": "Selective Go/React adaptation. Keep legacy ttft_ms as first byte; optional timing facts drive new output quantiles. Missing, oversized or invalid upstream timing stays unknown. Local throughput is explicitly estimated; token accounting v2 is unchanged."
+    },
+    {
+      "id": "bounded-dashboard-snapshots",
+      "title": "Versioned dashboard snapshots and query lock isolation",
+      "status": "adapted",
+      "source_commit": "cc69368f77bd001ac3a10b904a70117febddae68",
+      "adapted_commit": "cc69368f77bd001ac3a10b904a70117febddae68",
+      "local_areas": [
+        "CLIProxyAPI/internal/usage"
+      ],
+      "watch_paths": [
+        "backend/crates/gateway-store/src/postgres/observability/**"
+      ],
+      "validation": [
+        "Go full suite, targeted race tests, binary build and real management API smoke",
+        "React 577 tests, TypeScript, lint and production build; real local management UI with synthetic data"
+      ],
+      "notes": "Borrow query isolation and source-version validity, not PostgreSQL migrations. Copy selected events under the read lock, aggregate outside it, serialize builds and cache up to 8 snapshots of at most 2 MiB each for 1 second. Record, retention, import, clear and configure invalidate source versions."
+    },
+    {
+      "id": "operational-log-health",
+      "title": "Bounded operational logs and redacted failure causes",
+      "status": "adapted",
+      "source_commit": "d922c3af604431e5c25898e71a2204191d735587",
+      "adapted_commit": "d922c3af604431e5c25898e71a2204191d735587",
+      "local_areas": [
+        "CLIProxyAPI/internal/logging",
+        "CLIProxyAPI/sdk/cliproxy/usage",
+        "CLIProxyAPI/internal/api/handlers/management/logs.go",
+        "Cli-Proxy-API-Management-Center/src/pages/LogsPage.tsx"
+      ],
+      "watch_paths": [
+        "backend/crates/gateway-host/src/logging/**",
+        "backend/crates/gateway-core/src/diagnostics/**"
+      ],
+      "validation": [
+        "Go full suite, targeted race tests, binary build and real management API smoke",
+        "React 577 tests, TypeScript, lint and production build; real local management UI with synthetic data"
+      ],
+      "notes": "Operational file logging has item/byte budgets, error reserve, batched writes and loss/error counters. Persist only allowlisted cause categories. Billable usage delivery, account permissions, leases, cooling, retries and precommit limits are unchanged."
     }
   ],
   "review_notes": [

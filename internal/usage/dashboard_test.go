@@ -13,7 +13,9 @@ import (
 )
 
 func dashboardTestEvent(timestamp time.Time, model, authIndex string, failed, generate bool, latency int64, priced bool) storedEvent {
+	firstOutput, upstreamDuration := float64(latency)/10, float64(latency)*.9
 	event := eventFromRecord(context.Background(), coreusage.Record{
+		Timing:   &coreusage.ResponseTiming{FirstOutputMs: &firstOutput, UpstreamResponseMs: &upstreamDuration},
 		Provider: "openai", ExecutorType: "codex", Model: model, AuthID: "account-" + authIndex, AuthIndex: authIndex,
 		APIKey: "synthetic-dashboard-key", RequestedAt: timestamp, Latency: time.Duration(latency) * time.Millisecond,
 		TTFT: time.Duration(latency/10) * time.Millisecond, Failed: failed, Generate: coreusage.GenerateFlag(generate),

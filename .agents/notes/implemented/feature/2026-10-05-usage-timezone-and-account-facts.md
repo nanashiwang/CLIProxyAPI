@@ -33,3 +33,5 @@ Frontend `bun run verify` passes 572 tests, TypeScript and production build, wit
 Old backends still return UTC buckets; the new page must label that fallback truthfully. Browser timezone is a display choice, not an account scheduling policy. Tool charges and residency premiums remain outside the existing token-only cost schema. No raw credentials or account facts enter redacted diagnostic exports.
 
 Implementation: [dashboard buckets](../../../../internal/usage/dashboard.go), [query validation](../../../../internal/api/handlers/management/usage_dashboard.go), [pricing fallback](../../../../internal/pricing/fallback.json), and [adaptation manifest](../../../../.github/upstream/codex-proxy-usage.json).
+
+Related decision: [observed timing, query caching and operational log health](2026-10-12-usage-performance-and-log-health.md) extends the same usage entry points while preserving this note's timezone and historical billing rules.

@@ -201,6 +201,7 @@ func (f *HomeAppLogForwarder) Fire(entry *log.Entry) error {
 	select {
 	case f.queue <- payload:
 	default:
+		forwardDropped.Add(1)
 	}
 	return nil
 }

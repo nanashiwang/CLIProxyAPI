@@ -127,6 +127,7 @@ def verify_usage_insights(request):
                 "client_ip": "192.0.2.41" if index == 0 else "2001:db8::42",
                 "user_agent": "CPA-Usage-Smoke/1.0" if index == 0 else "CPA-Usage-Smoke/2.0",
             })
+    records[0]["timing"] = {"first_byte_ms": 100, "first_output_ms": 350, "first_text_ms": 400, "upstream_response_ms": 800}
     imported = request("usage/import", "POST", {
         "version": 2,
         "usage": {"apis": {"smoke": {"models": {"smoke-model": {"details": records}}}}},
@@ -146,6 +147,9 @@ def verify_usage_insights(request):
         else:
             raise RuntimeError("usage queries must reject an invalid timezone")
     print("PASS usage timezone: legacy UTC, explicit Almaty, shared validation")
+    assert dashboard["performance"]["timing_semantics"] == "output_v1"
+    assert dashboard["performance"]["ttft_p50_ms"] == 350, "first byte must not become first output"
+    assert dashboard["performance"]["output_tokens_per_second"] is None, "legacy token quality cannot become reliable throughput"
     summary = dashboard.get("summary", {})
     if summary.get("total_requests") != 2 or summary.get("success_count") != 1:
         raise RuntimeError("usage dashboard must exclude prewarm records from inference totals")

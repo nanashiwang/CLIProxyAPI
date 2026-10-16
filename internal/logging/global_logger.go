@@ -199,6 +199,9 @@ func ConfigureLogOutput(cfg *config.Config) error {
 		if err := os.MkdirAll(logDir, 0o755); err != nil {
 			return fmt.Errorf("logging: failed to create log directory: %w", err)
 		}
+		if async := activeAsyncOutput.Swap(nil); async != nil {
+			async.Close()
+		}
 		if logWriter != nil {
 			_ = logWriter.Close()
 		}
@@ -210,8 +213,13 @@ func ConfigureLogOutput(cfg *config.Config) error {
 			MaxAge:     0,
 			Compress:   false,
 		}
-		log.SetOutput(logWriter)
+		async := newBoundedLogWriter(logWriter, 4096, 8<<20, 128, 1<<20)
+		activeAsyncOutput.Store(async)
+		log.SetOutput(async)
 	} else {
+		if async := activeAsyncOutput.Swap(nil); async != nil {
+			async.Close()
+		}
 		if logWriter != nil {
 			_ = logWriter.Close()
 			logWriter = nil
@@ -229,6 +237,9 @@ func closeLogOutputs() {
 
 	stopLogDirCleanerLocked()
 
+	if async := activeAsyncOutput.Swap(nil); async != nil {
+		async.Close()
+	}
 	if logWriter != nil {
 		_ = logWriter.Close()
 		logWriter = nil

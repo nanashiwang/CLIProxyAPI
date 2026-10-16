@@ -91,6 +91,7 @@ func (w *FileStreamingLogWriter) WriteChunkAsync(chunk []byte) {
 	select {
 	case w.chunkChan <- chunkCopy:
 	default:
+		streamDropped.Add(1)
 		// Channel is full, skip this chunk to avoid blocking
 	}
 }

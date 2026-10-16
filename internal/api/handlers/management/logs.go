@@ -551,6 +551,7 @@ func writeLogsResponse(c *gin.Context, lines []string, lineCount int, latest int
 		lines = []string{}
 	}
 	payload := gin.H{
+		"log_health":       logging.OperationalLogHealth(),
 		"lines":            lines,
 		"line-count":       lineCount,
 		"latest-timestamp": latest,

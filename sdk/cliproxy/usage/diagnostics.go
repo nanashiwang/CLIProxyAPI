@@ -24,18 +24,19 @@ type Diagnostics struct {
 	Truncated  bool                `json:"truncated"`
 }
 type DiagnosticAttempt struct {
-	Sequence    int        `json:"sequence"`
-	Provider    string     `json:"provider"`
-	AuthID      string     `json:"auth_id,omitempty"`
-	Model       string     `json:"model,omitempty"`
-	StartedAt   time.Time  `json:"started_at"`
-	EndedAt     *time.Time `json:"ended_at,omitempty"`
-	Outcome     string     `json:"outcome"`
-	StatusCode  int        `json:"status_code,omitempty"`
-	Phase       string     `json:"phase"`
-	RetryReason string     `json:"retry_reason"`
-	Transport   string     `json:"transport,omitempty"`
-	FirstByteMs *int64     `json:"first_byte_ms,omitempty"`
+	FailureCategory string     `json:"failure_category,omitempty"`
+	Sequence        int        `json:"sequence"`
+	Provider        string     `json:"provider"`
+	AuthID          string     `json:"auth_id,omitempty"`
+	Model           string     `json:"model,omitempty"`
+	StartedAt       time.Time  `json:"started_at"`
+	EndedAt         *time.Time `json:"ended_at,omitempty"`
+	Outcome         string     `json:"outcome"`
+	StatusCode      int        `json:"status_code,omitempty"`
+	Phase           string     `json:"phase"`
+	RetryReason     string     `json:"retry_reason"`
+	Transport       string     `json:"transport,omitempty"`
+	FirstByteMs     *int64     `json:"first_byte_ms,omitempty"`
 }
 type DiagnosticEvent struct {
 	Attempt  int    `json:"attempt"`
@@ -116,6 +117,7 @@ func FinishDiagnosticAttempt(ctx context.Context, err error) {
 		a.Outcome = "succeeded"
 	}
 	if err != nil {
+		a.FailureCategory = FailureCategory(err)
 		a.Outcome = "failed"
 		if errors.Is(err, context.Canceled) {
 			a.Outcome = "cancelled"
@@ -203,6 +205,9 @@ func CaptureExecutionDiagnostics(ctx context.Context, record Record) *Diagnostic
 		if record.Failed {
 			a.Outcome = "failed"
 			a.StatusCode = record.Fail.StatusCode
+			if record.Fail.Category != "" {
+				a.FailureCategory = normalizeFailureCategory(record.Fail.Category)
+			}
 			if errors.Is(ctx.Err(), context.Canceled) {
 				a.Outcome = "cancelled"
 			}
@@ -246,6 +251,7 @@ func NormalizeDiagnostics(value *Diagnostics) *Diagnostics {
 		if a.StatusCode < 100 || a.StatusCode > 599 {
 			a.StatusCode = 0
 		}
+		a.FailureCategory = normalizeFailureCategory(a.FailureCategory)
 		switch a.Outcome {
 		case "running", "succeeded", "failed", "cancelled", "interrupted":
 		default:

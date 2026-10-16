@@ -27,6 +27,7 @@ func (r *UsageReporter) resetModelObservation() uint64 {
 	r.modelMu.Lock()
 	defer r.modelMu.Unlock()
 	r.modelGeneration++
+	r.timing = &usage.ResponseTiming{}
 	r.upstreamModel, r.responseModel, r.responseSource = "", "", ""
 	r.upstreamTransport = ""
 	r.responseRank = 0
@@ -114,7 +115,8 @@ func (r *UsageReporter) NewResponseModelStreamObserver(contentType string) (func
 	observer := newResponseModelObserver(contentType, func(model, source string, rank uint8) {
 		r.observeResponseModel(model, source, rank, generation)
 	})
-	return observer.Feed, observer.Finish
+	timing := r.newTimingObserver(contentType, generation)
+	return func(data []byte) { observer.Feed(data); timing.Feed(data) }, func() { observer.Finish(); timing.Finish() }
 }
 
 // ObserveResponseModelHeaders accepts only explicit model-identification headers.
@@ -149,6 +151,7 @@ func (r *UsageReporter) ObserveResponseModelPayload(payload []byte, source strin
 	r.modelMu.RLock()
 	generation := r.modelGeneration
 	r.modelMu.RUnlock()
+	r.observeTimingPayload(payload, generation)
 	parser := modelJSONObserver{source: source, emit: func(model, observedSource string, rank uint8) {
 		r.observeResponseModel(model, observedSource, rank, generation)
 	}}
@@ -169,7 +172,8 @@ func (r *UsageReporter) ObserveDecodedResponseBody(body io.ReadCloser, contentTy
 	observer := newResponseModelObserver(contentType, func(model, source string, rank uint8) {
 		r.observeResponseModel(model, source, rank, generation)
 	})
-	return &usageTTFTReadCloser{ReadCloser: body, observe: observer.Feed, finish: observer.Finish}
+	timing := r.newTimingObserver(contentType, generation)
+	return &usageTTFTReadCloser{ReadCloser: body, observe: func(data []byte) { observer.Feed(data); timing.Feed(data) }, finish: func() { observer.Finish(); timing.Finish() }}
 }
 
 func (r *UsageReporter) observeResponseModel(model, source string, rank uint8, generation uint64) {

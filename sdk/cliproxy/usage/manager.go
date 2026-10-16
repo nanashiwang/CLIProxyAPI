@@ -20,6 +20,7 @@ const AutoServiceTier = "auto"
 
 // Record contains the usage statistics captured for a single provider request.
 type Record struct {
+	Timing      *ResponseTiming
 	Diagnostics *Diagnostics
 	Provider    string
 	// ExecutorType stores the concrete executor type that handled the request.
@@ -70,6 +71,7 @@ type Record struct {
 
 // Failure holds HTTP failure metadata for an upstream request attempt.
 type Failure struct {
+	Category   string
 	StatusCode int
 	Body       string
 }

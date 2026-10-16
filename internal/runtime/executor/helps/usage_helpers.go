@@ -22,6 +22,7 @@ import (
 )
 
 type UsageReporter struct {
+	timing            *usage.ResponseTiming
 	diagnosticContext context.Context
 	provider          string
 	executorType      string
@@ -193,9 +194,10 @@ func (r *UsageReporter) observeResponseForGeneration(resp *http.Response, genera
 	observer := newResponseModelObserver(resp.Header.Get("Content-Type"), func(model, source string, rank uint8) {
 		r.observeResponseModel(model, source, rank, generation)
 	})
+	timing := r.newTimingObserver(resp.Header.Get("Content-Type"), generation)
 	var observe func([]byte)
 	if encoding := strings.TrimSpace(resp.Header.Get("Content-Encoding")); encoding == "" || strings.EqualFold(encoding, "identity") || resp.Uncompressed {
-		observe = observer.Feed
+		observe = func(data []byte) { observer.Feed(data); timing.Feed(data) }
 	}
 	resp.Body = &usageTTFTReadCloser{
 		ReadCloser: resp.Body,
@@ -203,10 +205,11 @@ func (r *UsageReporter) observeResponseForGeneration(resp *http.Response, genera
 		finish: func() {
 			if observe != nil {
 				observer.Finish()
+				timing.Finish()
 			}
 		},
 		mark: func() {
-			r.MarkFirstResponseByte()
+			r.markFirstResponseByte(generation)
 		},
 	}
 }
@@ -226,6 +229,26 @@ func (r *UsageReporter) MarkFirstResponseByte() {
 	if r == nil {
 		return
 	}
+	r.modelMu.RLock()
+	generation := r.modelGeneration
+	r.modelMu.RUnlock()
+	r.markFirstResponseByte(generation)
+}
+
+func (r *UsageReporter) markFirstResponseByte(generation uint64) {
+	r.modelMu.Lock()
+	if generation != r.modelGeneration {
+		r.modelMu.Unlock()
+		return
+	}
+	if r.timing == nil {
+		r.timing = &usage.ResponseTiming{}
+	}
+	if r.timing.FirstByteMs == nil {
+		elapsed := float64(time.Since(r.requestedAt)) / float64(time.Millisecond)
+		r.timing.FirstByteMs = &elapsed
+	}
+	r.modelMu.Unlock()
 	r.ttftMu.Lock()
 	if r.ttftSet {
 		r.ttftMu.Unlock()
@@ -373,7 +396,9 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 	r.modelMu.RLock()
 	upstreamModel, responseModel, responseSource, upstreamTransport := r.upstreamModel, r.responseModel, r.responseSource, r.upstreamTransport
 	r.modelMu.RUnlock()
+	timing := r.responseTiming()
 	if model != r.model {
+		timing = nil
 		// Tool sub-model billing has no independently observed upstream exchange.
 		upstreamModel, responseModel, responseSource = "", "", ""
 	}
@@ -403,6 +428,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		RequestedAt:                 r.requestedAt,
 		Latency:                     r.latency(),
 		TTFT:                        r.ttftDuration(),
+		Timing:                      timing,
 		Failed:                      failed,
 		Fail:                        fail,
 		Detail:                      detail,
@@ -417,6 +443,7 @@ func failFromErrors(errs ...error) usage.Failure {
 		return usage.Failure{
 			Body:       strings.TrimSpace(err.Error()),
 			StatusCode: clienterror.HTTPStatusFromError(err),
+			Category:   usage.FailureCategory(err),
 		}
 	}
 	return usage.Failure{}
