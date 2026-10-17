@@ -71,12 +71,23 @@ jobs:
         run: |
           set -euo pipefail
           tag="${IMAGE}:${GITHUB_REF_NAME}-${{ matrix.arch }}"
-          trap 'docker rm -f cpa-image-smoke >/dev/null 2>&1 || true' EXIT
-          docker run --name cpa-image-smoke "$tag" -h > "$RUNNER_TEMP/image-help.log" 2>&1
+          trap 'docker rm -f cpa-image-smoke cpa-management-smoke >/dev/null 2>&1 || true' EXIT
+          timeout 30 docker run --name cpa-image-smoke "$tag" -h > "$RUNNER_TEMP/image-help.log" 2>&1
           cat "$RUNNER_TEMP/image-help.log"
           grep -F "${GITHUB_REF_NAME}" "$RUNNER_TEMP/image-help.log"
           grep -F "${GITHUB_SHA}" "$RUNNER_TEMP/image-help.log"
           docker rm cpa-image-smoke
+          export CPA_SMOKE_IMAGE="$tag"
+          cat > "$RUNNER_TEMP/run-container" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker run --rm --name cpa-management-smoke --network host \
+            --mount "type=bind,src=${RUNNER_TEMP},dst=${RUNNER_TEMP}" \
+            "$CPA_SMOKE_IMAGE" "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/run-container"
+          TMPDIR="$RUNNER_TEMP" timeout 120 python3 .github/scripts/smoke-management-api.py "$RUNNER_TEMP/run-container"
+          docker rm -f cpa-management-smoke >/dev/null 2>&1 || true
           docker push "$tag"
 
   manifest:
