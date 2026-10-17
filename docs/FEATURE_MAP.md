@@ -16,3 +16,7 @@ Initially verified on 2026-09-29; usage timing, query caching and operational lo
 Use personal/main, not upstream origin, for project pushes. The parent CPA scope includes only this backend and Cli-Proxy-API-Management-Center. Retain English authored docs/comments and required Go compile checks.
 
 Before adding a feature, inspect adjacent flows and the current source of truth; shared filters, data definitions and access rules must not diverge across entry points.
+
+## Release delivery
+
+Personal mainline verification creates a version tag and dispatches [release.yaml](../.github/workflows/release.yaml). All binary platforms must pass before publication. [FreeBSD sysroot download](../.github/scripts/build-freebsd-cgo.sh) authenticates every source with a pinned SHA256 before extraction. [personal-container.yml](../.github/workflows/personal-container.yml) then builds and smoke-tests both native Linux architectures using the existing Dockerfile and publishes repository-owned GHCR tags. A tagged manual run retries only container delivery. The operator still owns production deployment.
