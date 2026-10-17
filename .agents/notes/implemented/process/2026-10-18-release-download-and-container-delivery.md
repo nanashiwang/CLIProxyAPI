@@ -8,11 +8,12 @@ The FreeBSD amd64 job fails while downloading its pinned 14.3 sysroot, blocking 
 
 ## Decision
 
-Keep the 14.3 baseline and pinned SHA256. Add bounded downloads with visible failures and a documented FreeBSD archive fallback; never extract bytes that fail the pinned digest. Publish repository-owned GHCR containers from the same release tag after all binary release gates succeed, using the existing Dockerfile and native amd64/arm64 runners. A manual tagged run can retry container delivery. Serialize container publication and update latest only for GitHub's current public release.
+Keep the 14.3 baseline and pinned SHA256. Add bounded downloads with visible failures and an HTTPS Princeton mirror fallback with an identical 14.3 MANIFEST digest; never extract bytes that fail the pinned digest. Publish repository-owned GHCR containers from the same release tag after all binary release gates succeed, using the existing Dockerfile and native amd64/arm64 runners. A manual tagged run can retry container delivery. Serialize container publication and update latest only for GitHub's current public release.
 
 ## Alternatives considered
 
 - Skipping FreeBSD or publishing the incomplete draft bypasses the existing release completeness gate; rejected.
+- The official HTTP archive is also unreachable from the GitHub runner and offers no availability improvement; preserve HTTPS-only downloads.
 - Upgrading the sysroot changes the compatibility baseline without need; retain the pinned archive.
 - Using the upstream DockerHub namespace requires unrelated credentials and risks publishing to another owner; use GHCR with the repository token.
 - Migrating production from systemd to Docker exceeds artifact delivery; preserve binary assets and leave deployment to the operator.
@@ -23,7 +24,7 @@ Four local download regression tests pass, including primary failure, fallback s
 
 ## Consequences
 
-The official archive is a single-location service. HTTP fallback for a public archive is authenticated by a fixed in-repository digest, never by a checksum fetched from that same transport. Network outages can still prevent release. GHCR package visibility is verified separately from build success. Containers do not imply a production rollout or live Claude acceptance.
+The official archive is a single-location service. Every HTTPS source is authenticated by a fixed in-repository digest, never by a checksum dynamically trusted from the same download. The Princeton mirror may later prune old releases, so complete network failure remains a hard error. Network outages can still prevent release. GHCR package visibility is verified separately from build success. Containers do not imply a production rollout or live Claude acceptance.
 
 ## Related-note audit
 

@@ -15,12 +15,11 @@ fi
 
 # Keep the original FreeBSD 14.3 toolchain baseline after its release archive moved.
 # SHA256 from https://archive.freebsd.org/old-releases/amd64/14.3-RELEASE/MANIFEST
-# The Handbook lists the archive service over HTTP. Its public bytes are
-# authenticated by the pinned digest below, including on the fallback path.
-# https://docs.freebsd.org/en/books/handbook/mirrors/
+# The Princeton mirror retains the same 14.3 archive during official-site outages.
+# Every source must match the independent pinned digest before extraction.
 base_urls=(
   'https://archive.freebsd.org/old-releases/amd64/14.3-RELEASE/base.txz'
-  'http://ftp-archive.freebsd.org/pub/FreeBSD-Archive/old-releases/amd64/14.3-RELEASE/base.txz'
+  'https://mirror.math.princeton.edu/pub/FreeBSD/releases/amd64/14.3-RELEASE/base.txz'
 )
 base_sha256='e38b5cf756d60086a6c2f736eff19cc7685f7e2313e31d14342fc8df57200a92'
 work_dir="$(mktemp -d "${RUNNER_TEMP}/freebsd-cgo.XXXXXX")"

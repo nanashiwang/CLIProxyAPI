@@ -15,7 +15,7 @@ for url in "$@"; do
   rm -f "$partial"
   printf 'Downloading pinned archive from %s\n' "$url"
   if curl --fail --location --show-error --silent \
-    --proto '=http,https' --proto-redir '=http,https' \
+    --proto '=https' --proto-redir '=https' \
     --connect-timeout 15 --max-time 180 --retry 2 --retry-max-time 240 \
     --output "$partial" "$url"; then
     actual="$(sha256sum "$partial")"
