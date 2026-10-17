@@ -37,6 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           git diff --check
+          python3 .github/scripts/test_download_verified_archive.py
           go test ./...
           go build -o "${RUNNER_TEMP}/cli-proxy-api" ./cmd/server
           python3 .github/scripts/smoke-management-api.py "${RUNNER_TEMP}/cli-proxy-api"
@@ -90,7 +91,7 @@ jobs:
 
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "${tag}" "${GITHUB_SHA}" -m "Release ${tag}"
+            git tag -a "${tag}" "${GITHUB_SHA}" -m "发布 ${tag}"
             git push origin "refs/tags/${tag}"
             echo "Created tag: ${tag}"
           fi

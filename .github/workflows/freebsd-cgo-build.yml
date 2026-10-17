@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - '.github/scripts/build-freebsd-cgo.sh'
+      - '.github/scripts/download-verified-archive.sh'
+      - '.github/scripts/test_download_verified_archive.py'
       - '.github/workflows/release.yaml'
       - '.github/workflows/freebsd-cgo-build.yml'
   workflow_dispatch:
@@ -31,11 +33,13 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Verify archive download failures
+        run: python3 .github/scripts/test_download_verified_archive.py
       - name: Install FreeBSD cross-build dependencies
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y clang lld wget
+          sudo apt-get install -y clang lld curl
       - name: Build FreeBSD binary with CGO
         shell: bash
         run: |

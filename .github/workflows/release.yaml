@@ -577,7 +577,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y clang lld wget
+          sudo apt-get install -y clang lld curl
       - name: Build FreeBSD binary with CGO
         if: ${{ matrix.cgo_enabled }}
         timeout-minutes: 45
@@ -733,3 +733,11 @@ jobs:
           (cd "$verify_dir" && sha256sum --check "$bundle.sha256")
           cmp "$bundle_dir/$bundle" "$verify_dir/$bundle"
           python3 -m zipfile -t "$verify_dir/$bundle"
+
+  publish-container:
+    if: github.repository == 'nanashiwang/CLIProxyAPI'
+    needs: publish-checksums
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/personal-container.yml

@@ -1,0 +1,121 @@
+name: personal-container
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: personal-container
+  cancel-in-progress: false
+
+jobs:
+  image:
+    if: github.repository == 'nanashiwang/CLIProxyAPI'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify published tag and source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_TYPE" == tag ]]
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-personal\.[0-9]+$ ]]
+          gh release view "$GITHUB_REF_NAME" --json isDraft,targetCommitish > "$RUNNER_TEMP/release.json"
+          python3 - <<'PY'
+          import json, os
+          with open(os.environ['RUNNER_TEMP'] + '/release.json') as f:
+              release = json.load(f)
+          assert release['isDraft'] is False, 'Release is still a draft'
+          assert release['targetCommitish'] == os.environ['GITHUB_SHA'], 'Release commit mismatch'
+          PY
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build release image locally for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: ${{ env.IMAGE }}:${{ github.ref_name }}-${{ matrix.arch }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+      - name: Verify image starts and carries the release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${IMAGE}:${GITHUB_REF_NAME}-${{ matrix.arch }}"
+          trap 'docker rm -f cpa-image-smoke cpa-management-smoke >/dev/null 2>&1 || true' EXIT
+          timeout 30 docker run --name cpa-image-smoke "$tag" -h > "$RUNNER_TEMP/image-help.log" 2>&1
+          cat "$RUNNER_TEMP/image-help.log"
+          grep -F "${GITHUB_REF_NAME}" "$RUNNER_TEMP/image-help.log"
+          grep -F "${GITHUB_SHA}" "$RUNNER_TEMP/image-help.log"
+          docker rm cpa-image-smoke
+          export CPA_SMOKE_IMAGE="$tag"
+          cat > "$RUNNER_TEMP/run-container" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker run --rm --name cpa-management-smoke --network host \
+            --mount "type=bind,src=${RUNNER_TEMP},dst=${RUNNER_TEMP}" \
+            "$CPA_SMOKE_IMAGE" "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/run-container"
+          TMPDIR="$RUNNER_TEMP" timeout 120 python3 .github/scripts/smoke-management-api.py "$RUNNER_TEMP/run-container"
+          docker rm -f cpa-management-smoke >/dev/null 2>&1 || true
+          docker push "$tag"
+
+  manifest:
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish verified platforms
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker buildx imagetools create \
+            --tag "${image}:${GITHUB_REF_NAME}" \
+            --tag "${image}:sha-${GITHUB_SHA}" \
+            "${image}:${GITHUB_REF_NAME}-amd64" \
+            "${image}:${GITHUB_REF_NAME}-arm64"
+          latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          if [[ "$latest" == "$GITHUB_REF_NAME" ]]; then
+            docker buildx imagetools create --tag "${image}:latest" "${image}:${GITHUB_REF_NAME}"
+          fi
+          docker buildx imagetools inspect "${image}:${GITHUB_REF_NAME}"
+          printf 'Published `%s:%s` (amd64 and arm64) from `%s`\n' "$image" "$GITHUB_REF_NAME" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

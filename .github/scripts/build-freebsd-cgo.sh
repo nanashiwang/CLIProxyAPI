@@ -15,15 +15,20 @@ fi
 
 # Keep the original FreeBSD 14.3 toolchain baseline after its release archive moved.
 # SHA256 from https://archive.freebsd.org/old-releases/amd64/14.3-RELEASE/MANIFEST
-base_url='https://archive.freebsd.org/old-releases/amd64/14.3-RELEASE/base.txz'
+# The Princeton mirror retains the same 14.3 archive during official-site outages.
+# Every source must match the independent pinned digest before extraction.
+base_urls=(
+  'https://archive.freebsd.org/old-releases/amd64/14.3-RELEASE/base.txz'
+  'https://mirror.math.princeton.edu/pub/FreeBSD/releases/amd64/14.3-RELEASE/base.txz'
+)
 base_sha256='e38b5cf756d60086a6c2f736eff19cc7685f7e2313e31d14342fc8df57200a92'
 work_dir="$(mktemp -d "${RUNNER_TEMP}/freebsd-cgo.XXXXXX")"
 trap 'sudo rm -rf "$work_dir"' EXIT
 sysroot_dir="${work_dir}/sysroot"
 base_archive="${work_dir}/base.txz"
 
-wget --https-only --tries=3 --timeout=60 -q -O "$base_archive" "$base_url"
-printf '%s  %s\n' "$base_sha256" "$base_archive" | sha256sum --check
+bash "$(dirname "${BASH_SOURCE[0]}")/download-verified-archive.sh" \
+  "$base_archive" "$base_sha256" "${base_urls[@]}"
 mkdir -p "$sysroot_dir" "dist/${TARGET}/bin"
 sudo tar -xf "$base_archive" -C "$sysroot_dir"
 
