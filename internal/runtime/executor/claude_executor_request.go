@@ -733,47 +733,14 @@ func applyClaudeHeadersWithNativeProfile(
 			}
 		}
 	}
-	existingSet := make(map[string]bool)
-	for _, beta := range strings.Split(baseBetas, ",") {
-		if beta = strings.TrimSpace(beta); beta != "" {
-			existingSet[beta] = true
-		}
-	}
-	appendBeta := func(beta string) {
-		beta = strings.TrimSpace(beta)
-		if beta == "" || existingSet[beta] {
-			return
-		}
-		if strings.TrimSpace(baseBetas) == "" {
-			baseBetas = beta
-		} else {
-			baseBetas += "," + beta
-		}
-		existingSet[beta] = true
-	}
-	if preserveCallerFingerprint {
-		// Caller-owned mode preserves both header and body-lifted betas verbatim.
-		// The explicit speed=fast request still needs its protocol beta.
-		if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "speed").String()), "fast") {
-			appendBeta(claudeFastModeBeta)
-		}
-		for _, beta := range extraBetas {
-			appendBeta(beta)
-		}
-	} else {
-		// On direct Anthropic an unconfirmed CLI-profile caller's own betas are
-		// dropped: appending them to the measured baseline produces a shape real
-		// Claude Code never sends. Custom gateways keep caller extensions.
-		if !confirmedClaudeCode && incomingBetas != "" && !isAnthropicBase {
-			for _, beta := range strings.Split(incomingBetas, ",") {
-				appendBeta(beta)
-			}
-		}
-		if !isAnthropicBase {
-			for _, beta := range extraBetas {
-				appendBeta(beta)
-			}
-		}
+	// Protocol capabilities belong to the caller, not to CPA's fingerprint
+	// baseline. Newer native clients and gateways must retain server review
+	// and per-turn extensions even when identity detection is inconclusive.
+	// Keep the existing credential baseline, but never silently downgrade a
+	// requested capability. The upstream remains responsible for validation.
+	baseBetas = helps.MergeClaudeBetaCapabilities(baseBetas, incomingBetas, extraBetas)
+	if preserveCallerFingerprint && strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "speed").String()), "fast") {
+		baseBetas = helps.MergeClaudeBetaCapabilities(baseBetas, claudeFastModeBeta, nil)
 	}
 	applyBetaHeader := func() {
 		if strings.TrimSpace(baseBetas) == "" {
