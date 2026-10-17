@@ -8,7 +8,7 @@ The FreeBSD amd64 job fails while downloading its pinned 14.3 sysroot, blocking 
 
 ## Decision
 
-Keep the 14.3 baseline and pinned SHA256. Add bounded downloads with visible failures and an HTTPS Princeton mirror fallback with an identical 14.3 MANIFEST digest; never extract bytes that fail the pinned digest. Publish repository-owned GHCR containers from the same release tag after all binary release gates succeed, using the existing Dockerfile and native amd64/arm64 runners. A manual tagged run can retry container delivery. Serialize container publication and update latest only for GitHub's current public release.
+Keep the 14.3 baseline and pinned SHA256. Add bounded downloads with visible failures and an HTTPS Princeton mirror fallback with an identical 14.3 MANIFEST digest; never extract bytes that fail the pinned digest. Publish repository-owned GHCR containers from the same release tag after all binary release gates succeed, using the existing Dockerfile and native amd64/arm64 runners. A manual run accepts an existing published release tag, resolves its exact Git commit and rebuilds that source with the corrected workflow. This allows delivery fixes without changing an already published tag. Container smoke tests run with the runner UID/GID in their mounted temporary working directory, so cleanup can remove all test data. Serialize container publication and update latest only for GitHub's current public release.
 
 ## Alternatives considered
 
@@ -20,7 +20,7 @@ Keep the 14.3 baseline and pinned SHA256. Add bounded downloads with visible fai
 
 ## Testing
 
-Four local download regression tests pass, including primary failure, fallback success, corrupt bodies, complete failure and stale-file cleanup. Shell syntax and actionlint pass. The server builds and the management API smoke suite passes. GitHub FreeBSD verification run 39060235999 downloads the Princeton copy, verifies the original SHA256 and successfully compiles the CGO binary after the official source times out. Actual GHCR delivery requires the tagged release workflow; source validation does not establish production deployment success.
+Four local download regression tests pass, including primary failure, fallback success, corrupt bodies, complete failure and stale-file cleanup. Shell syntax and actionlint pass. The server builds and the management API smoke suite passes. GitHub FreeBSD verification run 39060235999 downloads the Princeton copy, verifies the original SHA256 and successfully compiles the CGO binary after the official source times out. The .59 release passes all ten binary targets and publishes its checksums and deployment bundle. Both container architectures pass version and management assertions; their first delivery attempt exposes root-owned temporary data cleanup and is correctly rejected. The workflow uses the runner UID/GID for retesting. GHCR delivery and production deployment remain separate acceptance steps.
 
 ## Consequences
 

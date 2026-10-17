@@ -3,6 +3,11 @@ name: personal-container
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing published personal release tag (empty uses current tag)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -13,8 +18,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  image:
+  source:
     if: github.repository == 'nanashiwang/CLIProxyAPI'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      commit: ${{ steps.release.outputs.commit }}
+      build_date: ${{ steps.release.outputs.build_date }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve and verify published release source
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${REQUESTED_TAG:-$GITHUB_REF_NAME}"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-personal\.[0-9]+$ ]]
+          git fetch origin "refs/tags/${tag}:refs/tags/${tag}"
+          export RELEASE_COMMIT="$(git rev-list -n 1 "refs/tags/${tag}")"
+          gh release view "$tag" --json isDraft,targetCommitish > "$RUNNER_TEMP/release.json"
+          python3 - <<'PYCODE'
+          import json, os
+          with open(os.environ['RUNNER_TEMP'] + '/release.json') as f:
+              release = json.load(f)
+          assert release['isDraft'] is False, 'Release is still a draft'
+          assert release['targetCommitish'] == os.environ['RELEASE_COMMIT'], 'Release commit mismatch'
+          PYCODE
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "commit=$RELEASE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(git show -s --format=%cI "$RELEASE_COMMIT")" >> "$GITHUB_OUTPUT"
+
+  image:
+    needs: source
     strategy:
       fail-fast: false
       matrix:
@@ -25,26 +64,16 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
+    env:
+      RELEASE_TAG: ${{ needs.source.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
+      BUILD_DATE: ${{ needs.source.outputs.build_date }}
     steps:
       - uses: actions/checkout@v4
-      - name: Verify published tag and source
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$GITHUB_REF_TYPE" == tag ]]
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-personal\.[0-9]+$ ]]
-          gh release view "$GITHUB_REF_NAME" --json isDraft,targetCommitish > "$RUNNER_TEMP/release.json"
-          python3 - <<'PY'
-          import json, os
-          with open(os.environ['RUNNER_TEMP'] + '/release.json') as f:
-              release = json.load(f)
-          assert release['isDraft'] is False, 'Release is still a draft'
-          assert release['targetCommitish'] == os.environ['GITHUB_SHA'], 'Release commit mismatch'
-          PY
-          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-          echo "BUILD_DATE=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+      - name: Set repository image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -57,31 +86,32 @@ jobs:
           context: .
           platforms: linux/${{ matrix.arch }}
           load: true
-          tags: ${{ env.IMAGE }}:${{ github.ref_name }}-${{ matrix.arch }}
+          tags: ${{ env.IMAGE }}:${{ env.RELEASE_TAG }}-${{ matrix.arch }}
           build-args: |
-            VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
+            VERSION=${{ env.RELEASE_TAG }}
+            COMMIT=${{ env.RELEASE_COMMIT }}
             BUILD_DATE=${{ env.BUILD_DATE }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ env.RELEASE_COMMIT }}
+            org.opencontainers.image.version=${{ env.RELEASE_TAG }}
       - name: Verify image starts and carries the release version
         shell: bash
         run: |
           set -euo pipefail
-          tag="${IMAGE}:${GITHUB_REF_NAME}-${{ matrix.arch }}"
+          tag="${IMAGE}:${RELEASE_TAG}-${{ matrix.arch }}"
           trap 'docker rm -f cpa-image-smoke cpa-management-smoke >/dev/null 2>&1 || true' EXIT
           timeout 30 docker run --name cpa-image-smoke --entrypoint /CLIProxyAPI/CLIProxyAPI "$tag" -h > "$RUNNER_TEMP/image-help.log" 2>&1
           cat "$RUNNER_TEMP/image-help.log"
-          grep -F "${GITHUB_REF_NAME}" "$RUNNER_TEMP/image-help.log"
-          grep -F "${GITHUB_SHA}" "$RUNNER_TEMP/image-help.log"
+          grep -F "${RELEASE_TAG}" "$RUNNER_TEMP/image-help.log"
+          grep -F "${RELEASE_COMMIT}" "$RUNNER_TEMP/image-help.log"
           docker rm cpa-image-smoke
           export CPA_SMOKE_IMAGE="$tag"
           cat > "$RUNNER_TEMP/run-container" <<'SH'
           #!/usr/bin/env bash
           set -euo pipefail
           exec docker run --rm --name cpa-management-smoke --network host \
+            --user "$(id -u):$(id -g)" --workdir "$PWD" \
             --entrypoint /CLIProxyAPI/CLIProxyAPI \
             --mount "type=bind,src=${RUNNER_TEMP},dst=${RUNNER_TEMP}" \
             "$CPA_SMOKE_IMAGE" "$@"
@@ -92,7 +122,10 @@ jobs:
           docker push "$tag"
 
   manifest:
-    needs: image
+    needs: [source, image]
+    env:
+      RELEASE_TAG: ${{ needs.source.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -110,13 +143,13 @@ jobs:
           set -euo pipefail
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           docker buildx imagetools create \
-            --tag "${image}:${GITHUB_REF_NAME}" \
-            --tag "${image}:sha-${GITHUB_SHA}" \
-            "${image}:${GITHUB_REF_NAME}-amd64" \
-            "${image}:${GITHUB_REF_NAME}-arm64"
+            --tag "${image}:${RELEASE_TAG}" \
+            --tag "${image}:sha-${RELEASE_COMMIT}" \
+            "${image}:${RELEASE_TAG}-amd64" \
+            "${image}:${RELEASE_TAG}-arm64"
           latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
-          if [[ "$latest" == "$GITHUB_REF_NAME" ]]; then
-            docker buildx imagetools create --tag "${image}:latest" "${image}:${GITHUB_REF_NAME}"
+          if [[ "$latest" == "$RELEASE_TAG" ]]; then
+            docker buildx imagetools create --tag "${image}:latest" "${image}:${RELEASE_TAG}"
           fi
-          docker buildx imagetools inspect "${image}:${GITHUB_REF_NAME}"
-          printf 'Published `%s:%s` (amd64 and arm64) from `%s`\n' "$image" "$GITHUB_REF_NAME" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          docker buildx imagetools inspect "${image}:${RELEASE_TAG}"
+          printf 'Published `%s:%s` (amd64 and arm64) from `%s`\n' "$image" "$RELEASE_TAG" "$RELEASE_COMMIT" >> "$GITHUB_STEP_SUMMARY"
