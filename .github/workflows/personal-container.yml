@@ -72,7 +72,7 @@ jobs:
           set -euo pipefail
           tag="${IMAGE}:${GITHUB_REF_NAME}-${{ matrix.arch }}"
           trap 'docker rm -f cpa-image-smoke cpa-management-smoke >/dev/null 2>&1 || true' EXIT
-          timeout 30 docker run --name cpa-image-smoke "$tag" -h > "$RUNNER_TEMP/image-help.log" 2>&1
+          timeout 30 docker run --name cpa-image-smoke --entrypoint /CLIProxyAPI/CLIProxyAPI "$tag" -h > "$RUNNER_TEMP/image-help.log" 2>&1
           cat "$RUNNER_TEMP/image-help.log"
           grep -F "${GITHUB_REF_NAME}" "$RUNNER_TEMP/image-help.log"
           grep -F "${GITHUB_SHA}" "$RUNNER_TEMP/image-help.log"
@@ -82,6 +82,7 @@ jobs:
           #!/usr/bin/env bash
           set -euo pipefail
           exec docker run --rm --name cpa-management-smoke --network host \
+            --entrypoint /CLIProxyAPI/CLIProxyAPI \
             --mount "type=bind,src=${RUNNER_TEMP},dst=${RUNNER_TEMP}" \
             "$CPA_SMOKE_IMAGE" "$@"
           SH
