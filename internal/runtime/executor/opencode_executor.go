@@ -524,6 +524,7 @@ func (e *OpenCodeExecutor) translate(ctx context.Context, auth *cliproxyauth.Aut
 	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
 	translated = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, to.String(), opts.SourceFormat.String(), "", translated, originalTranslated, requestedModel, helps.PayloadRequestPath(opts), opts.Headers)
 	translated = helps.SetStringIfDifferent(translated, "model", baseModel)
+	translated = helps.NormalizeKimiProRequest(translated, baseModel, to)
 	return translated, originalTranslated, nil
 }
 

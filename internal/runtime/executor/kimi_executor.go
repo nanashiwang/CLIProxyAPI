@@ -42,6 +42,9 @@ func NewKimiExecutor(cfg *config.Config) *KimiExecutor {
 			cfg:                     cfg,
 			requestLogProvider:      "kimi",
 			upstreamModelNormalizer: normalizeKimiUpstreamModel,
+			upstreamPayloadNormalizer: func(body []byte, model string) []byte {
+				return helps.NormalizeKimiProRequest(body, model, sdktranslator.FormatClaude)
+			},
 		},
 		cfg: cfg,
 	}
@@ -158,6 +161,7 @@ func (e *KimiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 		return resp, err
 	}
 	body = normalizeKimiTools(body)
+	body = helps.NormalizeKimiProRequest(body, baseModel, sdktranslator.FormatOpenAI)
 	reporter.SetTranslatedReasoningEffort(body, e.Identifier())
 
 	url := kimiauth.KimiAPIBaseURL + "/v1/chat/completions"
@@ -286,6 +290,7 @@ func (e *KimiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 		return nil, err
 	}
 	body = normalizeKimiTools(body)
+	body = helps.NormalizeKimiProRequest(body, baseModel, sdktranslator.FormatOpenAI)
 	reporter.SetTranslatedReasoningEffort(body, e.Identifier())
 
 	url := kimiauth.KimiAPIBaseURL + "/v1/chat/completions"
@@ -414,6 +419,7 @@ func (e *KimiExecutor) executeResponses(ctx context.Context, auth *cliproxyauth.
 	requestPath := helps.PayloadRequestPath(opts)
 	body = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, "openai-response", opts.SourceFormat.String(), "", body, req.Payload, requestedModel, requestPath, opts.Headers)
 	body = normalizeKimiTools(body)
+	body = helps.NormalizeKimiProRequest(body, baseModel, sdktranslator.FormatOpenAIResponse)
 	reporter.SetTranslatedReasoningEffort(body, e.Identifier())
 
 	url := helps.ResolveKimiResponsesURL(auth)
@@ -522,6 +528,7 @@ func (e *KimiExecutor) executeResponsesStream(ctx context.Context, auth *cliprox
 	requestPath := helps.PayloadRequestPath(opts)
 	body = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, "openai-response", opts.SourceFormat.String(), "", body, req.Payload, requestedModel, requestPath, opts.Headers)
 	body = normalizeKimiTools(body)
+	body = helps.NormalizeKimiProRequest(body, baseModel, sdktranslator.FormatOpenAIResponse)
 	reporter.SetTranslatedReasoningEffort(body, e.Identifier())
 
 	url := helps.ResolveKimiResponsesURL(auth)
