@@ -796,6 +796,18 @@ func cooldownReason(statusMessage string, quota QuotaState, lastErr *Error) stri
 	return ""
 }
 
+// upstreamFailureRetryAfter keeps concurrency admission failures short and scoped
+// to the selected model. It must not extend quota backoff or clear older faults.
+func upstreamFailureRetryAfter(now time.Time, disableCooling bool, resultErr *Error) time.Time {
+	if resultErr != nil && resultErr.Code == ErrorCodeUpstreamConcurrency && resultErr.HTTPStatus == http.StatusServiceUnavailable {
+		if disableCooling {
+			return time.Time{}
+		}
+		return now.Add(2 * time.Second)
+	}
+	return recoverableFailureRetryAfter(now, disableCooling)
+}
+
 // MarkResult records an execution result and notifies hooks.
 func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	if result.AuthID == "" {
@@ -981,7 +993,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 								auth.NextRetryAfter = authNext
 							}
 						case 408, 500, 502, 503, 504:
-							state.NextRetryAfter = recoverableFailureRetryAfter(now, disableCooling)
+							state.NextRetryAfter = upstreamFailureRetryAfter(now, disableCooling, result.Error)
 							state.Unavailable = !state.NextRetryAfter.IsZero()
 						default:
 							state.NextRetryAfter = recoverableFailureRetryAfter(now, disableCooling)
@@ -2118,7 +2130,10 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 			auth.NextRetryAfter = next
 		case 408, 500, 502, 503, 504:
 			auth.StatusMessage = "transient upstream error"
-			auth.NextRetryAfter = recoverableFailureRetryAfter(now, disableCooling)
+			if resultErr != nil && resultErr.Code == ErrorCodeUpstreamConcurrency {
+				auth.StatusMessage = "upstream concurrency limit"
+			}
+			auth.NextRetryAfter = upstreamFailureRetryAfter(now, disableCooling, resultErr)
 			auth.Unavailable = !auth.NextRetryAfter.IsZero()
 		default:
 			if auth.StatusMessage == "" {

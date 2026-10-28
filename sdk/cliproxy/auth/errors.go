@@ -22,6 +22,10 @@ const connectionLifecycleErrorCode = ErrorCodeConnectionLifecycle
 // ErrorCodeForceCooldown marks failures that must enforce credential cooldown.
 const ErrorCodeForceCooldown = "force_cooldown"
 
+// ErrorCodeUpstreamConcurrency marks a temporary upstream admission rejection.
+// It is not a credential, payment, or quota failure.
+const ErrorCodeUpstreamConcurrency = "upstream_concurrency"
+
 // Error describes an authentication related failure in a provider agnostic format.
 type Error struct {
 	// Code is a short machine readable identifier.

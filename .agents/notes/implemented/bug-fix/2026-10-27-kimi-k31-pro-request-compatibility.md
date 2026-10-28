@@ -30,3 +30,5 @@ Live pre-deployment probes against the existing service confirm that forced Chat
 ## Related-note audit
 
 No active note matches Kimi, tool_choice, sampling or temperature. The Claude review protocol continuity note owns beta forwarding and remains independent; this change does not alter fingerprint trust or header capabilities.
+
+Concurrency admission classification is covered separately by [the Kimi concurrency decision](2026-10-28-kimi-concurrency-admission.md); the sampling and forced-tool decision remains unchanged.
