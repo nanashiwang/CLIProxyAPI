@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1223,5 +1224,46 @@ func TestNormalizeKimiToolsDirect(t *testing.T) {
 	fnParams := gjson.GetBytes(normalized, "functions.0.parameters")
 	if got := fnParams.Get("type").String(); got != "object" {
 		t.Errorf("functions.0.parameters.type = %q, want object", got)
+	}
+}
+
+func TestKimiExecutorConcurrencyAdmissionAcrossProtocols(t *testing.T) {
+	const busy = `{"error":{"type":"access_terminated_error","message":"You've reached your concurrent request limit. Please wait for your ongoing requests to finish and try again."}}`
+	for _, source := range []sdktranslator.Format{sdktranslator.FormatOpenAI, sdktranslator.FormatOpenAIResponse, sdktranslator.FormatClaude} {
+		for _, streaming := range []bool{false, true} {
+			t.Run(source.String()+fmt.Sprint("/stream=", streaming), func(t *testing.T) {
+				calls := 0
+				ctx := context.WithValue(context.Background(), "cliproxy.roundtripper", kimiRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+					calls++
+					if req.Body != nil {
+						if errClose := req.Body.Close(); errClose != nil {
+							t.Error(errClose)
+						}
+					}
+					return &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(busy))}, nil
+				}))
+				executor := NewKimiExecutor(&config.Config{})
+				credential := &cliproxyauth.Auth{ID: "kimi-concurrency", Provider: "kimi", Attributes: map[string]string{}, Metadata: map[string]any{"access_token": "test-kimi-key"}}
+				payload := []byte(`{"model":"kimi-k3","messages":[{"role":"user","content":"hello"}],"max_tokens":32}`)
+				if source == sdktranslator.FormatOpenAIResponse {
+					payload = []byte(`{"model":"kimi-k3","input":"hello","max_output_tokens":32}`)
+				}
+				request := cliproxyexecutor.Request{Model: "kimi-k3", Payload: payload}
+				opts := cliproxyexecutor.Options{SourceFormat: source, Stream: streaming}
+				var err error
+				if streaming {
+					_, err = executor.ExecuteStream(ctx, credential, request, opts)
+				} else {
+					_, err = executor.Execute(ctx, credential, request, opts)
+				}
+				var classified *cliproxyauth.Error
+				if !errors.As(err, &classified) || classified.Code != cliproxyauth.ErrorCodeUpstreamConcurrency || classified.HTTPStatus != 503 {
+					t.Fatalf("unexpected error %v", err)
+				}
+				if calls != 1 {
+					t.Fatalf("executor retried an admission failure: %d calls", calls)
+				}
+			})
+		}
 	}
 }
