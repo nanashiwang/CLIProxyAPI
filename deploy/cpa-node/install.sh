@@ -367,11 +367,11 @@ EOF_NGINX
 }
 
 install_update_command() {
-  cat >/usr/local/sbin/update-cliproxyapi <<EOF_UPDATE
+  cat >/usr/local/sbin/cpa-update <<EOF_UPDATE
 #!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ "\${EUID}" -ne 0 ]]; then
-  exec sudo /usr/local/sbin/update-cliproxyapi "\$@"
+  exec sudo /usr/local/sbin/cpa-update "\$@"
 fi
 UPDATE_SCRIPT_URL="${UPDATE_SCRIPT_URL}"
 tmp_path="\$(mktemp)"
@@ -381,8 +381,11 @@ bash -n "\${tmp_path}"
 install -m 0755 "\${tmp_path}" /usr/local/sbin/cpa-node-update
 exec /usr/local/sbin/cpa-node-update "\$@"
 EOF_UPDATE
-  chmod 0755 /usr/local/sbin/update-cliproxyapi
-  ln -sfn /usr/local/sbin/update-cliproxyapi /usr/local/bin/update-cliproxyapi
+  chmod 0755 /usr/local/sbin/cpa-update
+  ln -sfn /usr/local/sbin/cpa-update /usr/local/bin/cpa-update
+  # Keep the previous command working while existing nodes migrate.
+  ln -sfn /usr/local/sbin/cpa-update /usr/local/sbin/update-cliproxyapi
+  ln -sfn /usr/local/sbin/cpa-update /usr/local/bin/update-cliproxyapi
 }
 
 configure_firewall() {
@@ -411,7 +414,7 @@ verify_installation() {
   printf '\nCPA node deployed successfully.\n'
   printf 'API: https://%s\n' "${CPA_DOMAIN}"
   printf 'Management: https://%s/management.html\n' "${CPA_DOMAIN}"
-  printf 'Update command: update-cliproxyapi\n'
+  printf 'Update command: cpa-update\n'
 }
 
 main() {

@@ -61,8 +61,10 @@ openssl rand -hex 32
 ## 更新 CPA 和管理面板
 
 ```bash
-update-cliproxyapi
+cpa-update
 ```
+
+已安装旧命令的节点，先执行一次 `update-cliproxyapi` 完成更新和命令迁移，之后统一使用 `cpa-update`。旧命令保留为兼容入口。
 
 更新命令会自动识别两种部署方式：
 
@@ -76,9 +78,9 @@ update-cliproxyapi
 3. 确保持久化使用统计已开启。
 4. systemd 节点使用个人安装器升级；Docker 节点停止容器后替换二进制，并保存旧二进制备份。
 5. 重启服务后等待管理面板端口就绪，避免启动瞬间误报。
-6. 非 root 用户调用 `update-cliproxyapi` 时会自动通过 `sudo` 执行。
+6. 非 root 用户调用 `cpa-update` 时会自动通过 `sudo` 执行。
 
-如果是旧节点，第一次先执行一次迁移命令；执行成功后，以后仍然直接使用 `update-cliproxyapi`：
+如果是旧节点，第一次先执行一次迁移命令；执行成功后，以后仍然直接使用 `cpa-update`：
 
 ```bash
 curl --retry 5 --retry-all-errors -fsSL \
