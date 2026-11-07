@@ -307,7 +307,49 @@ func (l *FileRequestLogger) generateFilename(url string, requestID ...string) st
 		idPart = fmt.Sprintf("%d", id)
 	}
 
-	return fmt.Sprintf("%s-%s-%s.log", sanitized, timestamp, idPart)
+	// Defense in depth: the sanitizer already removes both separators, but the
+	// final component must never be able to climb out of the log directory.
+	name := fmt.Sprintf("%s-%s-%s.log", sanitized, timestamp, idPart)
+	return filepath.Base(name)
+}
+
+// createUniqueLogFile atomically opens a unique log file within dir. If a file with filename already exists,
+// it avoids overwriting by injecting an incrementing sequence number before the trailing request ID component.
+func createUniqueLogFile(dir, filename string) (*os.File, string, error) {
+	if filename == "" || filename == "." || filename == ".." || strings.ContainsAny(filename, `/\`) || strings.Contains(filename, "..") || filepath.Base(filename) != filename {
+		return nil, "", fmt.Errorf("invalid log filename: %q", filename)
+	}
+	ext := filepath.Ext(filename)
+	base := strings.TrimSuffix(filename, ext)
+	idx := strings.LastIndex(base, "-")
+	prefix := base
+	idPart := ""
+	if idx > 0 {
+		prefix = base[:idx]
+		idPart = base[idx+1:]
+	}
+
+	target := filepath.Join(dir, filename)
+	logFile, errOpen := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if errOpen == nil {
+		return logFile, target, nil
+	}
+	if !os.IsExist(errOpen) {
+		return nil, "", errOpen
+	}
+
+	for seq := 1; seq <= 1000; seq++ {
+		candidateName := fmt.Sprintf("%s_%d-%s%s", prefix, seq, idPart, ext)
+		candidatePath := filepath.Join(dir, candidateName)
+		logCandidate, errCandidate := os.OpenFile(candidatePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		if errCandidate == nil {
+			return logCandidate, candidatePath, nil
+		}
+		if !os.IsExist(errCandidate) {
+			return nil, "", errCandidate
+		}
+	}
+	return nil, "", fmt.Errorf("too many conflicting log files for %s", filename)
 }
 
 // sanitizeForFilename replaces characters that are not safe for filenames.
@@ -318,8 +360,11 @@ func (l *FileRequestLogger) generateFilename(url string, requestID ...string) st
 // Returns:
 //   - string: A sanitized filename
 func (l *FileRequestLogger) sanitizeForFilename(path string) string {
-	// Replace slashes with hyphens
+	// Replace slashes with hyphens. Both separators are replaced because Windows
+	// treats "\\" as a path separator too: leaving it in place let a crafted
+	// request path escape the log directory via filepath.Join.
 	sanitized := strings.ReplaceAll(path, "/", "-")
+	sanitized = strings.ReplaceAll(sanitized, "\\", "-")
 
 	// Replace colons with hyphens
 	sanitized = strings.ReplaceAll(sanitized, ":", "-")
@@ -328,12 +373,17 @@ func (l *FileRequestLogger) sanitizeForFilename(path string) string {
 	reg := regexp.MustCompile(`[<>:"|?*\s]`)
 	sanitized = reg.ReplaceAllString(sanitized, "-")
 
+	// Never let a parent-directory sequence survive.
+	for strings.Contains(sanitized, "..") {
+		sanitized = strings.ReplaceAll(sanitized, "..", "-")
+	}
+
 	// Remove multiple consecutive hyphens
 	reg = regexp.MustCompile(`-+`)
 	sanitized = reg.ReplaceAllString(sanitized, "-")
 
-	// Remove leading/trailing hyphens
-	sanitized = strings.Trim(sanitized, "-")
+	// Remove leading/trailing hyphens and dots
+	sanitized = strings.Trim(sanitized, "-.")
 
 	// Handle empty result
 	if sanitized == "" {
