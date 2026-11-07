@@ -297,6 +297,49 @@ func TestIsConnectionLifecycleError_TypedCloseWins(t *testing.T) {
 	assertNoCooldown(t, m, auth.ID, model)
 }
 
+type streamTruncatedTestError struct{}
+
+func (streamTruncatedTestError) Error() string           { return "upstream stream closed before [DONE]" }
+func (streamTruncatedTestError) IsStreamTruncated() bool { return true }
+func (streamTruncatedTestError) StatusCode() int         { return http.StatusBadGateway }
+
+func TestStreamTruncatedErrorsStopFallbackWithoutCoolingCredential(t *testing.T) {
+	previous := quotaCooldownDisabled.Load()
+	quotaCooldownDisabled.Store(false)
+	t.Cleanup(func() { quotaCooldownDisabled.Store(previous) })
+
+	prevTransient := transientErrorCooldownSeconds.Load()
+	SetTransientErrorCooldownSeconds(5)
+	t.Cleanup(func() { transientErrorCooldownSeconds.Store(prevTransient) })
+
+	err := streamTruncatedTestError{}
+	resultErr := resultErrorFromError(err)
+	if resultErr == nil || resultErr.Code != streamTruncatedErrorCode {
+		t.Fatalf("resultErrorFromError(%v) = %#v, want stream-truncated code", err, resultErr)
+	}
+	if !shouldSkipCredentialCooldown(resultErr) {
+		t.Fatal("stream-truncated response should not cool the credential")
+	}
+	if !isRequestInvalidError(err) {
+		t.Fatal("stream-truncated response should stop credential fallback")
+	}
+
+	m := NewManager(nil, nil, nil)
+	auth := &Auth{ID: "auth-truncated-stream", Provider: "openai-compatibility"}
+	if _, errRegister := m.Register(context.Background(), auth); errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+	model := "test-model"
+	m.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    model,
+		Success:  false,
+		Error:    resultErr,
+	})
+	assertNoCooldown(t, m, auth.ID, model)
+}
+
 type statusBearingError struct {
 	status int
 	msg    string

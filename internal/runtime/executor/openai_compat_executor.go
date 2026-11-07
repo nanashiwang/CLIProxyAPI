@@ -543,7 +543,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 			// Responses clients require an explicit terminal event. Treat a clean
 			// upstream EOF without [DONE] as a failed stream instead of completing it.
 			if responseFormat == sdktranslator.FormatOpenAIResponse {
-				streamErr := statusErr{code: http.StatusBadGateway, msg: "upstream stream closed before [DONE]"}
+				streamErr := statusErr{code: http.StatusBadGateway, msg: "upstream stream closed before [DONE]", streamTruncated: true}
 				helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
 				reporter.PublishFailure(ctx, streamErr)
 				select {
@@ -1015,6 +1015,7 @@ type statusErr struct {
 	msg              string
 	retryAfter       *time.Duration
 	credentialScoped bool
+	streamTruncated  bool
 }
 
 func (e statusErr) Error() string {
@@ -1026,3 +1027,4 @@ func (e statusErr) Error() string {
 func (e statusErr) StatusCode() int            { return e.code }
 func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
 func (e statusErr) IsCredentialScoped() bool   { return e.credentialScoped }
+func (e statusErr) IsStreamTruncated() bool    { return e.streamTruncated }

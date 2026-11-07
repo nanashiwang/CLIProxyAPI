@@ -22,6 +22,12 @@ const connectionLifecycleErrorCode = ErrorCodeConnectionLifecycle
 // ErrorCodeForceCooldown marks failures that must enforce credential cooldown.
 const ErrorCodeForceCooldown = "force_cooldown"
 
+// ErrorCodeStreamTruncated marks accepted upstream generations that ended
+// without a terminal frame and must not be replayed or cool the credential.
+const ErrorCodeStreamTruncated = "stream_truncated"
+
+const streamTruncatedErrorCode = ErrorCodeStreamTruncated
+
 // ErrorCodeUpstreamConcurrency marks a temporary upstream admission rejection.
 // It is not a credential, payment, or quota failure.
 const ErrorCodeUpstreamConcurrency = "upstream_concurrency"

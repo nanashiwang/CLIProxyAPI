@@ -954,6 +954,10 @@ func TestOpenAICompatExecutorResponsesStreamFailsOnEOFWithoutDone(t *testing.T) 
 	if !strings.Contains(streamErr.Error(), "closed before [DONE]") {
 		t.Fatalf("stream error does not explain the missing terminal marker: %v", streamErr)
 	}
+	truncatedErr, ok := streamErr.(cliproxyexecutor.StreamTruncatedError)
+	if !ok || !truncatedErr.IsStreamTruncated() {
+		t.Fatalf("stream error = %T (%v), want a stream-truncated classification", streamErr, streamErr)
+	}
 }
 
 func TestOpenAICompatExecutorResponsesStreamPreservesUpstreamDataError(t *testing.T) {
