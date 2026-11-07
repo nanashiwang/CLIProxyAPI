@@ -4851,6 +4851,21 @@ func TestXAICompactBaseURL(t *testing.T) {
 	}
 }
 
+func TestApplyXAIChatHeadersSupportedCLIVersion(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		req := httptest.NewRequest(http.MethodPost, xaiauth.CLIChatProxyBaseURL+"/responses", nil)
+		auth := &cliproxyauth.Auth{Attributes: map[string]string{"auth_kind": "oauth"}}
+		applyXAIChatHeaders(req, auth, "test-token", stream, "")
+		// Pin the upstream-required version independently of the implementation constant.
+		if got := req.Header.Get("x-grok-client-version"); got != "1.0.13" {
+			t.Fatalf("stream=%v: client version = %q, want 1.0.13", stream, got)
+		}
+		if got := req.Header.Get("User-Agent"); got != "xai-grok-workspace/1.0.13" {
+			t.Fatalf("stream=%v: User-Agent = %q, want xai-grok-workspace/1.0.13", stream, got)
+		}
+	}
+}
+
 func TestApplyXAIChatHeaders(t *testing.T) {
 	t.Run("non OAuth defaults to official API headers", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "https://example.invalid/responses", nil)
