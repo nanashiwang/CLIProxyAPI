@@ -16,8 +16,11 @@ The FreeBSD prerequisite step reuses available unversioned or versioned LLVM exe
 
 Deployment bundles receive the previous published stable release as an explicit ancestor base. An unfinished intermediate tag must not hide application changes from the next deployment patch. The builder verifies ancestry and still supports the historical automatic base for standalone callers.
 
+Darwin archives and the native source verification use macOS Intel runners. Apple clang and the SDK retain CGO for both Darwin targets; Go supplies the target architecture flags and lipo verifies the exact resulting architecture before packaging. Hosted macOS arm64 capacity constraints repeatedly leave jobs unacquired and cancelled, so publication does not depend on that runner pool. Native Linux arm64 container verification remains unchanged.
+
 ## Alternatives considered
 
+- Retrying the macOS arm64 queue preserves native compilation but repeatedly fails before a runner is acquired. Intel macOS with the Apple SDK builds both architectures without removing CGO; archive architecture checks prevent a host-architecture packaging mistake. Native arm64 runtime testing remains covered locally, while CI source tests execute natively on Intel.
 - Force-replacing the local tag would avoid the conflict, but an isolated fetch ref leaves checkout metadata intact and keeps the release source verification explicit.
 - Skipping FreeBSD or publishing the incomplete draft bypasses the existing release completeness gate; rejected. Repeating unconditional apt installs does not address persistent mirror DNS failures when the actual compiler and linker already exist.
 - The official HTTP archive is also unreachable from the GitHub runner and offers no availability improvement; preserve HTTPS-only downloads.
@@ -28,6 +31,8 @@ Deployment bundles receive the previous published stable release as an explicit 
 ## Testing
 
 Four local download regression tests pass, including primary failure, fallback success, corrupt bodies, complete failure and stale-file cleanup. Shell syntax and actionlint pass. The server builds and the management API smoke suite passes. GitHub FreeBSD verification run 39060235999 downloads the Princeton copy, verifies the original SHA256 and successfully compiles the CGO binary after the official source times out. The .59 release passes all ten binary targets and publishes its checksums and deployment bundle. Both container architectures pass version and management assertions; their first delivery attempt exposes root-owned temporary data cleanup and is correctly rejected. The corrected workflow uses the runner UID/GID. Container run 39061682934 passes both architectures, their management tests and cleanup, then publishes the multi-platform manifest. Anonymous registry verification returns both Linux architectures and digest `sha256:1dbfcde56944cf4275a8d790a30fc768933e2274fba29bc0ebb9c69ba7596b1c`. The Linux amd64 release archive and deployment ZIP also match their published checksums. Production rollout and live Claude-provider acceptance remain operator-owned and unperformed.
+
+Local Darwin arm64 native and amd64 CGO cross-builds pass lipo architecture assertions; the native management smoke suite and full Go tests pass. The release job applies the same architecture assertion to its Intel-hosted arm64 build. GitHub run annotations identify capacity constraints and unacquired macOS arm64 runners, rather than a compiler failure.
 
 ## Consequences
 

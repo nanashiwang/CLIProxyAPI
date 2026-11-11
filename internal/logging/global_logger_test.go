@@ -122,3 +122,39 @@ func TestLogFormatterOmitsGenericPathField(t *testing.T) {
 		}
 	}
 }
+
+func TestLogFormatterPreservesQuotaDiagnosticsWithoutSecrets(t *testing.T) {
+	entry := log.NewEntry(log.New())
+	entry.Message = "quota guard observation"
+	entry.Data = log.Fields{
+		"provider": "claude", "auth_index": "account-index",
+		"state": "threshold", "previous_state": "ready", "window": "five_hour\ninjected",
+		"used_percent": 91.5, "stop_percent": 90.0,
+		"reset_at": "2026-11-11T16:00:00Z", "observed_at": "2026-11-11T15:00:00Z",
+		"valid_until": "2026-11-11T15:02:00Z", "category": "http_status", "http_status": 403,
+		"access_token": "secret-token", "response_body": "private-response", "proxy_url": "private-proxy",
+	}
+	formatted, err := (&LogFormatter{}).Format(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := string(formatted)
+	for _, want := range []string{
+		`provider=claude`, `auth_index="account-index"`, `state="threshold"`, `previous_state="ready"`,
+		`window="five_hour\ninjected"`, "used_percent=91.5", "stop_percent=90",
+		"reset_at=2026-11-11T16:00:00Z", "observed_at=2026-11-11T15:00:00Z",
+		"valid_until=2026-11-11T15:02:00Z", `category="http_status"`, "http_status=403",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("missing %s in %q", want, line)
+		}
+	}
+	for _, secret := range []string{"secret-token", "private-response", "private-proxy"} {
+		if strings.Contains(line, secret) {
+			t.Errorf("unexpected secret in %q", line)
+		}
+	}
+	if strings.Count(line, "\n") != 1 {
+		t.Fatalf("unexpected injected log line: %q", line)
+	}
+}

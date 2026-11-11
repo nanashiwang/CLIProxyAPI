@@ -10,7 +10,7 @@ The quota guard can miss reserve margins between polls or after silent failed ob
 
 Extend the existing guard, selectors, refresh worker lifecycle and management auth projection. Keep threshold settings and provider eligibility. Once background verification starts, unknown, failed and stale quota observations pause new calls. Check supported accounts every minute, or every 15 seconds within ten percentage points of the actual sampled threshold. Observations expire after two polling intervals; individual window timestamps prevent partial responses from refreshing missing windows. Codex retains upstream-denial recovery fencing. A five-second coordinator reconciles deadlines independently of four persistent workers and a bounded 100-job queue, with admission checks enforcing deadlines even between ticks. No new upstream timeout or generation cancellation is introduced.
 
-Expose sanitized guard health and normalized provider snapshots through the existing management auth response. Log successful observations with used/threshold/reset values and failures with fixed categories/status, never tokens, response bodies or raw transport errors. Retain the prior threshold note for sampling, adapters and persistence; this decision supersedes its fail-open and fixed polling tradeoffs.
+Expose sanitized guard health and normalized provider snapshots through the existing management auth response. Log successful observations with used/threshold/reset values and failures with fixed categories/status, never tokens, response bodies or raw transport errors. The production formatter explicitly allowlists the diagnostic fields, quotes window names and state/category strings, and continues omitting unrecognized credential/body fields. This is required in addition to structured-entry tests: an entry can contain evidence that the configured formatter silently drops. Retain the prior threshold note for sampling, adapters and persistence; this decision supersedes its fail-open and fixed polling tradeoffs.
 
 ## Alternatives considered
 
@@ -18,7 +18,7 @@ Keeping unknown observations available favors uptime but silently defeats reserv
 
 ## Verification
 
-Tests cover query failures, missing/partial windows, stale timestamps, delayed responses, recovery, hot disable, independent coordinator progress, request-time fencing, all supported providers, redacted logging and management projection. Focused race tests, full Go tests, server build and management smoke checks pass. The frontend retains its existing configuration contract and documents the new protection policy in all locales.
+Tests cover query failures, missing/partial windows, stale timestamps, delayed responses, recovery, hot disable, independent coordinator progress, request-time fencing, all supported providers, redacted logging, production formatter output/newline escaping and management projection. Focused race tests, full Go tests, server build and management smoke checks pass. The frontend retains its existing configuration contract and documents the new protection policy in all locales.
 
 ## Consequences
 
