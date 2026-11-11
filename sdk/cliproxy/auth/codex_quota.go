@@ -19,6 +19,7 @@ import (
 
 // CodexQuotaWindow preserves upstream usage even after its reset deadline passes.
 type CodexQuotaWindow struct {
+	ObservedAt    time.Time `json:"observed_at,omitempty"`
 	Name          string    `json:"name"`
 	UsedPercent   float64   `json:"used_percent"`
 	WindowSeconds int64     `json:"window_seconds"`
@@ -50,6 +51,16 @@ func (s *CodexQuotaSnapshot) clone() *CodexQuotaSnapshot {
 	out := *s
 	out.Windows = append([]CodexQuotaWindow(nil), s.Windows...)
 	out.Recovery = append([]CodexQuotaRecoveryWindow(nil), s.Recovery...)
+	// Preserve the age of legacy windows before a partial merge changes snapshot time.
+	for i := range out.Windows {
+		if out.Windows[i].ObservedAt.IsZero() {
+			out.Windows[i].ObservedAt = s.RequestStartedAt
+			if out.Windows[i].ObservedAt.IsZero() {
+				out.Windows[i].ObservedAt = s.ObservedAt
+			}
+		}
+	}
+
 	return &out
 }
 
@@ -160,9 +171,13 @@ func (m *Manager) observeCodexQuota(base *Auth, windows []CodexQuotaWindow, star
 	if s == nil {
 		s = &CodexQuotaSnapshot{Identity: codexQuotaIdentity(a)}
 	}
+	for i := range windows {
+		windows[i].ObservedAt = started
+	}
 	s.Windows = mergeCodexQuotaWindows(s.Windows, windows, false)
 	s.ObservedAt, s.RequestStartedAt = now, started
 	a.CodexQuota = s
+	quotaGuardObserved(a, started, now)
 	a.codexQuotaBlocked = m.codexQuotaRoutingBlocked(a)
 	a.Generation++
 	a.UpdatedAt = now
@@ -290,6 +305,9 @@ func (m *Manager) applyCodexQuotaRefresh(base *Auth, windows []CodexQuotaWindow,
 	if wasExhausted && len(s.Recovery) == 0 {
 		s.resetRecovery()
 	}
+	for i := range windows {
+		windows[i].ObservedAt = started
+	}
 	s.Windows = mergeCodexQuotaWindows(s.Windows, windows, false)
 	s.ObservedAt, s.RequestStartedAt = now, started
 	if denied {
@@ -306,6 +324,7 @@ func (m *Manager) applyCodexQuotaRefresh(base *Auth, windows []CodexQuotaWindow,
 		s.DeniedResetAt = time.Time{}
 	}
 	a.CodexQuota = s
+	quotaGuardObserved(a, started, now)
 	a.codexQuotaBlocked = m.codexQuotaRoutingBlocked(a)
 	if recovered {
 		clearConfirmedCodexQuotaCooldown(a, now)
@@ -314,6 +333,7 @@ func (m *Manager) applyCodexQuotaRefresh(base *Auth, windows []CodexQuotaWindow,
 	a.UpdatedAt = now
 	snapshot := a.Clone()
 	m.mu.Unlock()
+	m.logQuotaGuardObservation(snapshot)
 	m.publishCodexQuota(snapshot, true)
 	return true
 }
@@ -485,5 +505,9 @@ func (m *Manager) codexQuotaGuardBlocked(a *Auth) bool {
 	return false
 }
 func (m *Manager) codexQuotaRoutingBlocked(a *Auth) bool {
-	return m.providerQuotaGuardBlocked(a) || m.codexQuotaGuardBlocked(a) || (a.CodexQuota != nil && a.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(a))
+	return m.codexQuotaRoutingBlockedAt(a, time.Now())
+}
+func (m *Manager) codexQuotaRoutingBlockedAt(a *Auth, now time.Time) bool {
+	healthBlocked := m.quotaGuardHealthBlocked(a, now)
+	return healthBlocked || m.providerQuotaGuardBlocked(a) || m.codexQuotaGuardBlocked(a) || (a.CodexQuota != nil && a.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(a))
 }

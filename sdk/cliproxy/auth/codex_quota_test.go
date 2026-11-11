@@ -72,6 +72,9 @@ func quotaWindow(name string, used float64, reset time.Time) CodexQuotaWindow {
 
 func TestCodexQuotaResetGraceAndUnchangedWindowThrottle(t *testing.T) {
 	m, e, a := newQuotaTestManager(t)
+	// Preserve legacy denial-recovery timing when proactive protection is disabled.
+	enabled := false
+	m.SetConfig(&config.Config{QuotaGuard: &config.CodexQuotaGuard{Enabled: &enabled}})
 	now := time.Now()
 	reset := now.Add(-codexQuotaResetGrace + time.Second)
 	seedQuota(m, a, &CodexQuotaSnapshot{ObservedAt: now.Add(-time.Hour), Windows: []CodexQuotaWindow{quotaWindow("primary", 74, reset)}})
@@ -237,6 +240,9 @@ func TestCodexQuotaConcurrentReservationAndStaleResultFence(t *testing.T) {
 func TestCodexQuotaEarlyProbeAndEndpointFailureThrottle(t *testing.T) {
 	for _, reset := range []time.Time{time.Time{}, time.Now().Add(7 * 24 * time.Hour)} {
 		m, e, a := newQuotaTestManager(t)
+		// Preserve legacy denial-recovery timing when proactive protection is disabled.
+		enabled := false
+		m.SetConfig(&config.Config{QuotaGuard: &config.CodexQuotaGuard{Enabled: &enabled}})
 		now := time.Now()
 		seedQuota(m, a, &CodexQuotaSnapshot{Exhausted: true, DeniedResetAt: reset})
 		e.fetch = func(context.Context, *Auth, *http.Request) (*http.Response, error) {

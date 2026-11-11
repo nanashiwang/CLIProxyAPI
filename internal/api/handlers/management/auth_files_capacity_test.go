@@ -35,3 +35,15 @@ func TestAuthFileCapacityDoesNotOverrideAvailability(t *testing.T) {
 		t.Fatal("missing observer reported known capacity")
 	}
 }
+
+func TestAuthFileQuotaGuardDiagnostics(t *testing.T) {
+	h := NewHandlerWithoutConfigFilePath(&config.Config{}, nil)
+	a := &coreauth.Auth{ID: "quota", Provider: "claude", Status: coreauth.StatusActive, Attributes: map[string]string{"runtime_only": "true"}, QuotaGuard: &coreauth.QuotaGuardStatus{State: "query_failed", Failure: "http_error", HTTPStatus: 429}, ProviderQuota: &coreauth.CodexQuotaSnapshot{Windows: []coreauth.CodexQuotaWindow{{Name: "claude:five_hour", UsedPercent: 81, WindowSeconds: 18000}}}}
+	entry := h.buildAuthFileEntry(a)
+	if entry["quota_guard"] != a.QuotaGuard || entry["provider_quota"] != a.ProviderQuota {
+		t.Fatalf("missing quota diagnostics: %#v", entry)
+	}
+	if _, ok := entry["codex_quota"]; ok {
+		t.Fatal("Claude quota mislabeled as Codex")
+	}
+}

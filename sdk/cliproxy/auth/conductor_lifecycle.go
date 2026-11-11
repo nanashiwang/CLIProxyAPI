@@ -216,6 +216,13 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	} else {
 		auth.ProviderQuota = nil
 	}
+	if existing.QuotaGuard != nil && providerQuotaIdentity(auth) == providerQuotaIdentity(existing) && codexQuotaIdentity(auth) == codexQuotaIdentity(existing) {
+		h := *existing.QuotaGuard
+		auth.QuotaGuard = &h
+	} else {
+		auth.QuotaGuard = nil
+		auth.quotaGuardValidUntil = time.Time{}
+	}
 	auth.Success = existing.Success
 	auth.Failed = existing.Failed
 	auth.recentRequests = existing.recentRequests

@@ -373,6 +373,12 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth) gin.H {
 	if !auth.LastRefreshedAt.IsZero() {
 		entry["last_refresh"] = auth.LastRefreshedAt
 	}
+	if auth.QuotaGuard != nil {
+		entry["quota_guard"] = auth.QuotaGuard
+	}
+	if auth.ProviderQuota != nil {
+		entry["provider_quota"] = auth.ProviderQuota
+	}
 	if auth.CodexQuota != nil {
 		entry["codex_quota"] = auth.CodexQuota
 	}

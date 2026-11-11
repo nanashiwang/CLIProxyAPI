@@ -63,7 +63,25 @@ func parseProviderQuota(provider string, data []byte, now time.Time) []CodexQuot
 			add(name, used, seconds, quotaReset(w.Get("resets_at")))
 		}
 		for _, w := range root.Get("limits").Array() {
-			if w.Get("kind").String() != "weekly_scoped" || w.Get("is_active").Type == gjson.False {
+			kind := w.Get("kind").String()
+			if kind == "session" || kind == "weekly_all" {
+				name, seconds := "claude:five_hour", int64(18000)
+				if kind == "weekly_all" {
+					name, seconds = "claude:seven_day", 604800
+				}
+				exists := false
+				for _, known := range windows {
+					if known.Name == name {
+						exists = true
+						break
+					}
+				}
+				if used, ok := quotaNumber(w.Get("percent")); ok && !exists {
+					add(name, used, seconds, quotaReset(w.Get("resets_at")))
+				}
+				continue
+			}
+			if kind != "weekly_scoped" {
 				continue
 			}
 			name := w.Get("scope.model.display_name").String()

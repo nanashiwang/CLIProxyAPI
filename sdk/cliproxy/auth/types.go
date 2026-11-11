@@ -80,9 +80,11 @@ type Auth struct {
 	// Quota captures recent quota information for load balancers.
 	Quota QuotaState `json:"quota"`
 	// CodexQuota retains observed windows independently of cooldown deadlines.
-	ProviderQuota     *CodexQuotaSnapshot `json:"provider_quota,omitempty"`
-	CodexQuota        *CodexQuotaSnapshot `json:"codex_quota,omitempty"`
-	codexQuotaBlocked bool
+	QuotaGuard           *QuotaGuardStatus `json:"quota_guard,omitempty"`
+	quotaGuardValidUntil time.Time
+	ProviderQuota        *CodexQuotaSnapshot `json:"provider_quota,omitempty"`
+	CodexQuota           *CodexQuotaSnapshot `json:"codex_quota,omitempty"`
+	codexQuotaBlocked    bool
 	// LastError stores the last failure encountered while executing or refreshing.
 	LastError *Error `json:"last_error,omitempty"`
 	// CreatedAt is the creation timestamp in UTC.
@@ -272,6 +274,10 @@ func (a *Auth) Clone() *Auth {
 		return nil
 	}
 	copyAuth := *a
+	if a.QuotaGuard != nil {
+		h := *a.QuotaGuard
+		copyAuth.QuotaGuard = &h
+	}
 	copyAuth.CodexQuota = a.CodexQuota.clone()
 	copyAuth.ProviderQuota = a.ProviderQuota.clone()
 	if len(a.Attributes) > 0 {

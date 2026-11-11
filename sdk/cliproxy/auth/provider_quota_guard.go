@@ -73,17 +73,17 @@ func (m *Manager) providerQuotaGuardBlocked(a *Auth) bool {
 		return false
 	}
 	for _, w := range a.ProviderQuota.Windows {
-		p, j := policy.Window(w.WindowSeconds)
-		if p == 0 {
-			continue
-		}
-		sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", providerQuotaIdentity(a), w.Name, w.WindowSeconds)))
-		unit := float64(binary.BigEndian.Uint64(sum[:8])>>11) / float64(uint64(1)<<53)
-		if w.UsedPercent >= p+(2*unit-1)*j {
+		if w.UsedPercent >= providerQuotaStopThreshold(a, w, policy) {
 			return true
 		}
 	}
 	return false
+}
+func providerQuotaStopThreshold(a *Auth, w CodexQuotaWindow, policy config.CodexQuotaGuard) float64 {
+	p, j := policy.Window(w.WindowSeconds)
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", providerQuotaIdentity(a), w.Name, w.WindowSeconds)))
+	unit := float64(binary.BigEndian.Uint64(sum[:8])>>11) / float64(uint64(1)<<53)
+	return p + (2*unit-1)*j
 }
 func providerQuotaRefreshTarget(a *Auth, now time.Time) (time.Time, bool) {
 	var target time.Time
@@ -116,6 +116,7 @@ func (m *Manager) applyProviderQuotaRefresh(base *Auth, windows []CodexQuotaWind
 	}
 	// Keep missing/failed sources intact; a missing window never proves recovery.
 	for _, w := range windows {
+		w.ObservedAt = started
 		found := false
 		for i := range s.Windows {
 			if s.Windows[i].Name == w.Name {
@@ -130,11 +131,13 @@ func (m *Manager) applyProviderQuotaRefresh(base *Auth, windows []CodexQuotaWind
 	}
 	s.ObservedAt, s.RequestStartedAt = now, started
 	a.ProviderQuota = s
+	quotaGuardObserved(a, started, now)
 	a.codexQuotaBlocked = m.codexQuotaRoutingBlocked(a)
 	a.Generation++
 	a.UpdatedAt = now
 	snapshot := a.Clone()
 	m.mu.Unlock()
+	m.logQuotaGuardObservation(snapshot)
 	m.publishCodexQuota(snapshot, true)
 	return true
 }
@@ -186,6 +189,8 @@ func (m *Manager) refreshProviderQuota(ctx context.Context, job codexQuotaRefres
 		ctx = context.WithValue(ctx, "cliproxy.roundtripper", rt)
 	}
 	var windows []CodexQuotaWindow
+	category, status := "unsupported_quota", 0
+	failed := false
 	for _, spec := range providerQuotaRequests(job.auth) {
 		method := http.MethodGet
 		if spec.body != "" {
@@ -193,6 +198,8 @@ func (m *Manager) refreshProviderQuota(ctx context.Context, job codexQuotaRefres
 		}
 		req, err := http.NewRequestWithContext(ctx, method, spec.url, bytes.NewBufferString(spec.body))
 		if err != nil {
+			category = "request_failed"
+			failed = true
 			continue
 		}
 		req.Header.Set("Accept", "application/json")
@@ -202,9 +209,13 @@ func (m *Manager) refreshProviderQuota(ctx context.Context, job codexQuotaRefres
 		}
 		resp, err := job.executor.HttpRequest(ctx, job.auth, req)
 		if err != nil {
+			category = "request_failed"
+			failed = true
 			continue
 		}
 		if resp == nil || resp.Body == nil {
+			category = "empty_response"
+			failed = true
 			continue
 		}
 		const maxBytes = 1 << 20
@@ -213,15 +224,36 @@ func (m *Manager) refreshProviderQuota(ctx context.Context, job codexQuotaRefres
 			logEntryWithRequestID(ctx).Debug("failed to close provider quota response")
 		}
 		if readErr != nil || len(data) > maxBytes || resp.StatusCode != http.StatusOK || ctx.Err() != nil {
+			category = "invalid_body"
+			status = resp.StatusCode
+			failed = true
+			if resp.StatusCode != http.StatusOK {
+				category = "http_error"
+			}
 			continue
 		}
 		parsed := parseProviderQuota(job.auth.Provider, data, time.Now())
 		windows = append(windows, parsed...)
+		if len(parsed) == 0 {
+			category = "invalid_payload"
+			status = resp.StatusCode
+			failed = true
+		}
 		if strings.EqualFold(job.auth.Provider, "antigravity") && len(parsed) > 0 {
 			break
 		}
 	}
 	if ctx.Err() == nil {
-		m.applyProviderQuotaRefresh(job.auth, windows, job.attempt.at, time.Now())
+		// Antigravity hosts are alternatives; other provider sources are independent.
+		if len(windows) > 0 && strings.EqualFold(job.auth.Provider, "antigravity") {
+			failed = false
+		}
+		if failed || len(windows) == 0 {
+			m.finishQuotaGuardFailure(ctx, job, category, status)
+			return
+		}
+		if !m.applyProviderQuotaRefresh(job.auth, windows, job.attempt.at, time.Now()) {
+			m.finishQuotaGuardFailure(ctx, job, "observation_rejected", status)
+		}
 	}
 }

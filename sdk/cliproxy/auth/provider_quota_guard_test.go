@@ -37,6 +37,7 @@ func TestProviderQuotaParse(t *testing.T) {
 		seconds        int64
 	}{
 		{"claude", `{"five_hour":{"utilization":96},"seven_day":{"utilization":0}}`, 2, 96, 18000},
+		{"claude", `{"limits":[{"kind":"session","percent":83},{"kind":"weekly_all","percent":56,"is_active":false},{"kind":"weekly_scoped","percent":19,"is_active":false,"scope":{"model":{"display_name":"Fable"}}}]}`, 3, 83, 18000},
 		{"claude", `{"five_hour":null,"seven_day":{"utilization":null}}`, 0, 0, 0},
 		{"claude", `{"limits":[{"kind":"weekly_scoped","is_active":true,"scope":{"model":{"display_name":"Fable"}},"percent":97}]}`, 1, 97, 604800},
 		{"xai", `{"config":{"currentPeriod":{"type":"weekly","end":"2026-11-18T00:00:00Z"},"creditUsagePercent":98}}`, 1, 98, 604800},

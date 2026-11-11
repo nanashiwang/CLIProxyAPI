@@ -52,8 +52,15 @@ func (auth *Auth) AvailabilityView(now time.Time) (unavailable bool, status Stat
 		return unavailable, StatusDisabled, statusMessage, nextRetry
 	}
 
+	if quotaRoutingBlocked(auth, now) && statusMessage == "" && auth.QuotaGuard != nil {
+		state := auth.QuotaGuard.State
+		if !auth.quotaGuardValidUntil.IsZero() && !now.Before(auth.quotaGuardValidUntil) && state == "ready" {
+			state = "stale"
+		}
+		statusMessage = "Quota guard: " + state
+	}
 	// Never reconcile an active authentication or token failure to active.
-	if isPersistentAuthFailure(auth, now) || auth.codexQuotaBlocked || (auth.CodexQuota != nil && auth.CodexQuota.Exhausted) {
+	if isPersistentAuthFailure(auth, now) || quotaRoutingBlocked(auth, now) || (auth.CodexQuota != nil && auth.CodexQuota.Exhausted) {
 		if !nextRetry.IsZero() && !nextRetry.After(now) {
 			nextRetry = time.Time{}
 		}

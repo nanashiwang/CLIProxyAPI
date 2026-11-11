@@ -596,6 +596,9 @@ func scheduledAuthPredicate(eligibility authSelectionEligibility, tried map[stri
 		if entry == nil || entry.auth == nil || !eligibility.allows(entry.auth) {
 			return false
 		}
+		if !entry.auth.quotaGuardValidUntil.IsZero() && !time.Now().Before(entry.auth.quotaGuardValidUntil) {
+			return false
+		}
 		if requirePositiveWeight && (entry.meta == nil || entry.meta.weight <= 0) {
 			return false
 		}
@@ -711,7 +714,7 @@ func isCredentialBlocked(auth *Auth, supportedModelCount int, now time.Time) boo
 	if auth.Disabled || auth.Status == StatusDisabled {
 		return true
 	}
-	if auth.codexQuotaBlocked {
+	if quotaRoutingBlocked(auth, now) {
 		return true
 	}
 	if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" && auth.Quota.NextRecoverAt.After(now) {

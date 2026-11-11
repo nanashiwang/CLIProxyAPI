@@ -260,8 +260,9 @@ func (m *Manager) clearDisabledCooldownStates(cfg *internalconfig.Config) bool {
 		if auth == nil {
 			continue
 		}
+		deadline := auth.quotaGuardValidUntil
 		blocked := m.codexQuotaRoutingBlocked(auth)
-		if auth.codexQuotaBlocked != blocked {
+		if auth.codexQuotaBlocked != blocked || !deadline.Equal(auth.quotaGuardValidUntil) {
 			auth.codexQuotaBlocked = blocked
 			auth.Generation++
 			snapshots = append(snapshots, auth.Clone())

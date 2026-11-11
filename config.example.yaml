@@ -871,7 +871,12 @@ nonstream-keepalive-interval: 0
 # Common settings override legacy codex-quota-guard fields; all values are consumed percentages.
 # Short windows (<7 days), weekly windows (7 to <28 days), and monthly windows (>=28 days).
 # Supported: Codex/Claude/xAI OAuth, Kimi usage credentials and Antigravity OAuth.
-# Standalone routing only. Unknown quota and in-flight work cannot be reserved.
+# Standalone routing only. Verification starts with the background refresh lifecycle.
+# Missing/failed checks pause new calls. Normal checks run every 60s, or 15s within
+# 10 percentage points of the sampled stop threshold; observations expire after
+# two intervals (120s / 30s), independently per window. Valid low usage resumes calls.
+# Already admitted work can still cross the reserve; it is never cancelled.
+# Disable this guard explicitly only if availability takes precedence over verification.
 quota-guard:
   enabled: true
   five-hour-used-percent: 90
