@@ -867,13 +867,16 @@ nonstream-keepalive-interval: 0
 #         - "generationConfig.thinkingConfig.thinkingBudget"
 #         - "generationConfig.responseJsonSchema"
 
-# Stop scheduling Codex OAuth accounts before quota exhaustion (consumed percentages).
-# Each account/window receives a stable uniform threshold in percent ± jitter.
-# Either window pauses the account; fresh quota below both thresholds resumes it.
-# Standalone routing only; Home dispatch retains its own authority.
-codex-quota-guard:
+# Proactive protection for providers with explicit quota observations.
+# Common settings override legacy codex-quota-guard fields; all values are consumed percentages.
+# Short windows (<7 days), weekly windows (7 to <28 days), and monthly windows (>=28 days).
+# Supported: Codex/Claude/xAI OAuth, Kimi usage credentials and Antigravity OAuth.
+# Standalone routing only. Unknown quota and in-flight work cannot be reserved.
+quota-guard:
   enabled: true
   five-hour-used-percent: 90
   five-hour-jitter: 5
   weekly-used-percent: 93
   weekly-jitter: 3
+  monthly-used-percent: 93
+  monthly-jitter: 3

@@ -35,3 +35,25 @@ func TestCodexQuotaGuardConfig(t *testing.T) {
 		t.Fatal(p, j)
 	}
 }
+
+func TestCommonQuotaGuardLegacyOverlay(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("codex-quota-guard:\n  enabled: false\n  weekly-used-percent: 88\nquota-guard:\n  enabled: true\n  monthly-used-percent: 95\n"), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.EffectiveQuotaGuard()
+	if !c.IsEnabled() {
+		t.Fatal("common enabled ignored")
+	}
+	p, _ := c.Window(604800)
+	if p != 88 {
+		t.Fatal("legacy value lost")
+	}
+	p, j := c.Window(30 * 86400)
+	if p != 95 || j != 3 {
+		t.Fatal("monthly value lost")
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -471,7 +471,7 @@ func (m *Manager) codexQuotaGuardBlocked(a *Auth) bool {
 	cfg, _ := m.runtimeConfig.Load().(*config.Config)
 	var policy config.CodexQuotaGuard
 	if cfg != nil {
-		policy = cfg.CodexQuotaGuard
+		policy = cfg.EffectiveQuotaGuard()
 	}
 	if !policy.IsEnabled() {
 		return false
@@ -485,5 +485,5 @@ func (m *Manager) codexQuotaGuardBlocked(a *Auth) bool {
 	return false
 }
 func (m *Manager) codexQuotaRoutingBlocked(a *Auth) bool {
-	return m.codexQuotaGuardBlocked(a) || (a.CodexQuota != nil && a.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(a))
+	return m.providerQuotaGuardBlocked(a) || m.codexQuotaGuardBlocked(a) || (a.CodexQuota != nil && a.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(a))
 }

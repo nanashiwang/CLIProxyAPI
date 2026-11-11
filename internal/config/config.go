@@ -90,7 +90,8 @@ type Config struct {
 	// MaxRetryInterval defines the maximum wait time in seconds before retrying a cooled-down credential.
 	MaxRetryInterval int `yaml:"max-retry-interval" json:"max-retry-interval"`
 
-	CodexQuotaGuard CodexQuotaGuard `yaml:"codex-quota-guard" json:"codex-quota-guard"`
+	QuotaGuard      *CodexQuotaGuard `yaml:"quota-guard,omitempty" json:"quota-guard,omitempty"`
+	CodexQuotaGuard CodexQuotaGuard  `yaml:"codex-quota-guard" json:"codex-quota-guard"`
 
 	// QuotaExceeded defines the behavior when a quota is exceeded.
 	QuotaExceeded QuotaExceeded `yaml:"quota-exceeded" json:"quota-exceeded"`

@@ -90,11 +90,23 @@ func (m *Manager) reserveCodexQuotaRefreshes(now time.Time) []codexQuotaRefreshJ
 	for id := range m.auths {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	sort.Slice(ids, func(i, j int) bool {
+		left, right := m.codexQuotaRefresh[ids[i]], m.codexQuotaRefresh[ids[j]]
+		if left == nil || right == nil {
+			if left == nil && right == nil {
+				return ids[i] < ids[j]
+			}
+			return left == nil
+		}
+		if left.at.Equal(right.at) {
+			return ids[i] < ids[j]
+		}
+		return left.at.Before(right.at)
+	})
 	var jobs []codexQuotaRefreshJob
 	for _, id := range ids {
 		a := m.auths[id]
-		if !codexQuotaOAuth(a) || a.Disabled || a.Status == StatusDisabled || hasUnauthorizedAuthFailure(a) {
+		if (!codexQuotaOAuth(a) && !providerQuotaEligible(a)) || a.Disabled || a.Status == StatusDisabled || hasUnauthorizedAuthFailure(a) {
 			continue
 		}
 		if expiry, ok := a.ExpirationTime(); ok && !expiry.After(now) {
@@ -105,6 +117,9 @@ func (m *Manager) reserveCodexQuotaRefreshes(now time.Time) []codexQuotaRefreshJ
 			continue
 		}
 		target, candidate := codexQuotaRefreshTarget(a, now)
+		if providerQuotaEligible(a) {
+			target, candidate = providerQuotaRefreshTarget(a, now)
+		}
 		if m.codexQuotaGuardBlocked(a) {
 			candidate = true
 		}
@@ -118,7 +133,11 @@ func (m *Manager) reserveCodexQuotaRefreshes(now time.Time) []codexQuotaRefreshJ
 		if last != nil && last.epoch != a.RegistrationEpoch {
 			last = nil
 		}
-		if !codexQuotaRefreshDue(last, target, now) {
+		due := codexQuotaRefreshDue(last, target, now)
+		if providerQuotaEligible(a) && last != nil {
+			due = !last.inFlight && (due || now.Sub(last.at) >= time.Minute)
+		}
+		if !due {
 			continue
 		}
 		attempt := &codexQuotaRefreshAttempt{at: now, epoch: a.RegistrationEpoch, inFlight: true}
@@ -177,7 +196,10 @@ func (m *Manager) refreshCodexQuotas(ctx context.Context, now time.Time) {
 func (m *Manager) refreshCodexQuota(ctx context.Context, job codexQuotaRefreshJob) {
 	m.mu.RLock()
 	current := m.auths[job.auth.ID]
-	valid := current != nil && !current.Disabled && current.Status != StatusDisabled && current.RegistrationEpoch == job.auth.RegistrationEpoch && current.Generation == job.auth.Generation && !m.HomeEnabled()
+	valid := current != nil && !current.Disabled && current.Status != StatusDisabled && current.RegistrationEpoch == job.auth.RegistrationEpoch && (providerQuotaEligible(job.auth) || current.Generation == job.auth.Generation) && !m.HomeEnabled()
+	if valid && providerQuotaEligible(job.auth) {
+		valid = providerQuotaToken(current) == providerQuotaToken(job.auth) && providerQuotaIdentity(current) == providerQuotaIdentity(job.auth)
+	}
 	if valid {
 		if expiry, ok := current.ExpirationTime(); ok && !expiry.After(time.Now()) {
 			valid = false
@@ -185,6 +207,10 @@ func (m *Manager) refreshCodexQuota(ctx context.Context, job codexQuotaRefreshJo
 	}
 	m.mu.RUnlock()
 	if !valid {
+		return
+	}
+	if providerQuotaEligible(job.auth) {
+		m.refreshProviderQuota(ctx, job)
 		return
 	}
 	// This GET never acquires/replaces/releases a request lease or opens a response session.

@@ -211,6 +211,11 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	} else {
 		auth.CodexQuota = nil
 	}
+	if providerQuotaIdentity(auth) == providerQuotaIdentity(existing) {
+		auth.ProviderQuota = existing.ProviderQuota.clone()
+	} else {
+		auth.ProviderQuota = nil
+	}
 	auth.Success = existing.Success
 	auth.Failed = existing.Failed
 	auth.recentRequests = existing.recentRequests

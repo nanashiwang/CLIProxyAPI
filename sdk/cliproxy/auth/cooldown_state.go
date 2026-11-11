@@ -17,6 +17,7 @@ import (
 
 // CooldownStateRecord is a persisted runtime cooldown snapshot for one auth/model pair.
 type CooldownStateRecord struct {
+	ProviderQuota  *CodexQuotaSnapshot `json:"provider_quota,omitempty"`
 	CodexQuota     *CodexQuotaSnapshot `json:"codex_quota,omitempty"`
 	Provider       string              `json:"provider,omitempty"`
 	AuthID         string              `json:"auth_id"`
