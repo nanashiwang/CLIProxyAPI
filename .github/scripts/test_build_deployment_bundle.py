@@ -21,6 +21,8 @@ class BundleTests(unittest.TestCase):
     def run_command(self, *args):
         if args[:2] == ("git", "rev-parse"):
             return b"commit\n"
+        if args[:2] == ("git", "merge-base"):
+            return b""
         if args[:2] == ("git", "describe"):
             return b"v1-personal.1\n"
         if args[:2] == ("gh", "api"):
@@ -54,6 +56,18 @@ class BundleTests(unittest.TestCase):
                     self.assertEqual(hashlib.sha256(archive.read(path)).hexdigest(), digest)
                 self.assertIn("修复额度窗口刷新", archive.read("DEPLOY_CN.md").decode())
             self.assertEqual(archive_path.with_suffix(".zip.sha256").read_text().split()[0], hashlib.sha256(archive_path.read_bytes()).hexdigest())
+
+    def test_published_base_skips_an_unfinished_intermediate_tag(self):
+        commands = []
+        def capture(*args):
+            commands.append(args)
+            return self.run_command(*args)
+        with tempfile.TemporaryDirectory() as temp, patch.object(bundle, "run", capture):
+            bundle.build_bundle("v1-personal.2", "ui-v1", Path(temp), "v1-personal.0")
+            with zipfile.ZipFile(next(Path(temp).glob("*.zip"))) as archive:
+                self.assertEqual(json.loads(archive.read("manifest.json"))["base"], "v1-personal.0")
+            self.assertIn(("git", "merge-base", "--is-ancestor", "v1-personal.0", "v1-personal.2"), commands)
+            self.assertIn(("git", "diff", "--binary", "v1-personal.0", "v1-personal.2"), commands)
 
     def test_mismatched_management_digest_is_rejected(self):
         self.release["assets"][0]["digest"] = "sha256:wrong"

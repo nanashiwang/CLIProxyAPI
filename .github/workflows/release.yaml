@@ -574,10 +574,8 @@ jobs:
           rm -rf "dist/${TARGET}"
       - name: Install FreeBSD cross-build dependencies
         if: ${{ matrix.cgo_enabled }}
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y clang lld curl
+        shell: bash
+        run: bash .github/scripts/ensure-freebsd-toolchain.sh
       - name: Build FreeBSD binary with CGO
         if: ${{ matrix.cgo_enabled }}
         timeout-minutes: 45
@@ -721,7 +719,11 @@ jobs:
           git fetch --tags origin
           bundle_dir="${RUNNER_TEMP}/cpa-deployment"
           python3 .github/scripts/test_build_deployment_bundle.py
+          base_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq "[.[] | select(.draft == false and .prerelease == false and .tag_name != \"${GITHUB_REF_NAME}\")][0].tag_name")"
+          [[ -n "$base_tag" && "$base_tag" != null ]]
           python3 .github/scripts/build-deployment-bundle.py \
+            --base-tag "$base_tag" \
             --tag "$GITHUB_REF_NAME" \
             --management-tag 'v1.22.2-cpa.37' \
             --output-dir "$bundle_dir"

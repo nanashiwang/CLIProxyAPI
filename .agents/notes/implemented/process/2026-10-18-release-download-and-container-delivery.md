@@ -12,10 +12,14 @@ Keep the 14.3 baseline and pinned SHA256. Add bounded downloads with visible fai
 
 The container source job fetches the authoritative remote release tag into a separate `refs/cpa/release-source` ref with automatic tag following disabled. Actions checkout can synthesize a lightweight local tag for an annotated remote tag, so fetching into the same tag name fails even when both identify the same commit. The separate ref preserves the local tag and still verifies the peeled commit against the published Release.
 
+The FreeBSD prerequisite step reuses available unversioned or versioned LLVM executables, publishing versioned-tool shims through GITHUB_PATH. Only missing tools require apt; repeated Ubuntu DNS failures must not force downloads of redundant meta-packages. Both the release and standalone verification workflows share the same prerequisite script. The sysroot digest and all-platform publication gates remain unchanged.
+
+Deployment bundles receive the previous published stable release as an explicit ancestor base. An unfinished intermediate tag must not hide application changes from the next deployment patch. The builder verifies ancestry and still supports the historical automatic base for standalone callers.
+
 ## Alternatives considered
 
 - Force-replacing the local tag would avoid the conflict, but an isolated fetch ref leaves checkout metadata intact and keeps the release source verification explicit.
-- Skipping FreeBSD or publishing the incomplete draft bypasses the existing release completeness gate; rejected.
+- Skipping FreeBSD or publishing the incomplete draft bypasses the existing release completeness gate; rejected. Repeating unconditional apt installs does not address persistent mirror DNS failures when the actual compiler and linker already exist.
 - The official HTTP archive is also unreachable from the GitHub runner and offers no availability improvement; preserve HTTPS-only downloads.
 - Upgrading the sysroot changes the compatibility baseline without need; retain the pinned archive.
 - Using the upstream DockerHub namespace requires unrelated credentials and risks publishing to another owner; use GHCR with the repository token.

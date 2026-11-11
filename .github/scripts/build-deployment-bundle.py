@@ -13,12 +13,15 @@ def run(*args):
     return subprocess.check_output(args)
 
 
-def build_bundle(tag, management_tag, output_dir):
+def build_bundle(tag, management_tag, output_dir, base_tag=None):
     repo = "nanashiwang/Cli-Proxy-API-Management-Center"
     commit = run("git", "rev-parse", f"{tag}^{{commit}}").decode().strip()
     if commit != run("git", "rev-parse", "HEAD").decode().strip():
         raise ValueError("Bundle must be built at its release commit")
-    base = run("git", "describe", "--tags", "--abbrev=0", f"{tag}^").decode().strip()
+    base = base_tag or run("git", "describe", "--tags", "--abbrev=0", f"{tag}^").decode().strip()
+    if base == tag:
+        raise ValueError("Bundle base must precede the release tag")
+    run("git", "merge-base", "--is-ancestor", base, tag)
     release = json.loads(run("gh", "api", f"repos/{repo}/releases/tags/{management_tag}"))
     if release["draft"] or release["prerelease"]:
         raise ValueError("Management release must be published and stable")
@@ -85,6 +88,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", required=True)
     parser.add_argument("--management-tag", required=True)
+    parser.add_argument("--base-tag", help="Previous published ancestor, excluding unfinished release tags")
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args()
-    build_bundle(args.tag, args.management_tag, args.output_dir)
+    build_bundle(args.tag, args.management_tag, args.output_dir, args.base_tag)
