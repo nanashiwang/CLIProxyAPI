@@ -18,8 +18,11 @@ Deployment bundles receive the previous published stable release as an explicit 
 
 Darwin archives and the native source verification use macOS Intel runners. Apple clang and the SDK retain CGO for both Darwin targets; Go supplies the target architecture flags and lipo verifies the exact resulting architecture before packaging. Hosted macOS arm64 capacity constraints repeatedly leave jobs unacquired and cancelled, so publication does not depend on that runner pool. Native Linux arm64 container verification remains unchanged.
 
+Final checksums are generated from the current Release archives and compared with GitHub asset digests before publication. Workflow reruns can retain different artifacts with the same archive name, so merging workflow artifacts is not authoritative for Release bytes. Missing digests, missing/extra archives, duplicate entries and stale attempt hashes fail verification. Corrections to a published checksum file retain the already verified binary bytes and tag; delivery-only repairs can use the existing `[skip release]` mechanism.
+
 ## Alternatives considered
 
+- Merging workflow artifacts avoids another Release download, but duplicate names across rerun attempts can select old build timestamps and produce a checksum for different bytes. Current Release downloads plus digest validation are authoritative.
 - Retrying the macOS arm64 queue preserves native compilation but repeatedly fails before a runner is acquired. Intel macOS with the Apple SDK builds both architectures without removing CGO; archive architecture checks prevent a host-architecture packaging mistake. Native arm64 runtime testing remains covered locally, while CI source tests execute natively on Intel.
 - Force-replacing the local tag would avoid the conflict, but an isolated fetch ref leaves checkout metadata intact and keeps the release source verification explicit.
 - Skipping FreeBSD or publishing the incomplete draft bypasses the existing release completeness gate; rejected. Repeating unconditional apt installs does not address persistent mirror DNS failures when the actual compiler and linker already exist.
@@ -33,6 +36,8 @@ Darwin archives and the native source verification use macOS Intel runners. Appl
 Four local download regression tests pass, including primary failure, fallback success, corrupt bodies, complete failure and stale-file cleanup. Shell syntax and actionlint pass. The server builds and the management API smoke suite passes. GitHub FreeBSD verification run 39060235999 downloads the Princeton copy, verifies the original SHA256 and successfully compiles the CGO binary after the official source times out. The .59 release passes all ten binary targets and publishes its checksums and deployment bundle. Both container architectures pass version and management assertions; their first delivery attempt exposes root-owned temporary data cleanup and is correctly rejected. The corrected workflow uses the runner UID/GID. Container run 39061682934 passes both architectures, their management tests and cleanup, then publishes the multi-platform manifest. Anonymous registry verification returns both Linux architectures and digest `sha256:1dbfcde56944cf4275a8d790a30fc768933e2274fba29bc0ebb9c69ba7596b1c`. The Linux amd64 release archive and deployment ZIP also match their published checksums. Production rollout and live Claude-provider acceptance remain operator-owned and unperformed.
 
 Local Darwin arm64 native and amd64 CGO cross-builds pass lipo architecture assertions; the native management smoke suite and full Go tests pass. The release job applies the same architecture assertion to its Intel-hosted arm64 build. GitHub run annotations identify capacity constraints and unacquired macOS arm64 runners, rather than a compiler failure.
+
+Four checksum regression tests cover current archives, stale attempt hashes, missing/extra/duplicate entries, absent digests and empty releases. The verifier also accepts the corrected .70 checksum file against the published asset metadata.
 
 ## Consequences
 
