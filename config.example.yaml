@@ -866,3 +866,14 @@ nonstream-keepalive-interval: 0
 #       params: # JSON paths (gjson/sjson syntax) to remove from the payload
 #         - "generationConfig.thinkingConfig.thinkingBudget"
 #         - "generationConfig.responseJsonSchema"
+
+# Stop scheduling Codex OAuth accounts before quota exhaustion (consumed percentages).
+# Each account/window receives a stable uniform threshold in percent ± jitter.
+# Either window pauses the account; fresh quota below both thresholds resumes it.
+# Standalone routing only; Home dispatch retains its own authority.
+codex-quota-guard:
+  enabled: true
+  five-hour-used-percent: 90
+  five-hour-jitter: 5
+  weekly-used-percent: 93
+  weekly-jitter: 3

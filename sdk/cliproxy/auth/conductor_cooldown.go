@@ -260,7 +260,7 @@ func (m *Manager) clearDisabledCooldownStates(cfg *internalconfig.Config) bool {
 		if auth == nil {
 			continue
 		}
-		blocked := auth.CodexQuota != nil && auth.CodexQuota.Exhausted && !quotaCooldownDisabledForAuthWithConfig(auth, cfg)
+		blocked := m.codexQuotaRoutingBlocked(auth)
 		if auth.codexQuotaBlocked != blocked {
 			auth.codexQuotaBlocked = blocked
 			auth.Generation++
@@ -275,10 +275,8 @@ func (m *Manager) clearDisabledCooldownStates(cfg *internalconfig.Config) bool {
 	}
 	m.mu.Unlock()
 
-	if m.scheduler != nil {
-		for _, snapshot := range snapshots {
-			m.scheduler.upsertAuth(snapshot)
-		}
+	for _, snapshot := range snapshots {
+		m.publishCodexQuota(snapshot, false)
 	}
 	return len(snapshots) > 0
 }
@@ -314,7 +312,7 @@ func (m *Manager) RestoreCooldownStates(ctx context.Context) error {
 		if record.Model == "" && record.CodexQuota != nil {
 			if a := m.auths[record.AuthID]; a != nil && codexQuotaOAuth(a) && record.CodexQuota.Identity == codexQuotaIdentity(a) && (a.CodexQuota == nil || !a.CodexQuota.ObservedAt.After(record.CodexQuota.ObservedAt)) {
 				a.CodexQuota = record.CodexQuota.clone()
-				a.codexQuotaBlocked = a.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(a)
+				a.codexQuotaBlocked = m.codexQuotaRoutingBlocked(a)
 				a.Generation++
 				snapshotsByID[a.ID] = a.Clone()
 			}
@@ -492,7 +490,7 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		for i := range auth.CodexQuota.Windows {
 			auth.CodexQuota.Windows[i].LimitReached = false
 		}
-		auth.codexQuotaBlocked = false
+		auth.codexQuotaBlocked = m.codexQuotaRoutingBlocked(auth)
 	}
 	for modelKey, state := range auth.ModelStates {
 		if strings.TrimSpace(modelKey) == "" {

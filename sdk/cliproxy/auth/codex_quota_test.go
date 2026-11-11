@@ -309,12 +309,13 @@ func TestCodexQuotaPersistenceExpiredUsageAndRecoveryPolicy(t *testing.T) {
 	if got.CodexQuota == nil || got.CodexQuota.Windows[1].UsedPercent != 100 || !got.codexQuotaBlocked || got.CodexQuota.Windows[0].LimitReached {
 		t.Fatal("expired snapshot lost on restart", got.CodexQuota)
 	}
-	restored.SetConfig(&config.Config{DisableCooling: true})
+	disabledGuard := false
+	restored.SetConfig(&config.Config{DisableCooling: true, CodexQuotaGuard: config.CodexQuotaGuard{Enabled: &disabledGuard}})
 	got, _ = restored.GetByID(a.ID)
 	if got.codexQuotaBlocked || got.CodexQuota.Windows[1].UsedPercent != 100 {
 		t.Fatal("disable cooling corrupted raw observation")
 	}
-	restored.SetConfig(&config.Config{})
+	restored.SetConfig(&config.Config{CodexQuotaGuard: config.CodexQuotaGuard{Enabled: &disabledGuard}})
 	got, _ = restored.GetByID(a.ID)
 	if !got.codexQuotaBlocked {
 		t.Fatal("cooling re-enable ignored observed denial")

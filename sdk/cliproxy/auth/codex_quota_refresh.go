@@ -105,6 +105,9 @@ func (m *Manager) reserveCodexQuotaRefreshes(now time.Time) []codexQuotaRefreshJ
 			continue
 		}
 		target, candidate := codexQuotaRefreshTarget(a, now)
+		if m.codexQuotaGuardBlocked(a) {
+			candidate = true
+		}
 		if !candidate {
 			if last := m.codexQuotaRefresh[id]; last != nil && !last.inFlight {
 				delete(m.codexQuotaRefresh, id)

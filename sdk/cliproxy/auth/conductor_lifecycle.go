@@ -113,7 +113,7 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 	m.authEpochs[auth.ID]++
 	auth.RegistrationEpoch = m.authEpochs[auth.ID]
 	auth.Generation = 1
-	auth.codexQuotaBlocked = auth.CodexQuota != nil && auth.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(auth)
+	auth.codexQuotaBlocked = m.codexQuotaRoutingBlocked(auth)
 	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
 	m.mu.Unlock()
@@ -239,7 +239,7 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 		cooldownStateChanged = clearCooldownStateForAuth(auth, now) || cooldownStateChanged
 	}
 	auth.EnsureIndex()
-	auth.codexQuotaBlocked = auth.CodexQuota != nil && auth.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(auth)
+	auth.codexQuotaBlocked = m.codexQuotaRoutingBlocked(auth)
 	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
 	m.mu.Unlock()

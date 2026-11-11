@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
@@ -161,6 +163,7 @@ func (m *Manager) observeCodexQuota(base *Auth, windows []CodexQuotaWindow, star
 	s.Windows = mergeCodexQuotaWindows(s.Windows, windows, false)
 	s.ObservedAt, s.RequestStartedAt = now, started
 	a.CodexQuota = s
+	a.codexQuotaBlocked = m.codexQuotaRoutingBlocked(a)
 	a.Generation++
 	a.UpdatedAt = now
 	snapshot := a.Clone()
@@ -210,7 +213,7 @@ func (m *Manager) markCodexQuotaFailureLocked(a *Auth, result Result, now time.T
 		}
 	}
 	s.resetRecovery()
-	a.codexQuotaBlocked = !m.cooldownDisabledForAuth(a)
+	a.codexQuotaBlocked = m.codexQuotaRoutingBlocked(a)
 }
 
 type codexQuotaPayload struct {
@@ -303,7 +306,7 @@ func (m *Manager) applyCodexQuotaRefresh(base *Auth, windows []CodexQuotaWindow,
 		s.DeniedResetAt = time.Time{}
 	}
 	a.CodexQuota = s
-	a.codexQuotaBlocked = s.Exhausted && !m.cooldownDisabledForAuth(a)
+	a.codexQuotaBlocked = m.codexQuotaRoutingBlocked(a)
 	if recovered {
 		clearConfirmedCodexQuotaCooldown(a, now)
 	}
@@ -448,4 +451,39 @@ func (m *Manager) runCodexQuotaPersistence(ctx context.Context) {
 			m.flushCodexQuotaObservations()
 		}
 	}
+}
+
+// A deterministic uniform sample avoids re-drawing on requests, refreshes or restart.
+func codexQuotaStopThreshold(a *Auth, w CodexQuotaWindow, policy config.CodexQuotaGuard) float64 {
+	p, j := policy.Window(w.WindowSeconds)
+	if p == 0 {
+		return 0
+	}
+	seed := fmt.Sprintf("%s:%d", codexQuotaIdentity(a), w.WindowSeconds)
+	sum := sha256.Sum256([]byte(seed))
+	unit := float64(binary.BigEndian.Uint64(sum[:8])>>11) / float64(uint64(1)<<53)
+	return p + (2*unit-1)*j
+}
+func (m *Manager) codexQuotaGuardBlocked(a *Auth) bool {
+	if !codexQuotaOAuth(a) || a.CodexQuota == nil || m.HomeEnabled() {
+		return false
+	}
+	cfg, _ := m.runtimeConfig.Load().(*config.Config)
+	var policy config.CodexQuotaGuard
+	if cfg != nil {
+		policy = cfg.CodexQuotaGuard
+	}
+	if !policy.IsEnabled() {
+		return false
+	}
+	for _, w := range a.CodexQuota.Windows {
+		threshold := codexQuotaStopThreshold(a, w, policy)
+		if threshold > 0 && w.UsedPercent >= threshold {
+			return true
+		}
+	}
+	return false
+}
+func (m *Manager) codexQuotaRoutingBlocked(a *Auth) bool {
+	return m.codexQuotaGuardBlocked(a) || (a.CodexQuota != nil && a.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(a))
 }

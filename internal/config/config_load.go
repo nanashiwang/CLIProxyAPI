@@ -101,6 +101,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		return nil, errValidate
 	}
 
+	if errValidate := cfg.CodexQuotaGuard.Validate(); errValidate != nil {
+		return nil, errValidate
+	}
 	if errValidate := cfg.ValidateAccountPools(); errValidate != nil {
 		return nil, errValidate
 	}
