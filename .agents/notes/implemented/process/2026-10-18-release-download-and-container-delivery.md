@@ -10,8 +10,11 @@ The FreeBSD amd64 job fails while downloading its pinned 14.3 sysroot, blocking 
 
 Keep the 14.3 baseline and pinned SHA256. Add bounded downloads with visible failures and an HTTPS Princeton mirror fallback with an identical 14.3 MANIFEST digest; never extract bytes that fail the pinned digest. Publish repository-owned GHCR containers from the same release tag after all binary release gates succeed, using the existing Dockerfile and native amd64/arm64 runners. A manual run accepts an existing published release tag, resolves its exact Git commit and rebuilds that source with the corrected workflow. This allows delivery fixes without changing an already published tag. Container smoke tests run with the runner UID/GID in their mounted temporary working directory, so cleanup can remove all test data. Serialize container publication and update latest only for GitHub's current public release.
 
+The container source job fetches the authoritative remote release tag into a separate `refs/cpa/release-source` ref with automatic tag following disabled. Actions checkout can synthesize a lightweight local tag for an annotated remote tag, so fetching into the same tag name fails even when both identify the same commit. The separate ref preserves the local tag and still verifies the peeled commit against the published Release.
+
 ## Alternatives considered
 
+- Force-replacing the local tag would avoid the conflict, but an isolated fetch ref leaves checkout metadata intact and keeps the release source verification explicit.
 - Skipping FreeBSD or publishing the incomplete draft bypasses the existing release completeness gate; rejected.
 - The official HTTP archive is also unreachable from the GitHub runner and offers no availability improvement; preserve HTTPS-only downloads.
 - Upgrading the sysroot changes the compatibility baseline without need; retain the pinned archive.
@@ -29,3 +32,5 @@ The official archive is a single-location service. Every HTTPS source is authent
 ## Related-note audit
 
 The capability-review process note supplies the documentation contract; no existing release/download note owns this decision. The Claude capability note concerns runtime behavior and remains independent.
+
+A local Git fixture reproduces the annotated-remote/lightweight-local tag conflict and verifies that the isolated fetch resolves the release commit without modifying the local tag.
