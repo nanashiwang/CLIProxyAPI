@@ -71,13 +71,15 @@ cpa-update
 - systemd 节点：`/root/cliproxyapi` + `cliproxyapi.service`。
 - Docker 节点：默认识别 `/opt/cpa` 下的 `cli-proxy-api` 容器；可通过 `CPA_DOCKER_DIR`、`CPA_DOCKER_CONTAINER` 覆盖。
 
-更新命令会执行以下操作：
+更新命令会先读取最新已发布的目标架构版本，并读取已安装程序的实际版本。两者相同时直接提示“already up to date”并成功退出，不刷新安装器、不改写配置、不创建配置备份、不替换程序，也不停止或重启服务／容器。读取版本失败时中止，不执行更新。入口脚本自身仍会检查并加载最新更新逻辑。
+
+只有版本不同时，才执行以下操作：
 
 1. 等待个人 Release 的目标架构资产完整发布，并校验 SHA-256。
 2. 确保管理面板仓库为 `nanashiwang/Cli-Proxy-API-Management-Center`。
 3. 确保持久化使用统计已开启。
 4. systemd 节点使用个人安装器升级；Docker 节点停止容器后替换二进制，并保存旧二进制备份。
-5. 重启服务后等待管理面板端口就绪，避免启动瞬间误报。
+5. 重启服务后最多等待 180 秒供管理面板就绪，等待期间不重复输出连接失败提示。
 6. 非 root 用户调用 `cpa-update` 时会自动通过 `sudo` 执行。
 
 如果是旧节点，第一次先执行一次迁移命令；执行成功后，以后仍然直接使用 `cpa-update`：

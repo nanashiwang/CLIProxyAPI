@@ -38,6 +38,8 @@ jobs:
           set -euo pipefail
           git diff --check
           python3 .github/scripts/test_download_verified_archive.py
+          python3 .github/scripts/test_node_update.py
+          bash -n deploy/cpa-node/update-node.sh
           go test ./...
           go build -o "${RUNNER_TEMP}/cli-proxy-api" ./cmd/server
           python3 .github/scripts/smoke-management-api.py "${RUNNER_TEMP}/cli-proxy-api"

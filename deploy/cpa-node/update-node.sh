@@ -132,6 +132,19 @@ for line in sys.stdin:
   done
 }
 
+installed_version() {
+  local banner version
+  if [[ "${DEPLOY_MODE}" == "docker" ]]; then
+    banner="$(docker exec "${DOCKER_CONTAINER}" /CLIProxyAPI/CLIProxyAPI -h 2>&1)" || fail "unable to read installed Docker binary version"
+  else
+    [[ -x "${INSTALL_DIR}/cli-proxy-api" ]] || fail "installed binary not found: ${INSTALL_DIR}/cli-proxy-api"
+    banner="$("${INSTALL_DIR}/cli-proxy-api" -h 2>&1)" || fail "unable to read installed binary version"
+  fi
+  version="$(sed -nE 's/^CLIProxyAPI Version: v?([^,[:space:]]+),.*/\1/p' <<<"${banner}")"
+  [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-personal\.[0-9]+)?$ ]] || fail "unable to identify installed release version; no update performed"
+  printf '%s\n' "${version}"
+}
+
 set_config_value() {
   CONFIG_PATH="${CONFIG_PATH}" PANEL_REPOSITORY="${PANEL_REPOSITORY}" python3 - <<'PY'
 import os
@@ -242,12 +255,17 @@ configured_port() {
 }
 
 wait_for_management_panel() {
-  local port="$(configured_port)"
-  for attempt in $(seq 1 30); do
-    if curl --connect-timeout 2 --max-time 5 -fsS "http://127.0.0.1:${port}/management.html" -o /dev/null; then
+  local port deadline remaining request_timeout
+  port="$(configured_port)"
+  deadline=$((SECONDS + 180))
+  while ((SECONDS < deadline)); do
+    remaining=$((deadline - SECONDS))
+    request_timeout=5
+    ((remaining >= request_timeout)) || request_timeout="${remaining}"
+    if curl --connect-timeout 2 --max-time "${request_timeout}" -fsS "http://127.0.0.1:${port}/management.html" -o /dev/null 2>/dev/null; then
       return 0
     fi
-    sleep 1
+    ((SECONDS >= deadline)) || sleep 1
   done
   return 1
 }
@@ -324,21 +342,32 @@ verify() {
   if wait_for_management_panel; then
     log "management panel: reachable (port ${port})"
   else
-    log "management panel check skipped or failed after 30s; inspect service/container logs"
+    log "management panel did not become reachable within 180s; inspect service/container logs"
   fi
 }
 
 main() {
   require_root
   detect_deployment
+  # Resolve both versions before installer, configuration or service mutations.
+  wait_for_release_asset
+  local current_version
+  current_version="$(installed_version)" || return 1
+  log "installed version: ${current_version}"
+  if [[ "${current_version}" == "${RELEASE_VERSION}" ]]; then
+    log "already up to date (${current_version}); no configuration changes or service restart"
+    return 0
+  fi
+  log "upgrade available: ${current_version} -> ${RELEASE_VERSION}"
   if [[ "${DEPLOY_MODE}" == "systemd" ]]; then
     refresh_installer
   fi
   set_config_value
   install_self_updating_command
-  wait_for_release_asset
   update_cpa
   verify
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
