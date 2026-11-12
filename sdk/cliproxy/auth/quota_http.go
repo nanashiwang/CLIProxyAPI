@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"io"
 	"math/rand/v2"
 	"net/http"
@@ -13,14 +12,19 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
 // quotaHTTPState belongs to a credential identity, across quota and profile URLs.
 type quotaHTTPState struct {
-	busy     chan struct{}
-	until    time.Time
-	failures int
-	cache    map[string]quotaHTTPResult
+	busy        chan struct{}
+	until       time.Time
+	failures    int
+	successes   int
+	lastFailure time.Time
+	nextRead    time.Time
+	cache       map[string]quotaHTTPResult
 }
 type quotaHTTPResult struct {
 	status            int
@@ -79,6 +83,9 @@ func quotaRetryAfter(value string, now time.Time) time.Time {
 	}
 	return time.Time{}
 }
+
+const quotaRecoveryPeriod = 30 * time.Minute
+
 func quotaBackoff(n int) time.Duration {
 	if n > 5 {
 		n = 5
@@ -120,6 +127,29 @@ func (m *Manager) quotaHTTPCooldown(a *Auth) time.Time {
 	}
 	return time.Time{}
 }
+
+// Successful reads keep rate-limit history until sustained recovery is observed.
+func (s *quotaHTTPState) quotaSucceeded(now time.Time) {
+	s.successes++
+	if s.successes >= 3 && !now.Before(s.lastFailure.Add(quotaRecoveryPeriod)) {
+		s.failures = 0
+		s.successes = 0
+		s.lastFailure = time.Time{}
+	}
+}
+
+func (m *Manager) quotaHTTPNextCheck(a *Auth) time.Time {
+	m.quotaHTTP.mu.Lock()
+	defer m.quotaHTTP.mu.Unlock()
+	if s := m.quotaHTTP.accounts[quotaHTTPKey(a)]; s != nil {
+		if s.nextRead.After(s.until) {
+			return s.nextRead
+		}
+		return s.until
+	}
+	return time.Time{}
+}
+
 func quotaObservedAt(resp *http.Response, fallback time.Time) time.Time {
 	if t, err := time.Parse(time.RFC3339Nano, resp.Header.Get("X-CPA-Quota-Observed-At")); err == nil && t.Before(fallback) {
 		return t
@@ -166,7 +196,7 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 		s := m.quotaHTTP.accounts[key]
 		if s == nil {
 			for k, v := range m.quotaHTTP.accounts {
-				if v.busy != nil || now.Before(v.until) {
+				if v.busy != nil || now.Before(v.until) || (!v.lastFailure.IsZero() && now.Before(v.lastFailure.Add(24*time.Hour))) {
 					continue
 				}
 				expired := true
@@ -248,35 +278,43 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 			// A cancelled caller must not impose a provider cooldown.
 		} else if err != nil || r.status == 429 || r.status >= 500 {
 			s.failures++
+			s.successes = 0
+			s.lastFailure = m.quotaHTTPTime()
 			next = m.quotaHTTPTime().Add(quotaBackoff(s.failures))
 			if deadline := quotaRetryAfter(r.header.Get("Retry-After"), m.quotaHTTPTime()); deadline.After(m.quotaHTTPTime()) {
 				next = deadline
 			}
 			s.until = next
 		} else if r.status >= 200 && r.status < 300 {
-			if !strings.HasSuffix(req.URL.Path, "/profile") {
-				s.failures = 0
-			}
 			ttl := quotaGuardPollInterval
 			if strings.HasSuffix(req.URL.Path, "/profile") {
 				ttl = 6 * time.Hour
-			} else if cfg, _ := m.runtimeConfig.Load().(*config.Config); cfg != nil {
+			} else {
 				copy := a.Clone()
 				windows := parseProviderQuota(a.Provider, r.body, now)
 				if a.Provider == "codex" {
 					windows, _, _, _ = parseCodexQuotaPayload(r.body, now)
 				}
 				if len(windows) > 0 {
+					s.quotaSucceeded(m.quotaHTTPTime())
 					if a.Provider == "codex" {
 						copy.CodexQuota = &CodexQuotaSnapshot{Windows: windows}
 					} else {
 						copy.ProviderQuota = &CodexQuotaSnapshot{Windows: windows}
 					}
 					copy.QuotaGuard = nil
+				} else {
+					s.successes = 0
 				}
 				ttl = quotaGuardInterval(copy, cfg.EffectiveQuotaGuard())
 			}
+			if a.Provider == "claude" && !strings.HasSuffix(req.URL.Path, "/profile") {
+				ttl += time.Duration(rand.Int64N(int64(ttl/10) + 1))
+			}
 			r.expires = now.Add(ttl)
+			if !strings.HasSuffix(req.URL.Path, "/profile") {
+				s.nextRead = r.expires
+			}
 			if len(s.cache) >= 16 {
 				var oldest string
 				var expiry time.Time
@@ -289,6 +327,8 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 			}
 			s.cache[endpoint] = r
 			next = r.expires
+		} else {
+			s.successes = 0
 		}
 		close(s.busy)
 		s.busy = nil

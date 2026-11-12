@@ -742,7 +742,7 @@ jobs:
           python3 .github/scripts/build-deployment-bundle.py \
             --base-tag "$base_tag" \
             --tag "$GITHUB_REF_NAME" \
-            --management-tag 'v1.22.2-cpa.38' \
+            --management-tag 'v1.22.2-cpa.41' \
             --output-dir "$bundle_dir"
           bundle="cpa-deployment-${GITHUB_REF_NAME}.zip"
           gh release upload "$GITHUB_REF_NAME" "$bundle_dir/$bundle" "$bundle_dir/$bundle.sha256" --clobber

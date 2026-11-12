@@ -37,24 +37,32 @@ func quotaGuardThreshold(a *Auth, w CodexQuotaWindow, policy config.CodexQuotaGu
 	return codexQuotaStopThreshold(a, w, policy)
 }
 
+func quotaGuardIntervals(a *Auth) (time.Duration, time.Duration) {
+	if a != nil && a.Provider == "claude" {
+		return 2 * time.Minute, time.Minute
+	}
+	return quotaGuardPollInterval, quotaGuardNearInterval
+}
+
 func quotaGuardInterval(a *Auth, policy config.CodexQuotaGuard) time.Duration {
+	normal, near := quotaGuardIntervals(a)
 	if a.QuotaGuard != nil && a.QuotaGuard.Failure != "" {
-		return quotaGuardPollInterval
+		return normal
 	}
 	if s := quotaGuardSnapshot(a); s != nil {
 		// Already stopped accounts need recovery checks, not high-frequency polling.
 		for _, w := range s.Windows {
 			if w.UsedPercent >= quotaGuardThreshold(a, w, policy) {
-				return quotaGuardPollInterval
+				return normal
 			}
 		}
 		for _, w := range s.Windows {
 			if w.UsedPercent >= quotaGuardThreshold(a, w, policy)-10 {
-				return quotaGuardNearInterval
+				return near
 			}
 		}
 	}
-	return quotaGuardPollInterval
+	return normal
 }
 
 // quotaGuardHealthBlocked runs under the manager lock alongside routing state updates.
@@ -71,7 +79,7 @@ func (m *Manager) quotaGuardHealthBlocked(a *Auth, now time.Time) bool {
 	if deadline := quotaThresholdWake(a, policy, now); policy.IsEnabled() && deadline.After(h.NextCheckAt) {
 		h.NextCheckAt = deadline
 	}
-	if deadline := m.quotaHTTPCooldown(a); deadline.After(h.NextCheckAt) {
+	if deadline := m.quotaHTTPNextCheck(a); deadline.After(h.NextCheckAt) {
 		h.NextCheckAt = deadline
 	}
 	blocked := false
@@ -95,10 +103,11 @@ func (m *Manager) quotaGuardHealthBlocked(a *Auth, now time.Time) bool {
 				if observed.IsZero() {
 					observed = s.ObservedAt
 				}
-				ttl := 2 * quotaGuardPollInterval
+				normal, near := quotaGuardIntervals(a)
+				ttl := 2 * normal
 				threshold := quotaGuardThreshold(a, w, policy)
 				if w.UsedPercent >= threshold-10 && w.UsedPercent < threshold {
-					ttl = 2 * quotaGuardNearInterval
+					ttl = 2 * near
 				}
 				until := observed.Add(ttl)
 				if h.ValidUntil.IsZero() || until.Before(h.ValidUntil) {

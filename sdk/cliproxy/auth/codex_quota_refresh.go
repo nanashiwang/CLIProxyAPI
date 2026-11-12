@@ -149,7 +149,7 @@ func (m *Manager) reserveCodexQuotaRefreshesLimit(now time.Time, limit int) []co
 		if policy.IsEnabled() && last != nil {
 			due = !last.inFlight && (due || now.Sub(last.at) >= quotaGuardInterval(a, policy))
 		}
-		if now.Before(m.quotaHTTPCooldown(a)) || (policy.IsEnabled() && now.Before(quotaThresholdWake(a, policy, now))) {
+		if now.Before(m.quotaHTTPNextCheck(a)) || (policy.IsEnabled() && now.Before(quotaThresholdWake(a, policy, now))) {
 			due = false
 		}
 		if !due {

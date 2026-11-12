@@ -83,11 +83,15 @@ func TestQuotaGuardFreshnessAllProviders(t *testing.T) {
 			if got.codexQuotaBlocked {
 				t.Fatal("valid data did not resume")
 			}
-			blocked, _, _ := isAuthBlockedForModel(got, "model", now.Add(2*time.Minute))
-			if !blocked || !isCredentialBlocked(got, 1, now.Add(2*time.Minute)) {
+			ttl := 2 * time.Minute
+			if provider == "claude" {
+				ttl = 4 * time.Minute
+			}
+			blocked, _, _ := isAuthBlockedForModel(got, "model", now.Add(ttl))
+			if !blocked || !isCredentialBlocked(got, 1, now.Add(ttl)) {
 				t.Fatal("request admission reused stale data")
 			}
-			m.reconcileQuotaGuardHealth(now.Add(2 * time.Minute))
+			m.reconcileQuotaGuardHealth(now.Add(ttl))
 			got, _ = m.GetByID(a.ID)
 			if got.QuotaGuard.State != "stale" {
 				t.Fatal("stale state not projected")
@@ -106,7 +110,7 @@ func TestQuotaGuardPartialWindowsAndDelayedObservation(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	a, _ := m.Register(context.Background(), &Auth{ID: "partial", Provider: "claude", Metadata: map[string]any{"access_token": "fixture"}})
 	now := time.Now()
-	first := now.Add(-2 * time.Minute)
+	first := now.Add(-4 * time.Minute)
 	m.applyProviderQuotaRefresh(a, []CodexQuotaWindow{{Name: "short", UsedPercent: 5, WindowSeconds: 18000}, {Name: "weekly", UsedPercent: 5, WindowSeconds: 604800}}, first, first)
 	m.applyProviderQuotaRefresh(a, []CodexQuotaWindow{{Name: "short", UsedPercent: 5, WindowSeconds: 18000}}, now, now)
 	got, _ := m.GetByID(a.ID)
@@ -116,14 +120,14 @@ func TestQuotaGuardPartialWindowsAndDelayedObservation(t *testing.T) {
 	near := providerQuotaStopThreshold(a, CodexQuotaWindow{Name: "short", WindowSeconds: 18000}, config.CodexQuotaGuard{}) - 5
 	m.applyProviderQuotaRefresh(a, []CodexQuotaWindow{{Name: "short", UsedPercent: near, WindowSeconds: 18000}, {Name: "weekly", UsedPercent: 5, WindowSeconds: 604800}}, now.Add(time.Second), now.Add(time.Second))
 	got, _ = m.GetByID(a.ID)
-	if quotaRoutingBlocked(got, now.Add(30*time.Second)) || !quotaRoutingBlocked(got, now.Add(31*time.Second)) {
-		t.Fatal("near-limit lifetime is not 30 seconds")
+	if quotaRoutingBlocked(got, now.Add(120*time.Second)) || !quotaRoutingBlocked(got, now.Add(121*time.Second)) {
+		t.Fatal("near-limit lifetime is not 120 seconds")
 	}
 	// Completion time must not make a slow near-limit observation fresh.
 	m2 := NewManager(nil, nil, nil)
 	b, _ := m2.Register(context.Background(), &Auth{ID: "slow", Provider: "claude", Metadata: a.Metadata})
 	near = providerQuotaStopThreshold(b, CodexQuotaWindow{Name: "short", WindowSeconds: 18000}, config.CodexQuotaGuard{}) - 5
-	m2.applyProviderQuotaRefresh(b, []CodexQuotaWindow{{Name: "short", UsedPercent: near, WindowSeconds: 18000}}, now.Add(-time.Minute), now)
+	m2.applyProviderQuotaRefresh(b, []CodexQuotaWindow{{Name: "short", UsedPercent: near, WindowSeconds: 18000}}, now.Add(-3*time.Minute), now)
 	got, _ = m2.GetByID(b.ID)
 	if !got.codexQuotaBlocked {
 		t.Fatal("slow response received a new freshness lifetime")
