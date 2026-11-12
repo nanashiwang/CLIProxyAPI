@@ -189,6 +189,7 @@ func (m *Manager) refreshProviderQuota(ctx context.Context, job codexQuotaRefres
 		ctx = context.WithValue(ctx, "cliproxy.roundtripper", rt)
 	}
 	var windows []CodexQuotaWindow
+	observed := job.attempt.at
 	category, status := "unsupported_quota", 0
 	failed := false
 	for _, spec := range providerQuotaRequests(job.auth) {
@@ -207,7 +208,7 @@ func (m *Manager) refreshProviderQuota(ctx context.Context, job codexQuotaRefres
 		for k, v := range spec.headers {
 			req.Header.Set(k, v)
 		}
-		resp, err := job.executor.HttpRequest(ctx, job.auth, req)
+		resp, err := m.QuotaHTTPRequest(ctx, job.auth, req, func() (*http.Response, error) { return job.executor.HttpRequest(ctx, job.auth, req) })
 		if err != nil {
 			category = "request_failed"
 			failed = true
@@ -232,7 +233,11 @@ func (m *Manager) refreshProviderQuota(ctx context.Context, job codexQuotaRefres
 			}
 			continue
 		}
-		parsed := parseProviderQuota(job.auth.Provider, data, time.Now())
+		sampled := quotaObservedAt(resp, job.attempt.at)
+		if sampled.Before(observed) {
+			observed = sampled
+		}
+		parsed := parseProviderQuota(job.auth.Provider, data, sampled)
 		windows = append(windows, parsed...)
 		if len(parsed) == 0 {
 			category = "invalid_payload"
@@ -252,7 +257,7 @@ func (m *Manager) refreshProviderQuota(ctx context.Context, job codexQuotaRefres
 			m.finishQuotaGuardFailure(ctx, job, category, status)
 			return
 		}
-		if !m.applyProviderQuotaRefresh(job.auth, windows, job.attempt.at, time.Now()) {
+		if !m.applyProviderQuotaRefresh(job.auth, windows, observed, time.Now()) {
 			m.finishQuotaGuardFailure(ctx, job, "observation_rejected", status)
 		}
 	}

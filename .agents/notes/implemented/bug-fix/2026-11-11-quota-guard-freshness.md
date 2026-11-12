@@ -12,6 +12,8 @@ Extend the existing guard, selectors, refresh worker lifecycle and management au
 
 Expose sanitized guard health and normalized provider snapshots through the existing management auth response. Log successful observations with used/threshold/reset values and failures with fixed categories/status, never tokens, response bodies or raw transport errors. The production formatter explicitly allowlists the diagnostic fields, quotes window names and state/category strings, and continues omitting unrecognized credential/body fields. This is required in addition to structured-entry tests: an entry can contain evidence that the configured formatter silently drops. Retain the prior threshold note for sampling, adapters and persistence; this decision supersedes its fail-open and fixed polling tradeoffs.
 
+The [shared query cooldown policy](../../implemented/bug-fix/2026-11-12-shared-quota-query-cooldown.md) supersedes periodic checks during provider cooldowns and known stopped-window sleeps. Freshness and failure protection remain in force.
+
 ## Alternatives considered
 
 Keeping unknown observations available favors uptime but silently defeats reserve protection. A usage request before every inference adds latency and can amplify upstream throttling. Killing in-flight streams can break client work and still cannot undo already charged usage. Lowering thresholds alone cannot address failed observations. This change accepts temporarily unavailable accounts when quota verification fails; explicit guard disable remains the operator escape hatch.

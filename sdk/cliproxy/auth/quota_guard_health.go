@@ -16,6 +16,8 @@ type QuotaGuardStatus struct {
 	State         string    `json:"state"`
 	Failure       string    `json:"failure,omitempty"`
 	HTTPStatus    int       `json:"http_status,omitempty"`
+	NextCheckAt   time.Time `json:"next_check_at,omitempty"`
+	LastFailureAt time.Time `json:"-"`
 	LastAttemptAt time.Time `json:"last_attempt_at,omitempty"`
 	LastSuccessAt time.Time `json:"last_success_at,omitempty"`
 	ValidUntil    time.Time `json:"valid_until,omitempty"`
@@ -65,6 +67,13 @@ func (m *Manager) quotaGuardHealthBlocked(a *Auth, now time.Time) bool {
 	previous := h.State
 	cfg, _ := m.runtimeConfig.Load().(*config.Config)
 	policy := cfg.EffectiveQuotaGuard()
+	h.NextCheckAt = h.LastAttemptAt.Add(quotaGuardInterval(a, policy))
+	if deadline := quotaThresholdWake(a, policy, now); policy.IsEnabled() && deadline.After(h.NextCheckAt) {
+		h.NextCheckAt = deadline
+	}
+	if deadline := m.quotaHTTPCooldown(a); deadline.After(h.NextCheckAt) {
+		h.NextCheckAt = deadline
+	}
 	blocked := false
 	h.ValidUntil = time.Time{}
 	switch {
@@ -124,7 +133,7 @@ func quotaGuardObserved(a *Auth, started, now time.Time) {
 	}
 	h := a.QuotaGuard
 	// An older passive response must not erase a newer failed check.
-	if started.Before(h.LastAttemptAt) && h.Failure != "" {
+	if started.Before(h.LastFailureAt) && h.Failure != "" {
 		return
 	}
 	h.Failure, h.HTTPStatus = "", 0
@@ -166,12 +175,13 @@ func (m *Manager) finishQuotaGuardFailure(ctx context.Context, job codexQuotaRef
 		return
 	}
 	a.QuotaGuard.LastAttemptAt = job.attempt.at
+	a.QuotaGuard.LastFailureAt = job.attempt.at
 	a.QuotaGuard.Failure, a.QuotaGuard.HTTPStatus = category, status
 	a.codexQuotaBlocked = m.codexQuotaRoutingBlocked(a)
 	a.Generation++
 	snapshot := a.Clone()
 	m.mu.Unlock()
-	log.WithFields(log.Fields{"auth_index": snapshot.Index, "provider": snapshot.Provider, "category": category, "http_status": status}).Warn("quota guard query failed")
+	log.WithFields(log.Fields{"auth_index": snapshot.Index, "provider": snapshot.Provider, "category": category, "http_status": status, "next_check_at": snapshot.QuotaGuard.NextCheckAt}).Warn("quota guard query failed")
 	m.publishCodexQuota(snapshot, false)
 }
 
@@ -200,4 +210,24 @@ func (m *Manager) reconcileQuotaGuardHealth(now time.Time) {
 	for _, a := range snapshots {
 		m.publishCodexQuota(a, false)
 	}
+}
+
+// Known stopped windows need no new observations until every blocking reset is due.
+func quotaThresholdWake(a *Auth, policy config.CodexQuotaGuard, now time.Time) time.Time {
+	var deadline time.Time
+	if s := quotaGuardSnapshot(a); s != nil {
+		for _, w := range s.Windows {
+			if w.UsedPercent < quotaGuardThreshold(a, w, policy) {
+				continue
+			}
+			if w.ResetAt.IsZero() {
+				continue
+			}
+			due := w.ResetAt.Add(codexQuotaResetGrace)
+			if due.After(now) && due.After(deadline) {
+				deadline = due
+			}
+		}
+	}
+	return deadline
 }

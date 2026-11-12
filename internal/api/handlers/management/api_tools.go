@@ -131,6 +131,7 @@ func (h *Handler) APICall(c *gin.Context) {
 	authIndex := firstNonEmptyString(body.AuthIndexSnake, body.AuthIndexCamel, body.AuthIndexPascal)
 	auth := h.authByIndex(authIndex)
 
+	sharedQuotaRead := body.ProxyURL == "" && (body.Data == "" || auth != nil && auth.Provider == "antigravity") && body.Header["Authorization"] == "Bearer $TOKEN$"
 	reqHeaders := body.Header
 	if reqHeaders == nil {
 		reqHeaders = map[string]string{}
@@ -189,7 +190,18 @@ func (h *Handler) APICall(c *gin.Context) {
 	}
 	httpClient.Transport = h.apiCallTransport(auth, requestProxyURL)
 
-	resp, errDo := httpClient.Do(req)
+	var resp *http.Response
+	var errDo error
+	if sharedQuotaRead && h.authManager != nil && coreauth.IsQuotaRead(auth, req) {
+		resp, errDo = h.authManager.QuotaHTTPRequest(c.Request.Context(), auth, req, func() (*http.Response, error) { return httpClient.Do(req) })
+		if errDo != nil {
+			h.authManager.RecordQuotaReadFailure(c.Request.Context(), auth, 0)
+		} else if resp != nil && resp.StatusCode >= 400 {
+			h.authManager.RecordQuotaReadFailure(c.Request.Context(), auth, resp.StatusCode)
+		}
+	} else {
+		resp, errDo = httpClient.Do(req)
+	}
 	if errDo != nil {
 		log.WithError(errDo).Debug("management APICall request failed")
 		c.JSON(http.StatusBadGateway, gin.H{"error": "request failed"})

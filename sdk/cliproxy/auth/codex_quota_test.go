@@ -81,21 +81,21 @@ func TestCodexQuotaResetGraceAndUnchangedWindowThrottle(t *testing.T) {
 	e.fetch = func(context.Context, *Auth, *http.Request) (*http.Response, error) {
 		return quotaResponse(74, reset, true), nil
 	}
-	m.refreshCodexQuotas(context.Background(), now)
+	refreshQuotaAt(m, context.Background(), now)
 	if e.calls.Load() != 0 {
 		t.Fatal("first observation bypassed reset grace")
 	}
-	m.refreshCodexQuotas(context.Background(), now.Add(time.Second))
+	refreshQuotaAt(m, context.Background(), now.Add(time.Second))
 	if e.calls.Load() != 1 {
 		t.Fatal("grace boundary did not refresh")
 	}
 	for i := 0; i < 10; i++ {
-		m.refreshCodexQuotas(context.Background(), now.Add(time.Minute))
+		refreshQuotaAt(m, context.Background(), now.Add(time.Minute))
 	}
 	if e.calls.Load() != 1 {
 		t.Fatal("expired unchanged reset caused a refresh storm")
 	}
-	m.refreshCodexQuotas(context.Background(), now.Add(time.Second+codexQuotaRefreshInterval))
+	refreshQuotaAt(m, context.Background(), now.Add(time.Second+codexQuotaRefreshInterval))
 	if e.calls.Load() != 2 {
 		t.Fatal("periodic retry was lost")
 	}
@@ -194,12 +194,12 @@ func TestCodexQuotaConcurrentReservationAndStaleResultFence(t *testing.T) {
 				return quotaResponse(0, time.Now().Add(time.Hour), true), nil
 			}
 			done := make(chan struct{})
-			go func() { m.refreshCodexQuotas(context.Background(), time.Now()); close(done) }()
+			go func() { refreshQuotaAt(m, context.Background(), time.Now()); close(done) }()
 			<-started
 			var wg sync.WaitGroup
 			for i := 0; i < 20; i++ {
 				wg.Add(1)
-				go func() { defer wg.Done(); m.refreshCodexQuotas(context.Background(), time.Now().Add(time.Hour)) }()
+				go func() { defer wg.Done(); refreshQuotaAt(m, context.Background(), time.Now().Add(time.Hour)) }()
 			}
 			wg.Wait()
 			if e.calls.Load() != 1 {
@@ -248,16 +248,16 @@ func TestCodexQuotaEarlyProbeAndEndpointFailureThrottle(t *testing.T) {
 		e.fetch = func(context.Context, *Auth, *http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("unavailable"))}, nil
 		}
-		m.refreshCodexQuotas(context.Background(), now)
-		m.refreshCodexQuotas(context.Background(), now.Add(time.Minute))
+		refreshQuotaAt(m, context.Background(), now)
+		refreshQuotaAt(m, context.Background(), now.Add(time.Minute))
 		if e.calls.Load() != 1 {
 			t.Fatal("failed probe not throttled")
 		}
 		e.fetch = func(context.Context, *Auth, *http.Request) (*http.Response, error) {
 			return quotaResponse(3, time.Now().Add(time.Hour), true), nil
 		}
-		m.refreshCodexQuotas(context.Background(), now.Add(codexQuotaRefreshInterval))
-		m.refreshCodexQuotas(context.Background(), now.Add(2*codexQuotaRefreshInterval))
+		refreshQuotaAt(m, context.Background(), now.Add(codexQuotaRefreshInterval))
+		refreshQuotaAt(m, context.Background(), now.Add(2*codexQuotaRefreshInterval))
 		got, _ := m.GetByID(a.ID)
 		if got.codexQuotaBlocked || got.CodexQuota.Windows[0].UsedPercent != 3 {
 			t.Fatal("periodic early recovery failed")
@@ -375,7 +375,7 @@ func TestCodexQuotaSkipsIneligibleCredentials(t *testing.T) {
 				m.SetConfig(&config.Config{Home: config.HomeConfig{Enabled: true}})
 			}
 			_, _ = m.Update(context.Background(), a)
-			m.refreshCodexQuotas(context.Background(), time.Now())
+			refreshQuotaAt(m, context.Background(), time.Now())
 			if e.calls.Load() != 0 {
 				t.Fatal("ineligible credential probed")
 			}
@@ -443,8 +443,8 @@ func TestCodexQuotaSingleExclusiveLeaseRecoversWithoutRebindingOrReleasingStream
 		t.Fatal("old reset silently unblocked exhausted account")
 	}
 	// Recovery is quota-only; the canceled producer is still alive and owns its slot.
-	m.refreshCodexQuotas(context.Background(), time.Now())
-	m.refreshCodexQuotas(context.Background(), time.Now().Add(codexQuotaRefreshInterval))
+	refreshQuotaAt(m, context.Background(), time.Now())
+	refreshQuotaAt(m, context.Background(), time.Now().Add(codexQuotaRefreshInterval))
 	after, ok, err := m.poolLeaseRuntime.store.Lookup(before.Owner, before.Policy, time.Now())
 	if err != nil || !ok || after.ID != before.ID || after.Credential != before.Credential || after.Active != 1 {
 		t.Fatalf("probe mutated active lease: %+v %v", after, err)
@@ -497,8 +497,8 @@ func TestCodexQuotaRecoveredOldAccountCannotRebindReplacedLease(t *testing.T) {
 	if replaced[0].Credential == before[0].Credential || replaced[0].ID == before[0].ID {
 		t.Fatal("failover did not replace account")
 	}
-	m.refreshCodexQuotas(context.Background(), time.Now())
-	m.refreshCodexQuotas(context.Background(), time.Now().Add(codexQuotaRefreshInterval))
+	refreshQuotaAt(m, context.Background(), time.Now())
+	refreshQuotaAt(m, context.Background(), time.Now().Add(codexQuotaRefreshInterval))
 	after, _ := m.AccountPoolLeases()
 	if after[0].ID != replaced[0].ID || after[0].Credential != replaced[0].Credential {
 		t.Fatal("quota recovery rebound replaced lease")

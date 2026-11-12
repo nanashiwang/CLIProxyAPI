@@ -39,7 +39,7 @@ func TestQuotaGuardFailureRedactionAndRecovery(t *testing.T) {
 				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
 			}
 			now := time.Now()
-			m.refreshCodexQuotas(context.Background(), now)
+			refreshQuotaAt(m, context.Background(), now)
 			got, _ := m.GetByID(a.ID)
 			if !got.codexQuotaBlocked || got.QuotaGuard.State != "query_failed" || got.QuotaGuard.HTTPStatus != tc.status {
 				t.Fatalf("unprotected failure: %+v", got.QuotaGuard)
@@ -53,7 +53,7 @@ func TestQuotaGuardFailureRedactionAndRecovery(t *testing.T) {
 			e.fetch = func(context.Context, *Auth, *http.Request) (*http.Response, error) {
 				return quotaResponse(2, now.Add(time.Hour), true), nil
 			}
-			m.refreshCodexQuotas(context.Background(), now.Add(time.Minute))
+			refreshQuotaAt(m, context.Background(), now.Add(3*time.Minute))
 			got, _ = m.GetByID(a.ID)
 			if got.codexQuotaBlocked || got.QuotaGuard.State != "ready" || got.QuotaGuard.Failure != "" {
 				t.Fatalf("did not recover: %+v", got.QuotaGuard)
@@ -137,21 +137,21 @@ func TestQuotaGuardAdaptivePolling(t *testing.T) {
 		e.fetch = func(context.Context, *Auth, *http.Request) (*http.Response, error) {
 			return quotaResponse(used, now.Add(time.Hour), true), nil
 		}
-		m.refreshCodexQuotas(context.Background(), now)
-		m.refreshCodexQuotas(context.Background(), now.Add(14*time.Second))
+		refreshQuotaAt(m, context.Background(), now)
+		refreshQuotaAt(m, context.Background(), now.Add(14*time.Second))
 		if e.calls.Load() != 1 {
 			t.Fatal("polled too early")
 		}
-		m.refreshCodexQuotas(context.Background(), now.Add(15*time.Second))
+		refreshQuotaAt(m, context.Background(), now.Add(15*time.Second))
 		if used == 80 && e.calls.Load() != 2 {
 			t.Fatal("near-limit polling not accelerated")
 		}
 		if used != 80 && e.calls.Load() != 1 {
 			t.Fatal("low/stopped quota polled too often")
 		}
-		m.refreshCodexQuotas(context.Background(), now.Add(time.Minute))
+		refreshQuotaAt(m, context.Background(), now.Add(time.Minute))
 		got, _ := m.GetByID(a.ID)
-		if e.calls.Load() < 2 || got.QuotaGuard == nil {
+		if (used != 99 && e.calls.Load() < 2) || (used == 99 && e.calls.Load() != 1) || got.QuotaGuard == nil {
 			t.Fatal("periodic checks lost")
 		}
 	}

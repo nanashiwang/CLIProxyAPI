@@ -40,7 +40,7 @@ var logFieldOrder = []string{
 	"credential", "connection", "proxy_scheme", "remote_transport",
 	"media_session_id", "call_id", "peer", "state", "reason",
 	"previous_state", "window", "used_percent", "stop_percent",
-	"reset_at", "observed_at", "valid_until", "category", "http_status",
+	"reset_at", "observed_at", "valid_until", "next_check_at", "category", "http_status",
 }
 
 var quotedLogFields = map[string]struct{}{

@@ -189,6 +189,7 @@ type Manager struct {
 	refreshLocks sync.Map
 	// codexQuotaRefresh reservations are protected by mu.
 	codexQuotaRefresh map[string]*codexQuotaRefreshAttempt
+	quotaHTTP         quotaHTTPStore
 	codexQuotaDirty   atomic.Bool
 	// persistLocks serializes disk persistence per auth ID and guards against out-of-order writes.
 	persistLocks sync.Map

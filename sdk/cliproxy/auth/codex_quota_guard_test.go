@@ -35,8 +35,8 @@ func TestCodexGuardIndependentWindowsAndRecovery(t *testing.T) {
 		}
 	}
 	got := observe(96, 0)
-	if len(m.reserveCodexQuotaRefreshes(now)) != 1 {
-		t.Fatal("guarded account needs background refresh before reset")
+	if len(m.reserveCodexQuotaRefreshes(now)) != 0 {
+		t.Fatal("stopped account should wait for its reset")
 	}
 	enabled := false
 	m.SetConfig(&config.Config{CodexQuotaGuard: config.CodexQuotaGuard{Enabled: &enabled}})

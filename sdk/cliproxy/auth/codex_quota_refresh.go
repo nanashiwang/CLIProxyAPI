@@ -149,6 +149,9 @@ func (m *Manager) reserveCodexQuotaRefreshesLimit(now time.Time, limit int) []co
 		if policy.IsEnabled() && last != nil {
 			due = !last.inFlight && (due || now.Sub(last.at) >= quotaGuardInterval(a, policy))
 		}
+		if now.Before(m.quotaHTTPCooldown(a)) || (policy.IsEnabled() && now.Before(quotaThresholdWake(a, policy, now))) {
+			due = false
+		}
 		if !due {
 			continue
 		}
@@ -277,7 +280,7 @@ func (m *Manager) refreshCodexQuota(ctx context.Context, job codexQuotaRefreshJo
 		ctx = context.WithValue(ctx, roundTripperContextKey{}, rt)
 		ctx = context.WithValue(ctx, "cliproxy.roundtripper", rt)
 	}
-	resp, err := job.executor.HttpRequest(ctx, job.auth, req)
+	resp, err := m.QuotaHTTPRequest(ctx, job.auth, req, func() (*http.Response, error) { return job.executor.HttpRequest(ctx, job.auth, req) })
 	if err != nil {
 		return
 	}
@@ -307,5 +310,5 @@ func (m *Manager) refreshCodexQuota(ctx context.Context, job codexQuotaRefreshJo
 		return
 	}
 	category = "observation_rejected"
-	applied = m.applyCodexQuotaRefresh(job.auth, windows, denied, allowed, job.attempt.at, now)
+	applied = m.applyCodexQuotaRefresh(job.auth, windows, denied, allowed, quotaObservedAt(resp, job.attempt.at), now)
 }
