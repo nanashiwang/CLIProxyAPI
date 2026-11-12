@@ -116,11 +116,13 @@ func (m *Manager) applyProviderQuotaRefresh(base *Auth, windows []CodexQuotaWind
 	}
 	// Keep missing/failed sources intact; a missing window never proves recovery.
 	for _, w := range windows {
+		w.sampleValid = true
 		w.ObservedAt = started
+		w.requestCount = a.Success + a.Failed
 		found := false
 		for i := range s.Windows {
 			if s.Windows[i].Name == w.Name {
-				s.Windows[i] = w
+				s.Windows[i] = quotaWindowHistory(s.Windows[i], w)
 				found = true
 				break
 			}

@@ -142,8 +142,13 @@ func (m *Manager) quotaHTTPNextCheck(a *Auth) time.Time {
 	m.quotaHTTP.mu.Lock()
 	defer m.quotaHTTP.mu.Unlock()
 	if s := m.quotaHTTP.accounts[quotaHTTPKey(a)]; s != nil {
-		if s.nextRead.After(s.until) {
-			return s.nextRead
+		next := s.nextRead
+		cfg, _ := m.runtimeConfig.Load().(*config.Config)
+		if cap := quotaGuardDue(a, cfg.EffectiveQuotaGuard(), true); !cap.IsZero() && cap.Before(next) {
+			next = cap
+		}
+		if next.After(s.until) {
+			return next
 		}
 		return s.until
 	}
@@ -230,9 +235,16 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 			m.quotaHTTP.mu.Unlock()
 			return quotaHTTPWaiting(wake), nil
 		}
-		if r, ok := s.cache[endpoint]; ok && now.Before(r.expires) {
-			m.quotaHTTP.mu.Unlock()
-			return quotaHTTPResponse(r, r.expires), nil
+		if r, ok := s.cache[endpoint]; ok {
+			if !strings.HasSuffix(req.URL.Path, "/profile") {
+				if cap := quotaGuardDue(a, policy, true); !cap.IsZero() && cap.Before(r.expires) {
+					r.expires = cap
+				}
+			}
+			if now.Before(r.expires) {
+				m.quotaHTTP.mu.Unlock()
+				return quotaHTTPResponse(r, r.expires), nil
+			}
 		}
 		if s.busy != nil {
 			done := s.busy
@@ -285,6 +297,7 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 				next = deadline
 			}
 			s.until = next
+			s.nextRead = time.Time{}
 		} else if r.status >= 200 && r.status < 300 {
 			ttl := quotaGuardPollInterval
 			if strings.HasSuffix(req.URL.Path, "/profile") {
@@ -297,6 +310,20 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 				}
 				if len(windows) > 0 {
 					s.quotaSucceeded(m.quotaHTTPTime())
+					previous := quotaGuardSnapshot(a).clone()
+					for i := range windows {
+						windows[i].sampleValid = true
+						windows[i].ObservedAt = now
+						windows[i].requestCount = a.Success + a.Failed
+						if previous != nil {
+							for _, old := range previous.Windows {
+								if old.WindowSeconds == windows[i].WindowSeconds && (a.Provider == "codex" || old.Name == windows[i].Name) {
+									windows[i] = quotaWindowHistory(old, windows[i])
+									break
+								}
+							}
+						}
+					}
 					if a.Provider == "codex" {
 						copy.CodexQuota = &CodexQuotaSnapshot{Windows: windows}
 					} else {
@@ -308,8 +335,8 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 				}
 				ttl = quotaGuardInterval(copy, cfg.EffectiveQuotaGuard())
 			}
-			if a.Provider == "claude" && !strings.HasSuffix(req.URL.Path, "/profile") {
-				ttl += time.Duration(rand.Int64N(int64(ttl/10) + 1))
+			if !strings.HasSuffix(req.URL.Path, "/profile") {
+				ttl = min(ttl+time.Duration(rand.Int64N(int64(ttl/10)+1)), 30*time.Minute)
 			}
 			r.expires = now.Add(ttl)
 			if !strings.HasSuffix(req.URL.Path, "/profile") {

@@ -83,10 +83,7 @@ func TestQuotaGuardFreshnessAllProviders(t *testing.T) {
 			if got.codexQuotaBlocked {
 				t.Fatal("valid data did not resume")
 			}
-			ttl := 2 * time.Minute
-			if provider == "claude" {
-				ttl = 4 * time.Minute
-			}
+			ttl := 126 * time.Second
 			blocked, _, _ := isAuthBlockedForModel(got, "model", now.Add(ttl))
 			if !blocked || !isCredentialBlocked(got, 1, now.Add(ttl)) {
 				t.Fatal("request admission reused stale data")
@@ -120,8 +117,8 @@ func TestQuotaGuardPartialWindowsAndDelayedObservation(t *testing.T) {
 	near := providerQuotaStopThreshold(a, CodexQuotaWindow{Name: "short", WindowSeconds: 18000}, config.CodexQuotaGuard{}) - 5
 	m.applyProviderQuotaRefresh(a, []CodexQuotaWindow{{Name: "short", UsedPercent: near, WindowSeconds: 18000}, {Name: "weekly", UsedPercent: 5, WindowSeconds: 604800}}, now.Add(time.Second), now.Add(time.Second))
 	got, _ = m.GetByID(a.ID)
-	if quotaRoutingBlocked(got, now.Add(120*time.Second)) || !quotaRoutingBlocked(got, now.Add(121*time.Second)) {
-		t.Fatal("near-limit lifetime is not 120 seconds")
+	if quotaRoutingBlocked(got, now.Add(126*time.Second)) || !quotaRoutingBlocked(got, now.Add(127*time.Second)) {
+		t.Fatal("warmup lifetime is not 126 seconds")
 	}
 	// Completion time must not make a slow near-limit observation fresh.
 	m2 := NewManager(nil, nil, nil)
@@ -135,29 +132,33 @@ func TestQuotaGuardPartialWindowsAndDelayedObservation(t *testing.T) {
 }
 
 func TestQuotaGuardAdaptivePolling(t *testing.T) {
-	for _, used := range []float64{2, 80, 99} {
-		m, e, a := newQuotaTestManager(t)
-		now := time.Now()
-		e.fetch = func(context.Context, *Auth, *http.Request) (*http.Response, error) {
-			return quotaResponse(used, now.Add(time.Hour), true), nil
-		}
-		refreshQuotaAt(m, context.Background(), now)
-		refreshQuotaAt(m, context.Background(), now.Add(14*time.Second))
-		if e.calls.Load() != 1 {
-			t.Fatal("polled too early")
-		}
-		refreshQuotaAt(m, context.Background(), now.Add(15*time.Second))
-		if used == 80 && e.calls.Load() != 2 {
-			t.Fatal("near-limit polling not accelerated")
-		}
-		if used != 80 && e.calls.Load() != 1 {
-			t.Fatal("low/stopped quota polled too often")
-		}
-		refreshQuotaAt(m, context.Background(), now.Add(time.Minute))
-		got, _ := m.GetByID(a.ID)
-		if (used != 99 && e.calls.Load() < 2) || (used == 99 && e.calls.Load() != 1) || got.QuotaGuard == nil {
-			t.Fatal("periodic checks lost")
-		}
+	m, e, a := newQuotaTestManager(t)
+	now := time.Now()
+	e.fetch = func(context.Context, *Auth, *http.Request) (*http.Response, error) {
+		return quotaResponse(0, now.Add(time.Hour), true), nil
+	}
+	refreshQuotaAt(m, context.Background(), now)
+	refreshQuotaAt(m, context.Background(), now.Add(59*time.Second))
+	if e.calls.Load() != 1 {
+		t.Fatal("warmup polled early")
+	}
+	refreshQuotaAt(m, context.Background(), now.Add(67*time.Second))
+	if e.calls.Load() != 2 {
+		t.Fatal("warmup did not verify")
+	}
+	got, _ := m.GetByID(a.ID)
+	if quotaGuardInterval(got, config.CodexQuotaGuard{}) != 30*time.Minute {
+		t.Fatal("idle account did not slow")
+	}
+	refreshQuotaAt(m, context.Background(), now.Add(5*time.Minute))
+	if e.calls.Load() != 2 {
+		t.Fatal("long interval ignored")
+	}
+	// Normal inference resumes after idleness; cached upstream data must not delay verification.
+	m.MarkResult(context.Background(), Result{AuthID: a.ID, Provider: "codex", Success: true})
+	refreshQuotaAt(m, context.Background(), now.Add(6*time.Minute))
+	if e.calls.Load() != 3 {
+		t.Fatal("activity did not shorten scheduler and cache together")
 	}
 }
 
@@ -198,7 +199,7 @@ func TestQuotaGuardCoordinatorWhileWorkerBlocked(t *testing.T) {
 		}
 		return nil, ctx.Err()
 	}
-	m.applyCodexQuotaRefresh(a, []CodexQuotaWindow{quotaWindow("primary", 2, now.Add(time.Hour))}, false, true, now.Add(-119*time.Second), now)
+	m.applyCodexQuotaRefresh(a, []CodexQuotaWindow{quotaWindow("primary", 2, now.Add(time.Hour))}, false, true, now.Add(-125*time.Second), now)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})

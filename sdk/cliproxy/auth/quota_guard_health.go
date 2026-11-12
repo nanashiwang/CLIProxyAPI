@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -37,32 +38,94 @@ func quotaGuardThreshold(a *Auth, w CodexQuotaWindow, policy config.CodexQuotaGu
 	return codexQuotaStopThreshold(a, w, policy)
 }
 
-func quotaGuardIntervals(a *Auth) (time.Duration, time.Duration) {
-	if a != nil && a.Provider == "claude" {
-		return 2 * time.Minute, time.Minute
+// quotaWindowHistory never learns from repeated cached observations.
+func quotaWindowHistory(previous, next CodexQuotaWindow) CodexQuotaWindow {
+	next.rateKnown, next.ratePerMinute = false, 0
+	if next.ObservedAt.Equal(previous.ObservedAt) {
+		next.rateKnown, next.ratePerMinute = previous.rateKnown, previous.ratePerMinute
+		next.requestCount, next.idle = previous.requestCount, previous.idle
+		return next
 	}
-	return quotaGuardPollInterval, quotaGuardNearInterval
+	if !previous.sampleValid || previous.ObservedAt.IsZero() || !next.ObservedAt.After(previous.ObservedAt) || next.UsedPercent < previous.UsedPercent ||
+		(!previous.ResetAt.IsZero() && !next.ResetAt.IsZero() && next.ResetAt.Sub(previous.ResetAt).Abs() > 2*time.Minute) {
+		return next
+	}
+	next.rateKnown = true
+	next.idle = next.requestCount == previous.requestCount
+	next.ratePerMinute = math.Max((next.UsedPercent-previous.UsedPercent)/next.ObservedAt.Sub(previous.ObservedAt).Minutes(), previous.ratePerMinute/2)
+	return next
+}
+
+func quotaWindowInterval(a *Auth, w CodexQuotaWindow, policy config.CodexQuotaGuard) time.Duration {
+	threshold := quotaGuardThreshold(a, w, policy)
+	if threshold <= 0 || w.UsedPercent >= threshold || !w.rateKnown {
+		return time.Minute
+	}
+	margin := threshold - w.UsedPercent
+	interval := time.Duration(float64(time.Minute) + float64(29*time.Minute)*math.Min(1, math.Max(0, margin/threshold)))
+	if w.ratePerMinute > 0 {
+		// Check four times before predicted exhaustion, bounded by the query floor.
+		predicted := margin / w.ratePerMinute / 4 * float64(time.Minute)
+		if predicted < float64(interval) {
+			interval = time.Duration(math.Max(float64(time.Minute), predicted))
+		}
+	}
+	requests := a.Success + a.Failed
+	if requests > w.requestCount && (w.idle || requests-w.requestCount >= 20) {
+		interval = time.Minute
+	}
+	return interval
 }
 
 func quotaGuardInterval(a *Auth, policy config.CodexQuotaGuard) time.Duration {
-	normal, near := quotaGuardIntervals(a)
 	if a.QuotaGuard != nil && a.QuotaGuard.Failure != "" {
-		return normal
+		return time.Minute
 	}
+	interval := 30 * time.Minute
+	s := quotaGuardSnapshot(a)
+	if s == nil || len(s.Windows) == 0 {
+		return time.Minute
+	}
+	for _, w := range s.Windows {
+		if d := quotaWindowInterval(a, w, policy); d < interval {
+			interval = d
+		}
+	}
+	return interval
+}
+
+func quotaWindowObserved(s *CodexQuotaSnapshot, w CodexQuotaWindow) time.Time {
+	if !w.ObservedAt.IsZero() {
+		return w.ObservedAt
+	}
+	if !s.RequestStartedAt.IsZero() {
+		return s.RequestStartedAt
+	}
+	return s.ObservedAt
+}
+
+func quotaIntervalCeiling(d time.Duration) time.Duration {
+	return min(d+d/10, 30*time.Minute)
+}
+
+func quotaGuardDue(a *Auth, policy config.CodexQuotaGuard, jitter bool) time.Time {
+	if a.QuotaGuard != nil && a.QuotaGuard.Failure != "" {
+		return a.QuotaGuard.LastAttemptAt.Add(time.Minute)
+	}
+	var due time.Time
 	if s := quotaGuardSnapshot(a); s != nil {
-		// Already stopped accounts need recovery checks, not high-frequency polling.
 		for _, w := range s.Windows {
-			if w.UsedPercent >= quotaGuardThreshold(a, w, policy) {
-				return normal
+			d := quotaWindowInterval(a, w, policy)
+			if jitter {
+				d = quotaIntervalCeiling(d)
 			}
-		}
-		for _, w := range s.Windows {
-			if w.UsedPercent >= quotaGuardThreshold(a, w, policy)-10 {
-				return near
+			t := quotaWindowObserved(s, w).Add(d)
+			if due.IsZero() || t.Before(due) {
+				due = t
 			}
 		}
 	}
-	return normal
+	return due
 }
 
 // quotaGuardHealthBlocked runs under the manager lock alongside routing state updates.
@@ -75,7 +138,10 @@ func (m *Manager) quotaGuardHealthBlocked(a *Auth, now time.Time) bool {
 	previous := h.State
 	cfg, _ := m.runtimeConfig.Load().(*config.Config)
 	policy := cfg.EffectiveQuotaGuard()
-	h.NextCheckAt = h.LastAttemptAt.Add(quotaGuardInterval(a, policy))
+	h.NextCheckAt = quotaGuardDue(a, policy, false)
+	if h.NextCheckAt.IsZero() {
+		h.NextCheckAt = h.LastAttemptAt.Add(time.Minute)
+	}
 	if deadline := quotaThresholdWake(a, policy, now); policy.IsEnabled() && deadline.After(h.NextCheckAt) {
 		h.NextCheckAt = deadline
 	}
@@ -96,20 +162,8 @@ func (m *Manager) quotaGuardHealthBlocked(a *Auth, now time.Time) bool {
 		} else {
 			h.State = "ready"
 			for _, w := range s.Windows {
-				observed := w.ObservedAt
-				if observed.IsZero() {
-					observed = s.RequestStartedAt
-				}
-				if observed.IsZero() {
-					observed = s.ObservedAt
-				}
-				normal, near := quotaGuardIntervals(a)
-				ttl := 2 * normal
-				threshold := quotaGuardThreshold(a, w, policy)
-				if w.UsedPercent >= threshold-10 && w.UsedPercent < threshold {
-					ttl = 2 * near
-				}
-				until := observed.Add(ttl)
+				observed := quotaWindowObserved(s, w)
+				until := observed.Add(quotaIntervalCeiling(quotaWindowInterval(a, w, policy)) + time.Minute)
 				if h.ValidUntil.IsZero() || until.Before(h.ValidUntil) {
 					h.ValidUntil = until
 				}
@@ -157,7 +211,7 @@ func (m *Manager) logQuotaGuardObservation(a *Auth) {
 		return
 	}
 	for _, w := range s.Windows {
-		log.WithFields(log.Fields{"auth_index": a.Index, "provider": a.Provider, "window": w.Name, "used_percent": w.UsedPercent, "stop_percent": quotaGuardThreshold(a, w, policy), "reset_at": w.ResetAt, "observed_at": w.ObservedAt}).Info("quota guard observation")
+		log.WithFields(log.Fields{"auth_index": a.Index, "provider": a.Provider, "window": w.Name, "used_percent": w.UsedPercent, "stop_percent": quotaGuardThreshold(a, w, policy), "reset_at": w.ResetAt, "observed_at": w.ObservedAt, "next_check_at": a.QuotaGuard.NextCheckAt}).Info("quota guard observation")
 	}
 }
 

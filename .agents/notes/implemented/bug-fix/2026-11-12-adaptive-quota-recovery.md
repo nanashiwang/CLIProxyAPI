@@ -27,3 +27,5 @@ Claude observations can lag longer, increasing potential reserve overshoot for i
 ## Related notes
 
 This partially supersedes immediate successful-read reset in [shared quota cooldown](../../implemented/bug-fix/2026-11-12-shared-quota-query-cooldown.md); cache, concurrency and reset-time verification remain unchanged.
+
+The fixed provider-specific cadence is superseded by [linear quota polling](../../implemented/feature/2026-11-12-linear-quota-polling.md). Sustained recovery and bounded retry history remain in force.

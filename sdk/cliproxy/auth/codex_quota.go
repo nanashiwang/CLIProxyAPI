@@ -19,6 +19,12 @@ import (
 
 // CodexQuotaWindow preserves upstream usage even after its reset deadline passes.
 type CodexQuotaWindow struct {
+	// Scheduling history is runtime-only; restart requires fresh observations.
+	sampleValid   bool
+	rateKnown     bool
+	ratePerMinute float64
+	requestCount  int64
+	idle          bool
 	ObservedAt    time.Time `json:"observed_at,omitempty"`
 	Name          string    `json:"name"`
 	UsedPercent   float64   `json:"used_percent"`
@@ -172,7 +178,9 @@ func (m *Manager) observeCodexQuota(base *Auth, windows []CodexQuotaWindow, star
 		s = &CodexQuotaSnapshot{Identity: codexQuotaIdentity(a)}
 	}
 	for i := range windows {
+		windows[i].sampleValid = true
 		windows[i].ObservedAt = started
+		windows[i].requestCount = a.Success + a.Failed
 	}
 	s.Windows = mergeCodexQuotaWindows(s.Windows, windows, false)
 	s.ObservedAt, s.RequestStartedAt = now, started
@@ -198,6 +206,7 @@ func mergeCodexQuotaWindows(previous, incoming []CodexQuotaWindow, authoritative
 			if out[i].LimitReached && (!authoritative || w.UsedPercent >= 100) {
 				w.LimitReached = true
 			}
+			w = quotaWindowHistory(out[i], w)
 			out[i], found = w, true
 			break
 		}
@@ -306,7 +315,9 @@ func (m *Manager) applyCodexQuotaRefresh(base *Auth, windows []CodexQuotaWindow,
 		s.resetRecovery()
 	}
 	for i := range windows {
+		windows[i].sampleValid = true
 		windows[i].ObservedAt = started
+		windows[i].requestCount = a.Success + a.Failed
 	}
 	s.Windows = mergeCodexQuotaWindows(s.Windows, windows, false)
 	s.ObservedAt, s.RequestStartedAt = now, started
