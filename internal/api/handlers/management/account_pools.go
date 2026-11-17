@@ -90,6 +90,9 @@ func (h *Handler) GetAccountPools(c *gin.Context) {
 			name := a.FileName
 			if name == "" {
 				name = a.Label
+				if note := a.Attributes["note"]; note != "" {
+					name += " · " + note
+				}
 				if name != "" {
 					name += " · " + a.EnsureIndex()
 				}
@@ -97,8 +100,12 @@ func (h *Handler) GetAccountPools(c *gin.Context) {
 			if name == "" {
 				name = a.ID
 			}
+			provider := a.Provider
+			if a.Attributes["provider_id"] != "" {
+				provider = "openai-compatibility"
+			}
 			unavailable, _, _, _ := a.AvailabilityView(time.Now().UTC())
-			credentials = append(credentials, gin.H{"id": a.ID, "name": name, "provider": a.Provider, "disabled": a.Disabled, "unavailable": unavailable, "group-id": group})
+			credentials = append(credentials, gin.H{"id": a.ID, "name": name, "provider": provider, "disabled": a.Disabled, "unavailable": unavailable, "group-id": group})
 		}
 	}
 	present := make(map[string]bool)

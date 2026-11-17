@@ -15,8 +15,10 @@ func TestNewStableIDGenerator(t *testing.T) {
 	if gen == nil {
 		t.Fatal("expected non-nil generator")
 	}
-	if gen.counters == nil {
-		t.Fatal("expected non-nil counters map")
+	first, _ := gen.Next("test", "key")
+	second, _ := gen.Next("test", "key")
+	if first == second {
+		t.Fatal("duplicate entries require distinct IDs")
 	}
 }
 

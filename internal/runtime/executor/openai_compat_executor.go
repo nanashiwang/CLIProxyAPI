@@ -930,6 +930,15 @@ func (e *OpenAICompatExecutor) resolveCompatConfig(auth *cliproxyauth.Auth) *con
 	if auth == nil || e.cfg == nil {
 		return nil
 	}
+	if id := auth.Attributes["provider_id"]; id != "" {
+		for i := range e.cfg.OpenAICompatibility {
+			p := &e.cfg.OpenAICompatibility[i]
+			if p.ID == id && !p.Disabled {
+				return p
+			}
+		}
+		return nil
+	}
 	if auth.AuthSourceKind() == cliproxyauth.AuthSourceConfig && auth.Attributes != nil {
 		if rawIndex := strings.TrimSpace(auth.Attributes["config_index"]); rawIndex != "" {
 			configIndex, errIndex := strconv.Atoi(rawIndex)

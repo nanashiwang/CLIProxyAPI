@@ -181,7 +181,11 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.SanitizeClaudeKeys()
 
 	// Sanitize OpenAI compatibility providers: drop entries without base-url
+	identityChanged := cfg.EnsureOpenAICompatibilityIDs()
 	cfg.SanitizeOpenAICompatibility()
+	if err := cfg.ValidateOpenAICompatibilityIDs(); err != nil {
+		return nil, err
+	}
 	cfg.SanitizeOpenCode()
 	if errValidate := cfg.ValidateOpenCode(); errValidate != nil {
 		return nil, errValidate
@@ -195,6 +199,13 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Validate raw payload rules and drop invalid entries.
 	cfg.SanitizePayloadRules()
+
+	// Persist identity metadata once so direct YAML renames also retain identity.
+	if identityChanged {
+		if err := SaveConfigPreserveComments(configFile, &cfg); err != nil {
+			return nil, fmt.Errorf("persist provider identities: %w", err)
+		}
+	}
 
 	// Return the populated configuration struct.
 	return &cfg, nil

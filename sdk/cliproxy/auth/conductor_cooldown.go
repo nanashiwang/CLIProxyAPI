@@ -79,7 +79,7 @@ func providerCoolingOverrideForAuth(auth *Auth, cfg *internalconfig.Config) (boo
 	if providerKey == "" {
 		providerKey = provider
 	}
-	entry := resolveOpenAICompatConfig(cfg, providerKey, compatName, provider)
+	entry := resolveOpenAICompatConfigForAuth(cfg, auth, providerKey, compatName)
 	if entry == nil || entry.DisableCooling == nil {
 		return false, false
 	}

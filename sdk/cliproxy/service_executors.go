@@ -14,6 +14,7 @@ import (
 )
 
 type openAICompatibilityRegistrationCache struct {
+	byID    map[string]*openAICompatibilityRegistrationEntry
 	byName  map[string]*openAICompatibilityRegistrationEntry
 	byIndex map[int]*openAICompatibilityRegistrationEntry
 }
@@ -40,6 +41,7 @@ func (s *Service) newOpenAICompatibilityRegistrationCache() *openAICompatibility
 	}
 
 	cache := &openAICompatibilityRegistrationCache{
+		byID:    make(map[string]*openAICompatibilityRegistrationEntry, len(cfg.OpenAICompatibility)),
 		byName:  make(map[string]*openAICompatibilityRegistrationEntry, len(cfg.OpenAICompatibility)),
 		byIndex: make(map[int]*openAICompatibilityRegistrationEntry, len(cfg.OpenAICompatibility)),
 	}
@@ -58,6 +60,10 @@ func (s *Service) newOpenAICompatibilityRegistrationCache() *openAICompatibility
 			providerKey: util.OpenAICompatibleProviderKey(providerName),
 			models:      buildOpenAICompatibilityConfigModels(compat),
 		}
+		if compat.ID != "" {
+			entry.providerKey = util.OpenAICompatibleProviderKey(compat.ID)
+			cache.byID[compat.ID] = entry
+		}
 		cache.byIndex[i] = entry
 		if _, exists := cache.byName[key]; !exists {
 			cache.byName[key] = entry
@@ -72,6 +78,10 @@ func (s *Service) newOpenAICompatibilityRegistrationCache() *openAICompatibility
 func (c *openAICompatibilityRegistrationCache) lookup(auth *coreauth.Auth, compatName string) (*openAICompatibilityRegistrationEntry, bool) {
 	if c == nil {
 		return nil, false
+	}
+	if auth != nil && auth.Attributes["provider_id"] != "" {
+		entry, ok := c.byID[auth.Attributes["provider_id"]]
+		return entry, ok
 	}
 	if auth != nil && auth.AuthSourceKind() == coreauth.AuthSourceConfig && auth.Attributes != nil {
 		if index, errIndex := strconv.Atoi(strings.TrimSpace(auth.Attributes[coreauth.AttributeConfigIndex])); errIndex == nil {

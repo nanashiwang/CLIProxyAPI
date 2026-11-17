@@ -123,6 +123,7 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 		out = append(out, e)
 	}
 	cfg.OpenAICompatibility = out
+	cfg.EnsureOpenAICompatibilityIDs()
 }
 
 // SanitizeCodexKeys removes Codex API key entries missing a BaseURL.

@@ -927,6 +927,16 @@ func resolveOpenAICompatConfigForAuth(cfg *internalconfig.Config, auth *Auth, pr
 	if cfg == nil {
 		return nil
 	}
+	if auth != nil && auth.Attributes["provider_id"] != "" {
+		id := auth.Attributes["provider_id"]
+		for i := range cfg.OpenAICompatibility {
+			p := &cfg.OpenAICompatibility[i]
+			if p.ID == id && !p.Disabled {
+				return p
+			}
+		}
+		return nil
+	}
 	if auth != nil && auth.AuthSourceKind() == AuthSourceConfig && auth.Attributes != nil {
 		if index, errIndex := strconv.Atoi(strings.TrimSpace(auth.Attributes[AttributeConfigIndex])); errIndex == nil && index >= 0 && index < len(cfg.OpenAICompatibility) && !cfg.OpenAICompatibility[index].Disabled {
 			return &cfg.OpenAICompatibility[index]

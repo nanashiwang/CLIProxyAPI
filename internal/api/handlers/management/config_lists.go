@@ -738,6 +738,13 @@ func (h *Handler) PutOpenAICompat(c *gin.Context) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.cfg.EnsureOpenAICompatibilityIDs()
+	config.PreserveOpenAICompatibilityIDs(filtered, h.cfg.OpenAICompatibility)
+	validation := &config.Config{OpenAICompatibility: filtered}
+	if err := validation.ValidateOpenAICompatibilityIDs(); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	h.cfg.OpenAICompatibility = filtered
 	h.cfg.SanitizeOpenAICompatibility()
 	h.persistLocked(c)
@@ -758,6 +765,7 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 		RequestScopedErrors   *[]config.RequestScopedErrorRule    `json:"request-scoped-errors"`
 	}
 	var body struct {
+		ID    *string            `json:"id"`
 		Name  *string            `json:"name"`
 		Index *int               `json:"index"`
 		Value *openAICompatPatch `json:"value"`
@@ -769,11 +777,20 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.cfg.EnsureOpenAICompatibilityIDs()
 	targetIndex := -1
-	if body.Index != nil && *body.Index >= 0 && *body.Index < len(h.cfg.OpenAICompatibility) {
+	if body.ID != nil {
+		for i := range h.cfg.OpenAICompatibility {
+			if h.cfg.OpenAICompatibility[i].ID == *body.ID {
+				targetIndex = i
+				break
+			}
+		}
+	}
+	if body.ID == nil && body.Index != nil && *body.Index >= 0 && *body.Index < len(h.cfg.OpenAICompatibility) {
 		targetIndex = *body.Index
 	}
-	if targetIndex == -1 && body.Name != nil {
+	if body.ID == nil && targetIndex == -1 && body.Name != nil {
 		match := strings.TrimSpace(*body.Name)
 		for i := range h.cfg.OpenAICompatibility {
 			if h.cfg.OpenAICompatibility[i].Name == match {
@@ -838,7 +855,14 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 		entry.RequestScopedErrors = append([]config.RequestScopedErrorRule(nil), *body.Value.RequestScopedErrors...)
 	}
 	normalizeOpenAICompatibilityEntry(&entry)
-	h.cfg.OpenAICompatibility[targetIndex] = entry
+	next := append([]config.OpenAICompatibility(nil), h.cfg.OpenAICompatibility...)
+	next[targetIndex] = entry
+	config.PreserveOpenAICompatibilityIDs(next, h.cfg.OpenAICompatibility)
+	if err := (&config.Config{OpenAICompatibility: next}).ValidateOpenAICompatibilityIDs(); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	h.cfg.OpenAICompatibility = next
 	h.cfg.SanitizeOpenAICompatibility()
 	h.persistLocked(c)
 }
@@ -846,6 +870,17 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 func (h *Handler) DeleteOpenAICompat(c *gin.Context) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if id := c.Query("id"); id != "" {
+		for i, entry := range h.cfg.OpenAICompatibility {
+			if entry.ID == id {
+				h.cfg.OpenAICompatibility = append(h.cfg.OpenAICompatibility[:i], h.cfg.OpenAICompatibility[i+1:]...)
+				h.persistLocked(c)
+				return
+			}
+		}
+		c.JSON(404, gin.H{"error": "item not found"})
+		return
+	}
 	if name := c.Query("name"); name != "" {
 		out := make([]config.OpenAICompatibility, 0, len(h.cfg.OpenAICompatibility))
 		for _, v := range h.cfg.OpenAICompatibility {

@@ -242,6 +242,16 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 				}
 				return
 			}
+			if id := a.Attributes["provider_id"]; id != "" {
+				for i := range s.cfg.OpenAICompatibility {
+					p := &s.cfg.OpenAICompatibility[i]
+					if p.ID == id && registerCompat(p) {
+						return
+					}
+				}
+				GlobalModelRegistry().UnregisterClient(a.ID)
+				return
+			}
 			if indexed := configEntryForAuthIndex(a, s.cfg.OpenAICompatibility); indexed != nil && registerCompat(indexed) {
 				return
 			}

@@ -42,6 +42,10 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 		return nil, fmt.Errorf("synthesize config API key auths: %w", errValidate)
 	}
 
+	if err := ctx.Config.ValidateOpenAICompatibilityIDs(); err != nil {
+		return nil, err
+	}
+
 	// Gemini API Keys
 	out = append(out, s.synthesizeGeminiKeys(ctx)...)
 	// Native Interactions API Keys
@@ -289,6 +293,9 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 			providerName = "openai-compatibility"
 		}
 		internalProviderKey := util.OpenAICompatibleProviderKey(providerName)
+		if compat.ID != "" {
+			internalProviderKey = util.OpenAICompatibleProviderKey(compat.ID)
+		}
 		base := strings.TrimSpace(compat.BaseURL)
 		disableCooling := compat.DisableCooling
 
@@ -300,10 +307,14 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 			proxyURL := strings.TrimSpace(entry.ProxyURL)
 			idKind := fmt.Sprintf("openai-compatibility:%s", providerName)
 			id, token := idGen.Next(idKind, key, base, proxyURL)
+			if entry.ID != "" {
+				id = entry.ID
+			}
 			attrs := map[string]string{
 				"source":       fmt.Sprintf("config:%s[%s]", providerName, token),
 				"base_url":     base,
 				"compat_name":  compat.Name,
+				"provider_id":  compat.ID,
 				"provider_key": internalProviderKey,
 				"config_index": strconv.Itoa(i),
 			}
@@ -317,6 +328,9 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 				attrs["priority"] = strconv.Itoa(compat.Priority)
 			}
 			addWeightToAttrs(entry.Weight, attrs)
+			if note := strings.TrimSpace(entry.Note); note != "" {
+				attrs["note"] = note
+			}
 			if key != "" {
 				attrs["api_key"] = key
 			}
@@ -346,10 +360,14 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 		if createdEntries == 0 {
 			idKind := fmt.Sprintf("openai-compatibility:%s", providerName)
 			id, token := idGen.Next(idKind, base)
+			if compat.ID != "" {
+				id = compat.ID
+			}
 			attrs := map[string]string{
 				"source":       fmt.Sprintf("config:%s[%s]", providerName, token),
 				"base_url":     base,
 				"compat_name":  compat.Name,
+				"provider_id":  compat.ID,
 				"provider_key": internalProviderKey,
 				"config_index": strconv.Itoa(i),
 			}

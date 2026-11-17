@@ -752,7 +752,10 @@ type OpenCodeAPIKey struct {
 // OpenAICompatibility represents the configuration for OpenAI API compatibility
 // with external providers, allowing model aliases to be routed through OpenAI API format.
 type OpenAICompatibility struct {
-	// Name is the identifier for this OpenAI compatibility configuration.
+	// ID is immutable metadata identity; Name is only the operator-facing label.
+	ID string `yaml:"id,omitempty" json:"id,omitempty"`
+
+	// Name is the display name for this OpenAI compatibility configuration.
 	Name string `yaml:"name" json:"name"`
 
 	// Priority controls selection preference when multiple providers or credentials match.
@@ -797,6 +800,12 @@ type OpenAICompatibility struct {
 
 // OpenAICompatibilityAPIKey represents an API key configuration with optional proxy setting.
 type OpenAICompatibilityAPIKey struct {
+	// ID is the persisted runtime credential identity, independent of display metadata.
+	ID string `yaml:"id,omitempty" json:"id,omitempty"`
+
+	// Note identifies this key to operators without affecting routing or identity.
+	Note string `yaml:"note,omitempty" json:"note,omitempty"`
+
 	// APIKey is the authentication key for accessing the external API services.
 	APIKey string `yaml:"api-key" json:"api-key"`
 

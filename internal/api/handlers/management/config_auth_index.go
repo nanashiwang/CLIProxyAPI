@@ -39,6 +39,7 @@ type openAICompatibilityAPIKeyWithAuthIndex struct {
 }
 
 type openAICompatibilityWithAuthIndex struct {
+	ID                    string                                   `json:"id"`
 	TestModel             string                                   `json:"test-model,omitempty"`
 	Name                  string                                   `json:"name"`
 	Priority              int                                      `json:"priority,omitempty"`
@@ -282,6 +283,7 @@ func (h *Handler) openAICompatibilityWithAuthIndex() []openAICompatibilityWithAu
 		idKind := fmt.Sprintf("openai-compatibility:%s", providerName)
 
 		response := openAICompatibilityWithAuthIndex{
+			ID:                    entry.ID,
 			TestModel:             entry.TestModel,
 			Name:                  entry.Name,
 			Priority:              entry.Priority,
@@ -298,12 +300,18 @@ func (h *Handler) openAICompatibilityWithAuthIndex() []openAICompatibilityWithAu
 		}
 		if len(entry.APIKeyEntries) == 0 {
 			id, _ := idGen.Next(idKind, entry.BaseURL)
+			if entry.ID != "" {
+				id = entry.ID
+			}
 			response.AuthIndex = liveIndexByID[id]
 		} else {
 			response.APIKeyEntries = make([]openAICompatibilityAPIKeyWithAuthIndex, len(entry.APIKeyEntries))
 			for j := range entry.APIKeyEntries {
 				apiKeyEntry := entry.APIKeyEntries[j]
 				id, _ := idGen.Next(idKind, apiKeyEntry.APIKey, entry.BaseURL, apiKeyEntry.ProxyURL)
+				if apiKeyEntry.ID != "" {
+					id = apiKeyEntry.ID
+				}
 				response.APIKeyEntries[j] = openAICompatibilityAPIKeyWithAuthIndex{
 					OpenAICompatibilityAPIKey: apiKeyEntry,
 					AuthIndex:                 liveIndexByID[id],
