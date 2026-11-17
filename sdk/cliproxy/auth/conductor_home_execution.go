@@ -190,22 +190,22 @@ func (m *Manager) executeHome(ctx context.Context, providers []string, req clipr
 			m.reportHomeResult(execCtx, result, preparedAuth)
 			lastErr = errExecute
 			if okAction {
-				if isRequestScopedStop(action, okAction) {
+				if isRequestScopedStop(action, okAction) || isRequestStopError(errExecute) {
 					releaseAttempt()
 					selection.End("request_stopped")
 					return cliproxyexecutor.Response{}, wrapRequestStopError(errExecute)
 				}
-				if result.CredentialScope {
+				if result.CredentialScope || sameAccountRetryBlocked(errExecute) {
 					break
 				}
 				continue
 			}
-			if isRequestInvalidError(errExecute) {
+			if isRequestInvalidError(errExecute) || isRequestStopError(errExecute) {
 				releaseAttempt()
 				selection.End("request_invalid")
 				return cliproxyexecutor.Response{}, errExecute
 			}
-			if result.CredentialScope {
+			if result.CredentialScope || sameAccountRetryBlocked(errExecute) {
 				break
 			}
 		}

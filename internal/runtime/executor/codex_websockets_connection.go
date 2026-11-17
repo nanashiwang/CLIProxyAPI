@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,12 @@ func (e *CodexWebsocketsExecutor) dialCodexWebsocket(ctx context.Context, auth *
 	}
 	conn, resp, err := dialer.DialContext(ctx, wsURL, headers)
 	closer := newWebsocketConnectionCloser(conn)
+	if closer != nil && resp != nil {
+		limit, err := strconv.ParseInt(strings.TrimSpace(resp.Header.Get("X-Codex-Websocket-Max-Message-Bytes")), 10, 64)
+		if err == nil && limit > 0 {
+			closer.maxMessageBytes = limit
+		}
+	}
 	if conn != nil {
 		// Avoid gorilla/websocket flate tail validation issues on some upstreams/Go versions.
 		// Negotiating permessage-deflate is fine; we just don't compress outbound messages.

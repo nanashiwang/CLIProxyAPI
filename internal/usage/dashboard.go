@@ -107,6 +107,7 @@ type UsagePerformance struct {
 }
 
 type UsageHealth struct {
+	Service          ServiceHealth    `json:"service"`
 	SuccessRate      float64          `json:"success_rate"`
 	StatusCodes      map[string]int64 `json:"status_codes"`
 	ClientErrorCount int64            `json:"client_error_count"`
@@ -127,6 +128,7 @@ type UsageCost struct {
 }
 
 type UsageTrendPoint struct {
+	Service ServiceHealth `json:"service"`
 	DimensionSnapshot
 	UsagePerformance
 	Timestamp            time.Time `json:"timestamp"`
@@ -139,6 +141,7 @@ type UsageTrendPoint struct {
 }
 
 type UsageDimension struct {
+	Service ServiceHealth `json:"service"`
 	DimensionSnapshot
 	Key              string   `json:"key"`
 	Label            string   `json:"label"`
@@ -409,6 +412,7 @@ func (s *RequestStatistics) RecordByID(id string) (UsageRecord, bool) {
 }
 
 type dashboardAggregate struct {
+	service            ServiceHealth
 	totals             DimensionSnapshot
 	latencyTotal       int64
 	latencyCount       int64
@@ -478,6 +482,7 @@ func (a *dashboardAggregate) performance() UsagePerformance {
 }
 
 func (a *dashboardAggregate) add(event storedEvent) {
+	a.service.add(event.Detail)
 	d := event.Detail
 	cost := 0.0
 	if d.Billing.Priced && d.CostUSD != nil {
@@ -628,6 +633,7 @@ func buildDashboard(events []storedEvent, query UsageQuery, now time.Time) Usage
 	result.Summary.DimensionSnapshot = summary.totals
 	result.Summary.AverageLatencyMs = dashboardAverage(summary.latencyTotal, summary.latencyCount)
 	result.Summary.AverageTTFTMs = dashboardAverage(summary.ttftTotal, summary.ttftCount)
+	result.Health.Service = summary.service.rates()
 	result.Health.SuccessRate = dashboardRatio(summary.totals.SuccessCount, summary.totals.TotalRequests)
 	for code, count := range statusCodes {
 		result.Health.StatusCodes[strconv.Itoa(code)] = count
@@ -667,7 +673,7 @@ func buildDashboard(events []storedEvent, query UsageQuery, now time.Time) Usage
 		}
 	}
 	for timestamp, value := range bucketTotals {
-		point := UsageTrendPoint{DimensionSnapshot: value.totals, UsagePerformance: value.performance(), Timestamp: timestamp, AverageLatencyMs: dashboardAverage(value.latencyTotal, value.latencyCount), AverageTTFTMs: dashboardAverage(value.ttftTotal, value.ttftCount),
+		point := UsageTrendPoint{Service: value.service.rates(), DimensionSnapshot: value.totals, UsagePerformance: value.performance(), Timestamp: timestamp, AverageLatencyMs: dashboardAverage(value.latencyTotal, value.latencyCount), AverageTTFTMs: dashboardAverage(value.ttftTotal, value.ttftCount),
 			PricingCoverage: dashboardRatio(value.totals.PricedRequests, value.totals.TotalRequests), CacheHitRequestRatio: dashboardRatio(value.cacheHits, value.totals.TotalRequests)}
 		point.CacheReadRatio = dashboardRatio(value.totals.Tokens.CacheReadTokens, value.totals.Tokens.InputTokens+value.totals.Tokens.CacheReadTokens+value.totals.Tokens.CacheWriteTokens)
 		if value.totals.PricedRequests > 0 {
@@ -729,7 +735,7 @@ func addDashboardDimension(values map[string]*dashboardAggregate, key, label str
 func dashboardDimensions(values map[string]*dashboardAggregate) []UsageDimension {
 	items := make([]UsageDimension, 0, len(values))
 	for key, value := range values {
-		items = append(items, UsageDimension{DimensionSnapshot: value.totals, Key: key, Label: value.label,
+		items = append(items, UsageDimension{Service: value.service.rates(), DimensionSnapshot: value.totals, Key: key, Label: value.label,
 			AverageLatencyMs: dashboardAverage(value.latencyTotal, value.latencyCount), AverageTTFTMs: dashboardAverage(value.ttftTotal, value.ttftCount), ErrorRate: dashboardRatio(value.totals.FailureCount, value.totals.TotalRequests)})
 	}
 	sort.Slice(items, func(i, j int) bool {

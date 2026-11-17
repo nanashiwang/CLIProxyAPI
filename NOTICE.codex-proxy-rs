@@ -66,3 +66,11 @@ CPA implements these behaviors in its existing Go/React contracts. Timezone is
 per usage query; credit balance does not replace manual quota resets. Pricing
 was independently checked against official OpenAI documentation on 2026-10-05.
 The paired backend docs/CODEX_PROXY_OCT05_CN.md records the precise scope.
+
+Additional November 17 behavior references:
+  3e33e84a45e740aaf15650c2ab26af5c3d3db88b (service health outcomes)
+  9f0d712671c66a3c6a2ea91f016c4f9c1eda4d95 (connection-advertised message limit)
+  914c00785c4000b83a3319edddc0fea387660ec9 (structured retry metadata)
+CPA preserves its own retained-record accounting, Go executor, account-pool
+admission, leases, cooling and no-replay delivery boundaries.
+See docs/CODEX_PROXY_NOV17_CN.md for the selective adaptation.

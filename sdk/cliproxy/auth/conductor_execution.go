@@ -465,20 +465,20 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				applyRequestScopedActionToResult(action, okAction, &result)
 				m.MarkResult(execCtx, result)
 				if okAction {
-					if isRequestScopedStop(action, okAction) {
+					if isRequestScopedStop(action, okAction) || isRequestStopError(errExec) {
 						return cliproxyexecutor.Response{}, wrapRequestStopError(errExec)
 					}
 					authErr = errExec
-					if result.CredentialScope {
+					if result.CredentialScope || sameAccountRetryBlocked(errExec) {
 						break
 					}
 					continue
 				}
-				if isRequestInvalidError(errExec) {
+				if isRequestInvalidError(errExec) || isRequestStopError(errExec) {
 					return cliproxyexecutor.Response{}, errExec
 				}
 				authErr = errExec
-				if result.CredentialScope {
+				if result.CredentialScope || sameAccountRetryBlocked(errExec) {
 					break
 				}
 				continue
@@ -491,7 +491,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 		if authErr != nil {
 			action, okAction := matchRequestScopedErrorAction(auth, authErr, m.runtimeConfigSnapshot())
 			if okAction {
-				if isRequestScopedStop(action, okAction) {
+				if isRequestScopedStop(action, okAction) || isRequestStopError(authErr) {
 					return cliproxyexecutor.Response{}, wrapRequestStopError(authErr)
 				}
 				lastErr = authErr
@@ -500,7 +500,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				}
 				continue
 			}
-			if isRequestInvalidError(authErr) {
+			if isRequestInvalidError(authErr) || isRequestStopError(authErr) {
 				return cliproxyexecutor.Response{}, authErr
 			}
 			lastErr = authErr
@@ -633,20 +633,20 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 					m.MarkResult(execCtx, result)
 				}
 				if okAction {
-					if isRequestScopedStop(action, okAction) {
+					if isRequestScopedStop(action, okAction) || isRequestStopError(errExec) {
 						return cliproxyexecutor.Response{}, wrapRequestStopError(errExec)
 					}
 					authErr = errExec
-					if result.CredentialScope {
+					if result.CredentialScope || sameAccountRetryBlocked(errExec) {
 						break
 					}
 					continue
 				}
-				if isRequestInvalidError(errExec) {
+				if isRequestInvalidError(errExec) || isRequestStopError(errExec) {
 					return cliproxyexecutor.Response{}, errExec
 				}
 				authErr = errExec
-				if result.CredentialScope {
+				if result.CredentialScope || sameAccountRetryBlocked(errExec) {
 					break
 				}
 				continue
@@ -659,7 +659,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 		if authErr != nil {
 			action, okAction := matchRequestScopedErrorAction(auth, authErr, m.runtimeConfigSnapshot())
 			if okAction {
-				if isRequestScopedStop(action, okAction) {
+				if isRequestScopedStop(action, okAction) || isRequestStopError(authErr) {
 					return cliproxyexecutor.Response{}, wrapRequestStopError(authErr)
 				}
 				lastErr = authErr
@@ -668,7 +668,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 				}
 				continue
 			}
-			if isRequestInvalidError(authErr) {
+			if isRequestInvalidError(authErr) || isRequestStopError(authErr) {
 				return cliproxyexecutor.Response{}, authErr
 			}
 			lastErr = authErr
@@ -841,7 +841,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			}
 			action, okAction := matchRequestScopedErrorAction(auth, errStream, m.runtimeConfigSnapshot())
 			if okAction {
-				if isRequestScopedStop(action, okAction) {
+				if isRequestScopedStop(action, okAction) || isRequestStopError(errStream) {
 					return nil, wrapRequestStopError(errStream)
 				}
 				lastErr = errStream
@@ -850,7 +850,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 				}
 				continue
 			}
-			if isRequestInvalidError(errStream) {
+			if isRequestInvalidError(errStream) || isRequestStopError(errStream) {
 				return nil, errStream
 			}
 			lastErr = errStream

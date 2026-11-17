@@ -490,6 +490,73 @@
         "React 577 tests, TypeScript, lint and production build; real local management UI with synthetic data"
       ],
       "notes": "Operational file logging has item/byte budgets, error reserve, batched writes and loss/error counters. Persist only allowlisted cause categories. Billable usage delivery, account permissions, leases, cooling, retries and precommit limits are unchanged."
+    },
+    {
+      "id": "service-health-outcomes",
+      "title": "Separate service health from retained usage totals",
+      "status": "adapted",
+      "source_commit": "3e33e84a45e740aaf15650c2ab26af5c3d3db88b",
+      "adapted_commit": "3e33e84a45e740aaf15650c2ab26af5c3d3db88b",
+      "local_areas": [
+        "CLIProxyAPI/internal/usage",
+        "CLIProxyAPI/sdk/cliproxy/usage",
+        "Cli-Proxy-API-Management-Center/src/features/usage"
+      ],
+      "watch_paths": [
+        "backend/crates/gateway-admin/src/**/observability*",
+        "backend/crates/gateway-admin/src/**/observability/**",
+        "backend/crates/gateway-store/src/postgres/observability/**",
+        "frontend/src/views/usage/**",
+        "frontend/src/api/modules/usage.ts"
+      ],
+      "validation": [
+        "Go full suite and binary build; management API smoke; targeted race and negotiated-limit/NO_MORE_RETRY regressions",
+        "React tests, lint, type-check/build and local usage-route browser inspection; offline monitor retry tests"
+      ],
+      "notes": "Add persisted outcome evidence and nullable service rates to summary, trend and dimensions. Count retained records, not inferred logical retry-chain outcomes. Exclude cancellations/caller errors/unknown; incomplete is a service failure. Keep all legacy counts, costs and old-backend UI."
+    },
+    {
+      "id": "negotiated-websocket-size-limit",
+      "title": "Per-connection advertised Codex WebSocket limits",
+      "status": "adapted",
+      "source_commit": "9f0d712671c66a3c6a2ea91f016c4f9c1eda4d95",
+      "adapted_commit": "9f0d712671c66a3c6a2ea91f016c4f9c1eda4d95",
+      "local_areas": [
+        "CLIProxyAPI/internal/runtime/executor",
+        "CLIProxyAPI/sdk/api/handlers/openai"
+      ],
+      "watch_paths": [
+        "backend/crates/providers/openai/src/provider/**",
+        "backend/crates/providers/openai/src/transport/**",
+        "backend/crates/providers/openai/src/session_transport.rs"
+      ],
+      "validation": [
+        "Go full suite and binary build; management API smoke; targeted race and negotiated-limit/NO_MORE_RETRY regressions",
+        "React tests, lint, type-check/build and local usage-route browser inspection; offline monitor retry tests"
+      ],
+      "notes": "Replace fixed OAuth 15 MiB prediction with positive handshake limit on final UTF-8 response.create. New full requests may use HTTP before upload. Keep CPA stricter previous-response/required-connection replay fences; reject oversized warmup; enforce duplex limit without replay. Missing/invalid limit supplies no prediction; redial gets fresh facts."
+    },
+    {
+      "id": "structured-no-more-retry",
+      "title": "Respect explicit upstream same-account retry prohibition",
+      "status": "adapted",
+      "source_commit": "914c00785c4000b83a3319edddc0fea387660ec9",
+      "adapted_commit": "914c00785c4000b83a3319edddc0fea387660ec9",
+      "local_areas": [
+        "CLIProxyAPI/internal/runtime/executor",
+        "CLIProxyAPI/sdk/cliproxy/auth"
+      ],
+      "watch_paths": [
+        "backend/crates/providers/openai/src/provider/failure.rs",
+        "backend/crates/providers/openai/src/transport/**",
+        "backend/crates/gateway-protocol/src/openai/events.rs",
+        "backend/crates/gateway-core/src/engine/**"
+      ],
+      "validation": [
+        "Go full suite and binary build; management API smoke; targeted race and negotiated-limit/NO_MORE_RETRY regressions",
+        "React tests, lint, type-check/build and local usage-route browser inspection; offline monitor retry tests"
+      ],
+      "notes": "Only structured string x-retry-metadata is honored, case-insensitively. Skip same-account alias retries, refresh and retry waits, including Home dispatch. Existing capacity/overload paths may rotate only under existing admission and replay constraints; other errors stop. Preserve cooldown/Retry-After and committed-stream boundaries."
     }
   ],
   "review_notes": [

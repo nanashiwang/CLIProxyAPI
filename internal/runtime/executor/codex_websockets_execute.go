@@ -105,19 +105,6 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		authType, authValue = auth.AccountInfo()
 	}
 
-	// API-key upstreams have their own transport limits. OAuth new chains can
-	// use HTTP before send; continuation/control requests must ask for replay.
-	if auth != nil && auth.AuthKind() == cliproxyauth.AuthKindOAuth && len(buildCodexWebsocketRequestBody(upstreamBody)) >= helps.CodexWebsocketHTTPThreshold {
-		if helps.CodexOversizedContinuation(ctx, req.Payload, opts.OriginalRequest, upstreamBody) {
-			usage.ObserveDiagnosticEvent(ctx, "replay_required")
-			return resp, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
-		}
-		usage.ObserveDiagnosticEvent(ctx, "http_size_fallback")
-		delegatedHTTP = true
-		cliproxyexecutor.ObserveUpstreamTransport(ctx, "sse")
-		return e.CodexExecutor.Execute(ctx, auth, req, opts)
-	}
-
 	executionSessionID := executionSessionIDFromOptions(opts)
 	var sess *codexWebsocketSession
 	sessionLocked := false
@@ -177,6 +164,27 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		}
 		helps.RecordAPIWebsocketError(ctx, e.cfg, "dial", errDial)
 		return resp, errDial
+	}
+	if codexMessageExceedsLimit(closer, wsReqBody) {
+		recordAPIWebsocketHandshake(ctx, e.cfg, respHS)
+		// Retire only this connection; limits never survive a redial or account change.
+		if sess != nil {
+			e.invalidateUpstreamConnWithoutDisconnectNotify(sess, conn, "message_limit", nil)
+		} else {
+			_ = closer.Close()
+		}
+		unlockSession()
+		if gjson.GetBytes(upstreamBody, "generate").Exists() && !gjson.GetBytes(upstreamBody, "generate").Bool() {
+			return resp, codexWebsocketMessageTooBigError{statusErr: statusErr{code: 413, msg: "upstream websocket warmup message too big"}}
+		}
+		if helps.CodexOversizedContinuation(ctx, req.Payload, opts.OriginalRequest, upstreamBody) {
+			usage.ObserveDiagnosticEvent(ctx, "replay_required")
+			return resp, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
+		}
+		usage.ObserveDiagnosticEvent(ctx, "http_size_fallback")
+		delegatedHTTP = true
+		cliproxyexecutor.ObserveUpstreamTransport(ctx, "sse")
+		return e.CodexExecutor.Execute(ctx, auth, req, opts)
 	}
 	if errBind := sess.bindExecutionLifecycle(opts, conn, closer, req.Model); errBind != nil {
 		unlockSession()

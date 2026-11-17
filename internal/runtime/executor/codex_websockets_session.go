@@ -24,9 +24,10 @@ var globalCodexWebsocketSessionStore = &codexWebsocketSessionStore{
 }
 
 type websocketConnectionCloser struct {
-	conn *websocket.Conn
-	once sync.Once
-	err  error
+	maxMessageBytes int64
+	conn            *websocket.Conn
+	once            sync.Once
+	err             error
 }
 
 func newWebsocketConnectionCloser(conn *websocket.Conn) *websocketConnectionCloser {
@@ -158,6 +159,13 @@ func (s *codexWebsocketSession) writeMessage(conn *websocket.Conn, msgType int, 
 	}
 	if conn == nil {
 		return fmt.Errorf("codex websockets executor: websocket conn is nil")
+	}
+	s.connMu.Lock()
+	closer := s.connCloser
+	current := s.conn == conn
+	s.connMu.Unlock()
+	if current && msgType == websocket.TextMessage && codexMessageExceedsLimit(closer, payload) {
+		return cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -815,4 +823,8 @@ func CloseCodexWebsocketSessionsForAuthID(authID string, reason string) {
 	for i := range toClose {
 		closeCodexWebsocketSession(toClose[i], reason)
 	}
+}
+
+func codexMessageExceedsLimit(closer *websocketConnectionCloser, payload []byte) bool {
+	return closer != nil && closer.maxMessageBytes > 0 && int64(len(payload)) > closer.maxMessageBytes
 }

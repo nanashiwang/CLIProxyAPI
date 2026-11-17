@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -52,18 +53,29 @@ def validate_manifest(manifest):
 
 
 def github_api(path, optional=False):
-    result = subprocess.run(
-        ["gh", "api", path, "-H", "X-GitHub-Api-Version: 2022-11-28"],
-        capture_output=True, text=True, timeout=45, check=False,
-    )
-    if result.returncode:
-        if optional and "HTTP 404" in result.stderr:
-            return None
-        # Do not log authentication headers or upstream-controlled response bodies.
-        status = re.search(r"HTTP [0-9]{3}", result.stderr)
-        detail = status.group(0) if status else f"exit {result.returncode}"
-        raise RuntimeError(f"GitHub API failed ({detail}) for {path}")
-    return json.loads(result.stdout)
+    for attempt in range(3):
+        try:
+            result = subprocess.run(
+                ["gh", "api", path, "-H", "X-GitHub-Api-Version: 2022-11-28"],
+                capture_output=True, text=True, timeout=45, check=False,
+            )
+        except subprocess.TimeoutExpired:
+            if attempt == 2:
+                raise RuntimeError(f"GitHub API timed out for {path}") from None
+        else:
+            if not result.returncode:
+                return json.loads(result.stdout)
+            if optional and "HTTP 404" in result.stderr:
+                return None
+            status = re.search(r"HTTP ([0-9]{3})", result.stderr)
+            detail = status.group(0) if status else f"exit {result.returncode}"
+            transient = bool(status and int(status.group(1)) in (500, 502, 503, 504))
+            transient = transient or (not status and any(text in result.stderr.lower() for text in (
+                "timeout", "connection reset", "temporary failure", "unexpected eof",
+            )))
+            if not transient or attempt == 2:
+                raise RuntimeError(f"GitHub API failed ({detail}) for {path}")
+        time.sleep(2 ** attempt)
 
 
 def evaluate_comparison(comparison, patterns=None):

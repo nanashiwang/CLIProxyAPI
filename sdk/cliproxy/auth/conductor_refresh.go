@@ -392,7 +392,7 @@ func (m *Manager) tryRefreshExecutionAuthAfterUnauthorized(ctx context.Context, 
 		refreshed, ok := m.tryRefreshAfterUnauthorized(ctx, auth, execErr, alreadyTried)
 		return refreshed, ok, nil
 	}
-	if m == nil || executor == nil || auth == nil || alreadyTried || execErr == nil {
+	if m == nil || executor == nil || auth == nil || alreadyTried || execErr == nil || sameAccountRetryBlocked(execErr) {
 		return auth, false, nil
 	}
 	if !isUnauthorizedError(execErr) || auth.AuthKind() != AuthKindOAuth {
@@ -468,6 +468,9 @@ func (m *Manager) RefreshHomeSelectionAfterUnauthorized(ctx context.Context, sel
 // tryRefreshAfterUnauthorized refreshes local OAuth credentials once after a
 // 401 so the current auth can be retried before fallback/suspend.
 func (m *Manager) tryRefreshAfterUnauthorized(ctx context.Context, auth *Auth, execErr error, alreadyTried bool) (*Auth, bool) {
+	if sameAccountRetryBlocked(execErr) {
+		return nil, false
+	}
 	if m == nil || auth == nil || alreadyTried || execErr == nil {
 		return auth, false
 	}

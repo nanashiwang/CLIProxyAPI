@@ -299,20 +299,20 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			applyRequestScopedActionToResult(action, okAction, &result)
 			m.recordExecutionResult(ctx, result, auth, ephemeralResult)
 			if okAction {
-				if isRequestScopedStop(action, okAction) {
+				if isRequestScopedStop(action, okAction) || isRequestStopError(errStream) {
 					return nil, wrapRequestStopError(errStream)
 				}
 				lastErr = errStream
-				if result.CredentialScope {
+				if result.CredentialScope || sameAccountRetryBlocked(errStream) {
 					return nil, errStream
 				}
 				continue
 			}
-			if isRequestInvalidError(errStream) {
+			if isRequestInvalidError(errStream) || isRequestStopError(errStream) {
 				return nil, errStream
 			}
 			lastErr = errStream
-			if result.CredentialScope {
+			if result.CredentialScope || sameAccountRetryBlocked(errStream) {
 				return nil, errStream
 			}
 			continue
@@ -377,16 +377,16 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				applyRequestScopedActionToResult(action, okAction, &result)
 				m.recordExecutionResult(ctx, result, auth, ephemeralResult)
 				m.discardLeasedStream(ctx, streamResult.Chunks)
-				if isRequestScopedStop(action, okAction) {
+				if isRequestScopedStop(action, okAction) || isRequestStopError(bootstrapErr) {
 					return nil, wrapRequestStopError(bootstrapErr)
 				}
 				lastErr = bootstrapErr
-				if result.CredentialScope {
+				if result.CredentialScope || sameAccountRetryBlocked(bootstrapErr) {
 					return nil, newStreamBootstrapError(bootstrapErr, streamResult.Headers)
 				}
 				continue
 			}
-			if isRequestInvalidError(bootstrapErr) {
+			if isRequestInvalidError(bootstrapErr) || isRequestStopError(bootstrapErr) {
 				rerr := resultErrorFromError(bootstrapErr)
 				result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, RouteModel: routeModel, Success: false, Error: rerr, Options: execOpts}
 				result.RetryAfter = retryAfterFromError(bootstrapErr)
@@ -407,7 +407,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				m.recordExecutionResult(ctx, result, auth, ephemeralResult)
 				m.discardLeasedStream(ctx, streamResult.Chunks)
 				lastErr = bootstrapErr
-				if result.CredentialScope {
+				if result.CredentialScope || sameAccountRetryBlocked(bootstrapErr) {
 					return nil, newStreamBootstrapError(bootstrapErr, streamResult.Headers)
 				}
 				continue

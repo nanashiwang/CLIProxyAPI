@@ -16,22 +16,30 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	runtimeexecutor "github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	auth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
 func TestResponsesOversizedOAuthRecordsHTTPTransport(t *testing.T) {
-	var requests atomic.Int32
+	var requests, upgrades, messages atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
 		if r.Header.Get("Upgrade") != "" {
-			t.Error("unexpected WebSocket upgrade")
-			w.WriteHeader(400)
+			upgrades.Add(1)
+			upgrader := websocket.Upgrader{}
+			conn, err := upgrader.Upgrade(w, r, http.Header{"X-Codex-Websocket-Max-Message-Bytes": {"1024"}})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer conn.Close()
+			if _, _, err = conn.ReadMessage(); err == nil {
+				messages.Add(1)
+			}
 			return
 		}
+		requests.Add(1)
 		n, _ := io.Copy(io.Discard, r.Body)
-		if n < helps.CodexWebsocketHTTPThreshold {
+		if n < 2048 {
 			t.Error("missing complete history")
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -61,7 +69,7 @@ func TestResponsesOversizedOAuthRecordsHTTPTransport(t *testing.T) {
 	}
 	defer c.Close()
 	_ = c.SetReadDeadline(time.Now().Add(30 * time.Second))
-	steeringPoolSend(t, c, fmt.Sprintf(`{"type":"response.create","model":%q,"input":[{"role":"user","content":%q}]}`, model, strings.Repeat("x", helps.CodexWebsocketHTTPThreshold)))
+	steeringPoolSend(t, c, fmt.Sprintf(`{"type":"response.create","model":%q,"input":[{"role":"user","content":%q}]}`, model, strings.Repeat("x", 2048)))
 	steeringPoolRead(t, c, "response.created")
 	steeringPoolRead(t, c, "response.completed")
 	// A delta after the HTTP fallback must close for full replay rather than
@@ -74,7 +82,7 @@ func TestResponsesOversizedOAuthRecordsHTTPTransport(t *testing.T) {
 	if !strings.Contains(err.Error(), wsHTTPReplayRequiredCloseReason) {
 		t.Fatalf("missing replay reason: %v", err)
 	}
-	if requests.Load() != 1 {
+	if requests.Load() != 1 || upgrades.Load() != 1 || messages.Load() != 0 {
 		t.Fatalf("delta was sent upstream: %d", requests.Load())
 	}
 	if manager.ExecutionCapacity(id).Active != 0 {

@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 import re
 import unittest
+from unittest.mock import patch
+import subprocess
 
 
 spec = importlib.util.spec_from_file_location("monitor", Path(__file__).with_name("codex-proxy-usage-monitor.py"))
@@ -24,6 +26,35 @@ class MonitorTests(unittest.TestCase):
             feature["source_commit"] = self.manifest["reviewed_commit"]
             if feature.get("adapted_commit"):
                 feature["adapted_commit"] = self.manifest["reviewed_commit"]
+
+    def test_transient_github_failure_retries_bounded(self):
+        failed = subprocess.CompletedProcess([], 1, "", "HTTP 500 sensitive response")
+        success = subprocess.CompletedProcess([], 0, '{"ok":true}', "")
+        with patch.object(monitor.subprocess, "run", side_effect=[failed, failed, success]) as run, patch.object(monitor.time, "sleep") as sleep:
+            self.assertEqual(monitor.github_api("repos/test"), {"ok": True})
+            self.assertEqual(run.call_count, 3)
+            self.assertEqual([c.args[0] for c in sleep.call_args_list], [1, 2])
+        with patch.object(monitor.subprocess, "run", return_value=failed) as run, patch.object(monitor.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, r"GitHub API failed \(HTTP 500\) for repos/test"):
+                monitor.github_api("repos/test")
+            self.assertEqual(run.call_count, 3)
+
+    def test_permission_errors_and_optional_missing_do_not_retry(self):
+        for status in (401, 403, 404, 422):
+            result = subprocess.CompletedProcess([], 1, "", f"HTTP {status}")
+            with patch.object(monitor.subprocess, "run", return_value=result) as run, patch.object(monitor.time, "sleep") as sleep:
+                if status == 404:
+                    self.assertIsNone(monitor.github_api("repos/test", optional=True))
+                else:
+                    with self.assertRaises(RuntimeError): monitor.github_api("repos/test")
+                self.assertEqual(run.call_count, 1)
+                sleep.assert_not_called()
+
+    def test_timeouts_stop_after_three_attempts(self):
+        with patch.object(monitor.subprocess, "run", side_effect=subprocess.TimeoutExpired("gh", 45)) as run, patch.object(monitor.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "timed out"):
+                monitor.github_api("repos/test")
+            self.assertEqual(run.call_count, 3)
 
     def test_checked_in_manifest(self):
         monitor.validate_manifest(self.checked_in_manifest)

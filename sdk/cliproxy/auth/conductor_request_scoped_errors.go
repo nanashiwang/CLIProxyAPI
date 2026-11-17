@@ -235,3 +235,9 @@ func applyRequestScopedActionToResult(action string, okAction bool, result *Resu
 func isRequestScopedStop(action string, okAction bool) bool {
 	return okAction && (action == RequestScopedActionStop || action == RequestScopedActionStopAndCooldown)
 }
+
+// sameAccountRetryBlocked never grants permission to switch credentials.
+func sameAccountRetryBlocked(err error) bool {
+	var blocker interface{ SameAccountRetryBlocked() bool }
+	return errors.As(err, &blocker) && blocker.SameAccountRetryBlocked()
+}

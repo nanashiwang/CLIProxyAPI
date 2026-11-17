@@ -10,9 +10,6 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Keep room below the observed 16 MiB OAuth WebSocket frame boundary.
-const CodexWebsocketHTTPThreshold = 15 * 1024 * 1024
-
 // CodexOversizedContinuation never treats a delta as a complete HTTP request.
 func CodexOversizedContinuation(ctx context.Context, payloads ...[]byte) bool {
 	if core.RequiredUpstreamWebsocket(ctx) {

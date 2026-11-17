@@ -1011,6 +1011,8 @@ func openAICompatStreamDataError(payload []byte, eventName string) (statusErr, b
 }
 
 type statusErr struct {
+	noMoreRetry      bool
+	stopRetry        bool
 	code             int
 	msg              string
 	retryAfter       *time.Duration
@@ -1028,3 +1030,6 @@ func (e statusErr) StatusCode() int            { return e.code }
 func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
 func (e statusErr) IsCredentialScoped() bool   { return e.credentialScoped }
 func (e statusErr) IsStreamTruncated() bool    { return e.streamTruncated }
+
+func (e statusErr) SameAccountRetryBlocked() bool { return e.noMoreRetry }
+func (e statusErr) IsRequestStop() bool           { return e.stopRetry }

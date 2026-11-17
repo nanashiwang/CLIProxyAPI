@@ -2,13 +2,13 @@ package executor
 
 import (
 	"bytes"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -26,6 +26,8 @@ func newCodexIncompleteStreamError() codexIncompleteStreamError {
 	}}
 }
 
+func (codexIncompleteStreamError) IsServiceIncomplete() bool { return true }
+
 func (codexIncompleteStreamError) IsRequestScoped() bool {
 	return true
 }
@@ -40,6 +42,8 @@ func newCodexEmptyIncompleteStreamError() codexEmptyIncompleteStreamError {
 		msg:  helps.CodexEmptyIncompleteStreamMessage,
 	}}
 }
+
+func (codexEmptyIncompleteStreamError) IsServiceIncomplete() bool { return true }
 
 func (codexEmptyIncompleteStreamError) IsRequestScoped() bool {
 	return true
@@ -236,6 +240,9 @@ func codexTerminalFailureBody(eventData []byte) ([]byte, bool) {
 	if len(body) == 0 {
 		body = []byte(`{"error":{"message":"upstream stream failed without error details"}}`)
 	}
+	if helps.CodexNoMoreRetry(eventData) {
+		body, _ = sjson.SetBytes(body, "error.headers.x-retry-metadata", "NO_MORE_RETRY")
+	}
 	return body, true
 }
 
@@ -326,6 +333,8 @@ func newCodexStatusErr(statusCode int, body []byte) statusErr {
 }
 
 func newCodexStatusErrWithCooling(statusCode int, body []byte, modelLevelCooling bool) statusErr {
+	noMore := helps.CodexNoMoreRetry(body)
+	allowRotation := isCodexModelCapacityError(body) || isCodexServerOverloadedError(body) || isCodexUsageLimitError(body) || statusCode == http.StatusTooManyRequests
 	errCode := statusCode
 	isUsageLimit := isCodexUsageLimitError(body)
 	credentialScoped := isUsageLimit && !modelLevelCooling
@@ -333,7 +342,7 @@ func newCodexStatusErrWithCooling(statusCode int, body []byte, modelLevelCooling
 		errCode = http.StatusTooManyRequests
 	}
 	body = classifyCodexStatusError(errCode, body)
-	err := statusErr{code: errCode, msg: string(body), credentialScoped: credentialScoped}
+	err := statusErr{code: errCode, msg: string(body), credentialScoped: credentialScoped, noMoreRetry: noMore, stopRetry: noMore && !allowRotation}
 	if retryAfter := parseCodexRetryAfter(errCode, body, time.Now()); retryAfter != nil {
 		err.retryAfter = retryAfter
 	}
@@ -505,7 +514,7 @@ func isCodexOverloadBootstrapFailure(body []byte) bool {
 		return true
 	case errorType == "rate_limit_error", errorCode == "rate_limit_exceeded":
 		return true
-	case (errorType == "server_error" || errorCode == "server_error") && strings.Contains(errorMessage, "you can retry your request"):
+	case (errorType == "server_error" || errorCode == "server_error") && strings.Contains(errorMessage, "you can retry your request") && !helps.CodexNoMoreRetry(body):
 		return true
 	default:
 		return false

@@ -206,7 +206,10 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				return false
 			}
 			payload = buildCodexWebsocketRequestBody(prepared.upstreamBody)
-			if auth.AuthKind() == cliproxyauth.AuthKindOAuth && len(payload) >= helps.CodexWebsocketHTTPThreshold {
+			sess.connMu.Lock()
+			oversized := sess.conn == conn && codexMessageExceedsLimit(sess.connCloser, payload)
+			sess.connMu.Unlock()
+			if oversized {
 				usage.ObserveDiagnosticEvent(ctx, "replay_required")
 				fail(cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError())
 				return false

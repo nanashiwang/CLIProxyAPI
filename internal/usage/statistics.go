@@ -81,6 +81,7 @@ type TokenStats struct {
 
 // RequestDetail stores one persisted request event without secrets or failure bodies.
 type RequestDetail struct {
+	ServiceOutcome              string                    `json:"service_outcome,omitempty"`
 	Timing                      *coreusage.ResponseTiming `json:"timing,omitempty"`
 	Diagnostics                 *coreusage.Diagnostics    `json:"diagnostics,omitempty"`
 	ClientKeyID                 string                    `json:"client_key_id,omitempty"`
@@ -1201,6 +1202,7 @@ func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
 		API:     apiIdentifier(record.APIKey, endpoint, provider),
 		Model:   model,
 		Detail: RequestDetail{
+			ServiceOutcome:              serviceOutcome(failed, record.Fail.Category, statusCode),
 			Diagnostics:                 coreusage.NormalizeDiagnostics(record.Diagnostics),
 			Timestamp:                   timestamp.UTC(),
 			LatencyMs:                   durationMilliseconds(record.Latency),
@@ -1240,6 +1242,12 @@ func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
 }
 
 func normalizeStoredEvent(event storedEvent) storedEvent {
+	// Preserve missing outcome evidence before legacy status defaults are applied.
+	switch event.Detail.ServiceOutcome {
+	case "succeeded", "failed", "incomplete", "cancelled", "caller_error", "unknown":
+	default:
+		event.Detail.ServiceOutcome = serviceOutcome(event.Detail.Failed, "", event.Detail.StatusCode)
+	}
 	// Also sanitize historical records loaded from disk or imported snapshots.
 	if strings.EqualFold(strings.TrimSpace(event.Detail.Provider), "opencode") {
 		event.Detail.Source = event.Detail.AuthID

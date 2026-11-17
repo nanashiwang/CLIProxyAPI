@@ -18,6 +18,14 @@ func FailureCategory(err error) string {
 	if errors.Is(err, context.Canceled) {
 		return "cancelled"
 	}
+	var serviceIncomplete interface{ IsServiceIncomplete() bool }
+	if errors.As(err, &serviceIncomplete) && serviceIncomplete.IsServiceIncomplete() {
+		return "stream_incomplete"
+	}
+	var incomplete interface{ IsStreamTruncated() bool }
+	if errors.As(err, &incomplete) && incomplete.IsStreamTruncated() {
+		return "stream_incomplete"
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
 	}
@@ -59,7 +67,7 @@ func FailureCategory(err error) string {
 
 func normalizeFailureCategory(category string) string {
 	switch category {
-	case "", "cancelled", "timeout", "dns", "tls", "connection_refused", "connection_closed", "authentication", "rate_limited", "upstream_server", "invalid_request", "unknown":
+	case "", "stream_incomplete", "cancelled", "timeout", "dns", "tls", "connection_refused", "connection_closed", "authentication", "rate_limited", "upstream_server", "invalid_request", "unknown":
 		return category
 	}
 	return "unknown"

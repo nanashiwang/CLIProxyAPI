@@ -61,19 +61,6 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 	authLabel = auth.Label
 	authType, authValue = auth.AccountInfo()
 
-	// API-key upstreams have their own transport limits. OAuth new chains can
-	// use HTTP before send; continuation/control requests must ask for replay.
-	if auth != nil && auth.AuthKind() == cliproxyauth.AuthKindOAuth && len(buildCodexWebsocketRequestBody(prepared.upstreamBody)) >= helps.CodexWebsocketHTTPThreshold {
-		if helps.CodexOversizedContinuation(ctx, req.Payload, opts.OriginalRequest, prepared.upstreamBody) {
-			usage.ObserveDiagnosticEvent(ctx, "replay_required")
-			return nil, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
-		}
-		usage.ObserveDiagnosticEvent(ctx, "http_size_fallback")
-		delegatedHTTP = true
-		cliproxyexecutor.ObserveUpstreamTransport(ctx, "sse")
-		return e.CodexExecutor.ExecuteStream(ctx, auth, req, opts)
-	}
-
 	executionSessionID := executionSessionIDFromOptions(opts)
 	var sess *codexWebsocketSession
 	if executionSessionID != "" {
@@ -149,6 +136,27 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 			sess.reqMu.Unlock()
 		}
 		return nil, errDial
+	}
+	if codexMessageExceedsLimit(closer, wsReqBody) {
+		recordAPIWebsocketHandshake(ctx, e.cfg, respHS)
+		// Retire only this connection; limits never survive a redial or account change.
+		if sess != nil {
+			e.invalidateUpstreamConnWithoutDisconnectNotify(sess, conn, "message_limit", nil)
+		} else {
+			_ = closer.Close()
+		}
+		unlockStreamSession()
+		if gjson.GetBytes(prepared.upstreamBody, "generate").Exists() && !gjson.GetBytes(prepared.upstreamBody, "generate").Bool() {
+			return nil, codexWebsocketMessageTooBigError{statusErr: statusErr{code: 413, msg: "upstream websocket warmup message too big"}}
+		}
+		if helps.CodexOversizedContinuation(ctx, req.Payload, opts.OriginalRequest, prepared.upstreamBody) {
+			usage.ObserveDiagnosticEvent(ctx, "replay_required")
+			return nil, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
+		}
+		usage.ObserveDiagnosticEvent(ctx, "http_size_fallback")
+		delegatedHTTP = true
+		cliproxyexecutor.ObserveUpstreamTransport(ctx, "sse")
+		return e.CodexExecutor.ExecuteStream(ctx, auth, req, opts)
 	}
 	if errBind := sess.bindExecutionLifecycle(opts, conn, closer, req.Model); errBind != nil {
 		if sess != nil {
