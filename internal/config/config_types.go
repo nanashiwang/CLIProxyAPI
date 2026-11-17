@@ -774,6 +774,9 @@ type OpenAICompatibility struct {
 	// Models defines the model configurations including aliases for routing.
 	Models []OpenAICompatibilityModel `yaml:"models" json:"models"`
 
+	// TestModel is the management connectivity-test preference; empty selects automatically.
+	TestModel string `yaml:"test-model,omitempty" json:"test-model,omitempty"`
+
 	// Headers optionally adds extra HTTP headers for requests sent to this provider.
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 

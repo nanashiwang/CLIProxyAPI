@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -64,4 +67,56 @@ func TestGetOpenAICompatIncludesDisableCooling(t *testing.T) {
 	if body.OpenAICompatibility[0].RequestRetry == nil || *body.OpenAICompatibility[0].RequestRetry != 0 {
 		t.Fatalf("expected request-retry to be present and 0, got %#v", body.OpenAICompatibility[0].RequestRetry)
 	}
+}
+
+func TestOpenAICompatTestModelPersistsAcrossReload(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(&config.Config{}, path, nil)
+	call := func(method, body string, handler func(*gin.Context)) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		ctx.Request = httptest.NewRequest(method, "/v0/management/openai-compatibility", strings.NewReader(body))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		handler(ctx)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", method, rec.Code, rec.Body.String())
+		}
+		return rec
+	}
+	check := func(want string) {
+		t.Helper()
+		loaded, err := config.LoadConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h = NewHandler(loaded, path, nil)
+		rec := call(http.MethodGet, "", h.GetOpenAICompat)
+		var body struct {
+			Items []config.OpenAICompatibility `json:"openai-compatibility"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Items) != 1 || body.Items[0].TestModel != want {
+			t.Fatalf("reloaded preference: %s; want %q", rec.Body.String(), want)
+		}
+		if body.Items[0].Models[0].Name != "gpt-4.1-mini" {
+			t.Fatal("test preference reordered routing models")
+		}
+	}
+	call(http.MethodPut, `[{"name":"official","base-url":"https://api.openai.com/v1","test-model":" gpt-6-luna ","models":[{"name":"gpt-4.1-mini"},{"name":"gpt-6-luna"}]}]`, h.PutOpenAICompat)
+	check("gpt-6-luna")
+	call(http.MethodPatch, `{"name":"official","value":{"disabled":true}}`, h.PatchOpenAICompat)
+	check("gpt-6-luna")
+	call(http.MethodPatch, `{"name":"official","value":{"test-model":"gpt-4.1-mini"}}`, h.PatchOpenAICompat)
+	check("gpt-4.1-mini")
+	call(http.MethodPatch, `{"name":"official","value":{"test-model":""}}`, h.PatchOpenAICompat)
+	check("")
+	call(http.MethodPut, `[{"name":"official","base-url":"https://api.openai.com/v1","models":[{"name":"gpt-4.1-mini"}]}]`, h.PutOpenAICompat)
+	check("")
 }

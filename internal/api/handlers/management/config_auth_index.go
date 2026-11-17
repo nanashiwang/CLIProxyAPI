@@ -39,6 +39,7 @@ type openAICompatibilityAPIKeyWithAuthIndex struct {
 }
 
 type openAICompatibilityWithAuthIndex struct {
+	TestModel             string                                   `json:"test-model,omitempty"`
 	Name                  string                                   `json:"name"`
 	Priority              int                                      `json:"priority,omitempty"`
 	Disabled              bool                                     `json:"disabled"`
@@ -281,6 +282,7 @@ func (h *Handler) openAICompatibilityWithAuthIndex() []openAICompatibilityWithAu
 		idKind := fmt.Sprintf("openai-compatibility:%s", providerName)
 
 		response := openAICompatibilityWithAuthIndex{
+			TestModel:             entry.TestModel,
 			Name:                  entry.Name,
 			Priority:              entry.Priority,
 			Disabled:              entry.Disabled,

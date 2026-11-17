@@ -112,6 +112,7 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 	for i := range cfg.OpenAICompatibility {
 		e := cfg.OpenAICompatibility[i]
 		e.Name = strings.TrimSpace(e.Name)
+		e.TestModel = strings.TrimSpace(e.TestModel)
 		e.Prefix = normalizeModelPrefix(e.Prefix)
 		e.BaseURL = strings.TrimSpace(e.BaseURL)
 		e.Headers = NormalizeHeaders(e.Headers)

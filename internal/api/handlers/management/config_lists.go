@@ -744,6 +744,7 @@ func (h *Handler) PutOpenAICompat(c *gin.Context) {
 }
 func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 	type openAICompatPatch struct {
+		TestModel             *string                             `json:"test-model"`
 		Name                  *string                             `json:"name"`
 		Prefix                *string                             `json:"prefix"`
 		Disabled              *bool                               `json:"disabled"`
@@ -787,6 +788,9 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 	}
 
 	entry := h.cfg.OpenAICompatibility[targetIndex]
+	if body.Value.TestModel != nil {
+		entry.TestModel = strings.TrimSpace(*body.Value.TestModel)
+	}
 	if body.Value.Name != nil {
 		entry.Name = strings.TrimSpace(*body.Value.Name)
 	}
