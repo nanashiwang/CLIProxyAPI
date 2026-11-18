@@ -42,7 +42,7 @@ def main():
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         def request(path, method="GET", payload=None):
             req = urllib.request.Request(
-                f"http://127.0.0.1:{port}/v0/management/{path}",
+                f"http://127.0.0.1:{port}/v8/management/{path}",
                 method=method,
                 data=json.dumps(payload).encode() if payload is not None else None,
                 headers={"Authorization": "Bearer " + secret, "Content-Type": "application/json"},
@@ -69,9 +69,12 @@ def main():
                         if time.monotonic() >= deadline:
                             raise RuntimeError("management API startup timeout") from None
                         time.sleep(0.2)
+                normalized = get('config')
+                assert all(key in normalized for key in ('server', 'management', 'access')), 'v7 YAML must load through the v8 configuration contract'
+                verify_provider_identity(request)
                 for path, fields in [
                     ("account-pools", ("config", "keys", "credentials", "revision")),
-                    ("auth-files", ("files",)),
+                    ("credentials", ("files",)),
                     ("usage", ("usage", "storage")),
                 ]:
                     try:
@@ -80,10 +83,10 @@ def main():
                         raise RuntimeError(f"{path} returned HTTP {error.code}") from None
                     if not isinstance(data, dict) or any(field not in data for field in fields):
                         raise RuntimeError(f"{path} response does not satisfy the management contract")
-                    print(f"PASS /v0/management/{path}")
-                capacity = request("auth-files/capacity", "POST", {"ids": ["smoke-missing"]})
+                    print(f"PASS /v8/management/{path}")
+                capacity = request("credentials/capacity", "POST", {"ids": ["smoke-missing"]})
                 assert capacity == {"accounts": {}}, "unknown account capacity must remain unavailable"
-                print("PASS /v0/management/auth-files/capacity")
+                print("PASS /v8/management/credentials/capacity")
                 verify_usage_insights(request)
             finally:
                 process.terminate()
@@ -92,6 +95,28 @@ def main():
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+
+
+def verify_provider_identity(request):
+    """Exercise the grouped-provider write contract without making a model request."""
+    endpoint = 'config/api-keys/openai-compatibility'
+    provider = {
+        'id': 'smoke-provider', 'name': 'Smoke Provider',
+        'base-url': 'https://example.invalid/v1', 'test-model': 'smoke-model',
+        'keys': [{'id': 'smoke-key', 'api-key': 'fixture-only', 'note': 'kept note'}],
+        'models': [{'name': 'smoke-model', 'alias': 'smoke-model'}],
+    }
+    request(endpoint, 'PUT', [provider])
+    stored = request(endpoint)
+    assert len(stored) == 1 and stored[0]['id'] == provider['id']
+    assert stored[0]['keys'][0]['id'] == 'smoke-key'
+    assert stored[0]['keys'][0]['note'] == 'kept note'
+    assert stored[0]['test-model'] == 'smoke-model'
+    provider['name'] = 'Renamed Smoke Provider'
+    request(endpoint, 'PUT', [provider])
+    assert request(endpoint)[0]['id'] == 'smoke-provider', 'renaming must not replace provider identity'
+    request(endpoint, 'PUT', [])
+    print('PASS v8 grouped provider identity, key note and test-model persistence')
 
 
 def verify_usage_insights(request):

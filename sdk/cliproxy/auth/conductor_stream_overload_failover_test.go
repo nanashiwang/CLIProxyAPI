@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 // registerOverloadAuths registers n active codex credentials with descending priority so the
@@ -188,7 +188,7 @@ func TestExecuteStream_BootstrapOverload_StopsAtCredentialBudget(t *testing.T) {
 	t.Cleanup(func() { quotaCooldownDisabled.Store(previous) })
 
 	m := NewManager(nil, nil, nil)
-	// Six credentials exist but only four may be attempted.
+	// Six credentials exist and only four may be attempted in one round.
 	m.SetRetryConfig(5, 0, 4)
 	registerOverloadAuths(t, m, 6)
 
@@ -221,10 +221,10 @@ func TestExecuteStream_BootstrapOverload_StopsAtCredentialBudget(t *testing.T) {
 	if attempts == 0 {
 		t.Fatal("expected at least one attempt")
 	}
-	// The outer request-retry loop may restart the credential sweep, so assert the per-sweep
-	// budget is respected rather than a single exact total.
-	if attempts%4 != 0 {
-		t.Fatalf("attempts = %d, expected a multiple of the 4-credential budget", attempts)
+	// A no-wait retry round may consume the remaining two credentials after the
+	// first four-credential sweep, but it must not exceed the available set.
+	if attempts < 4 || attempts > 6 {
+		t.Fatalf("attempts = %d, want between 4 and 6", attempts)
 	}
 	t.Logf("total upstream attempts across retry sweeps: %d", attempts)
 }

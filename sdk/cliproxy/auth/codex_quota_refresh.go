@@ -2,7 +2,7 @@ package auth
 
 import (
 	"context"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"io"
 	"net/http"
 	"sort"
@@ -113,7 +113,7 @@ func (m *Manager) reserveCodexQuotaRefreshesLimit(now time.Time, limit int) []co
 	var jobs []codexQuotaRefreshJob
 	for _, id := range ids {
 		a := m.auths[id]
-		if (!codexQuotaOAuth(a) && !providerQuotaEligible(a)) || a.Disabled || a.Status == StatusDisabled || hasUnauthorizedAuthFailure(a) {
+		if (!codexQuotaOAuth(a) && !providerQuotaEligible(a)) || a.Disabled || a.Status == StatusDisabled || hasUnrecoveredUnauthorizedAuthFailure(a) {
 			continue
 		}
 		if expiry, ok := a.ExpirationTime(); ok && !expiry.After(now) {

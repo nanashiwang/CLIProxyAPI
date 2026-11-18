@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	core "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )

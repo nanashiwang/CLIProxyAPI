@@ -2,15 +2,15 @@ package management
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/json"
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 func sumRecentRequestBuckets(buckets []coreauth.RecentRequestBucket) (int64, int64) {
@@ -179,7 +179,7 @@ func TestOpenCodeUsageAndAuthEntriesHideSecrets(t *testing.T) {
 	}
 	for _, auth := range manager.List() {
 		auth.Attributes["path"] = "/test/auth.json"
-		entry := h.buildAuthFileEntry(auth)
+		entry := h.buildAuthFileEntry(auth, authFileQuotaContext{})
 		data, err := json.Marshal(entry)
 		if err != nil {
 			t.Fatal(err)

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	auth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	auth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 type kimiTestStatusError struct {

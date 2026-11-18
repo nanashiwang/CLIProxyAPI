@@ -18,14 +18,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/opencode"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/opencode"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"golang.org/x/net/http/httpguts"
@@ -509,14 +509,20 @@ func (e *OpenCodeExecutor) translate(ctx context.Context, auth *cliproxyauth.Aut
 		original = req.Payload
 	}
 	var originalTranslated, translated []byte
+	var err error
 	if to == sdktranslator.FormatCodex {
-		originalTranslated = helps.TranslateOpenCodeRequestWithContext(ctx, opts.SourceFormat, baseModel, original, stream)
-		translated = helps.TranslateOpenCodeRequestWithContext(ctx, opts.SourceFormat, baseModel, req.Payload, stream)
+		originalTranslated, err = helps.TranslateOpenCodeRequestChecked(ctx, opts.SourceFormat, baseModel, original, stream)
+		if err != nil {
+			return nil, nil, err
+		}
+		translated, err = helps.TranslateOpenCodeRequestChecked(ctx, opts.SourceFormat, baseModel, req.Payload, stream)
+		if err != nil {
+			return nil, nil, err
+		}
 	} else {
 		originalTranslated = helps.TranslateRequestWithAPIKeyModelCompatibility(ctx, opts.Headers, e.cfg, opts.SourceFormat, to, baseModel, original, stream, false)
 		translated = helps.TranslateRequestWithAPIKeyModelCompatibility(ctx, opts.Headers, e.cfg, opts.SourceFormat, to, baseModel, req.Payload, stream, false)
 	}
-	var err error
 	translated, err = helps.ApplyRequestThinking(translated, req, opts, opts.SourceFormat.String(), to.String(), e.Identifier())
 	if err != nil {
 		return nil, nil, err

@@ -1,7 +1,7 @@
 package executor
 
 import (
-	usage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	usage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"testing"
 )
 

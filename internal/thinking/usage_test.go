@@ -40,10 +40,11 @@ func TestUsageReasoningDoesNotChangeThinkingConversionSemantics(t *testing.T) {
 		{"kimi", `{"thinking":{"type":"enabled"}}`},
 	} {
 		body := []byte(tc.body)
-		if config := extractThinkingConfig(body, tc.provider); hasThinkingConfig(config) {
-			t.Fatalf("conversion config unexpectedly changed: %#v", config)
-		}
+		before := extractThinkingConfig(body, tc.provider)
 		_ = ExtractTranslatedReasoningEffort(body, tc.provider)
+		if after := extractThinkingConfig(body, tc.provider); before != after {
+			t.Fatalf("usage extraction changed conversion config: before=%#v after=%#v", before, after)
+		}
 		if string(body) != tc.body {
 			t.Fatal("usage extraction mutated the payload")
 		}

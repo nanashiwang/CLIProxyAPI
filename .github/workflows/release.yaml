@@ -16,7 +16,7 @@ permissions:
 
 env:
   GH_REPO: ${{ github.repository }}
-  GO_VERSION: '1.26.4'
+  GO_VERSION: '1.26.10'
 
 jobs:
   prepare-release:
@@ -75,28 +75,31 @@ jobs:
 
           git fetch --force --tags
           previous_tag=""
-          if previous_tag_value="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null)"; then
+          if previous_tag_value="$(git tag --merged "${GITHUB_SHA}" --list 'v*-personal.*' --sort=-v:refname | grep -vx "${GITHUB_REF_NAME}" | sed -n '1p')"; then
             previous_tag="$previous_tag_value"
             changelog_range="${previous_tag}..${GITHUB_REF_NAME}"
           else
             changelog_range="$GITHUB_REF_NAME"
           fi
 
-          git log --reverse --pretty=format:'- %s (%h)' "$changelog_range" |
+          git log --first-parent --reverse --pretty=format:'- %s (%h)' "$changelog_range" |
             grep -Ev '^- (docs:|test:)' > "$changelog_entries_file" || true
 
-          gh api "repos/${GH_REPO}/releases/generate-notes" \
-            -f tag_name="$GITHUB_REF_NAME" \
-            --jq .body > "$generated_notes_file"
-          if [[ ! -s "$generated_notes_file" ]]; then
-            if [[ -n "$previous_tag" ]]; then
-              printf '**Full Changelog**: https://github.com/%s/compare/%s...%s\n' "$GH_REPO" "$previous_tag" "$GITHUB_REF_NAME" > "$generated_notes_file"
-            else
-              printf '**Full Changelog**: https://github.com/%s/commits/%s\n' "$GH_REPO" "$GITHUB_REF_NAME" > "$generated_notes_file"
-            fi
+          # A full upstream merge can exceed the Release body limit. Keep the
+          # authored summary and personal mainline commits, with the complete diff linked.
+          if [[ -n "$previous_tag" ]]; then
+            printf '**完整变更**: https://github.com/%s/compare/%s...%s\n' "$GH_REPO" "$previous_tag" "$GITHUB_REF_NAME" > "$generated_notes_file"
+          else
+            printf '**完整变更**: https://github.com/%s/commits/%s\n' "$GH_REPO" "$GITHUB_REF_NAME" > "$generated_notes_file"
           fi
 
           {
+            notes='docs/RELEASE_NOTES_CN.md'
+            if [[ -f "$notes" ]] && { [[ -z "$previous_tag" ]] || ! git diff --quiet "$previous_tag" HEAD -- "$notes"; }; then
+              printf '## 更新说明\n\n'
+              cat "$notes"
+              printf '\n\n'
+            fi
             if [[ -s "$changelog_entries_file" ]]; then
               printf '## Changelog\n\n'
               cat "$changelog_entries_file"
@@ -719,13 +722,6 @@ jobs:
             sleep "$sleep_seconds"
           done
           [[ "$uploaded" -eq 1 ]]
-          latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)"
-          newest="$(printf '%s\n' "$latest_tag" "$GITHUB_REF_NAME" | sort -V | tail -n 1)"
-          if [[ "$newest" == "$GITHUB_REF_NAME" ]]; then
-            python3 "$GITHUB_WORKSPACE/.github/scripts/ensure-release-draft.py" --publish true
-          else
-            python3 "$GITHUB_WORKSPACE/.github/scripts/ensure-release-draft.py" --publish false
-          fi
       - name: Build and verify deployment bundle
         if: github.repository == 'nanashiwang/CLIProxyAPI'
         env:
@@ -742,7 +738,7 @@ jobs:
           python3 .github/scripts/build-deployment-bundle.py \
             --base-tag "$base_tag" \
             --tag "$GITHUB_REF_NAME" \
-            --management-tag 'v1.22.2-cpa.46' \
+            --management-tag 'v1.28.3-cpa.1' \
             --output-dir "$bundle_dir"
           bundle="cpa-deployment-${GITHUB_REF_NAME}.zip"
           gh release upload "$GITHUB_REF_NAME" "$bundle_dir/$bundle" "$bundle_dir/$bundle.sha256" --clobber
@@ -752,6 +748,19 @@ jobs:
           (cd "$verify_dir" && sha256sum --check "$bundle.sha256")
           cmp "$bundle_dir/$bundle" "$verify_dir/$bundle"
           python3 -m zipfile -t "$verify_dir/$bundle"
+      - name: Publish completed release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          newest="$(printf '%s\n' "$latest_tag" "$GITHUB_REF_NAME" | sort -V | tail -n 1)"
+          if [[ "$newest" == "$GITHUB_REF_NAME" ]]; then
+            python3 "$GITHUB_WORKSPACE/.github/scripts/ensure-release-draft.py" --publish true
+          else
+            python3 "$GITHUB_WORKSPACE/.github/scripts/ensure-release-draft.py" --publish false
+          fi
 
   publish-container:
     if: github.repository == 'nanashiwang/CLIProxyAPI'

@@ -4,16 +4,23 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
-	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"golang.org/x/net/context"
 )
 
 type pinnedAuthContextKey struct{}
 
+type excludedAuthIDsContextKey struct{}
+
 type selectedAuthCallbackContextKey struct{}
+
+type finalizedResponseFormatCallbackContextKey struct{}
+
+type originalRequestContextKey struct{}
 
 type preparedModelRouteContextKey struct{}
 
@@ -34,6 +41,51 @@ func withUsageClientTransport(ctx context.Context, stream bool) context.Context 
 	return coreusage.WithClientTransport(ctx, transport)
 }
 
+type nestedExecutionTrackerKey struct{}
+
+type nestedExecutionTracker struct {
+	mu     sync.Mutex
+	called bool
+}
+
+func (t *nestedExecutionTracker) mark() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.called = true
+	t.mu.Unlock()
+}
+
+func (t *nestedExecutionTracker) hasNestedExecution() bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.called
+}
+
+func withNestedExecutionTracker(ctx context.Context) (context.Context, *nestedExecutionTracker) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if existing, ok := ctx.Value(nestedExecutionTrackerKey{}).(*nestedExecutionTracker); ok && existing != nil {
+		return ctx, existing
+	}
+	tracker := &nestedExecutionTracker{}
+	return context.WithValue(ctx, nestedExecutionTrackerKey{}, tracker), tracker
+}
+
+func markNestedExecution(ctx context.Context) {
+	if ctx == nil {
+		return
+	}
+	if tracker, ok := ctx.Value(nestedExecutionTrackerKey{}).(*nestedExecutionTracker); ok && tracker != nil {
+		tracker.mark()
+	}
+}
+
 // WithPinnedAuthID returns a child context that requests execution on a specific auth ID.
 func WithPinnedAuthID(ctx context.Context, authID string) context.Context {
 	authID = strings.TrimSpace(authID)
@@ -46,6 +98,33 @@ func WithPinnedAuthID(ctx context.Context, authID string) context.Context {
 	return context.WithValue(ctx, pinnedAuthContextKey{}, authID)
 }
 
+// WithExcludedAuthIDs returns a child context that excludes specific auth IDs from selection.
+func WithExcludedAuthIDs(ctx context.Context, authIDs []string) context.Context {
+	if len(authIDs) == 0 {
+		return ctx
+	}
+	filtered := make([]string, 0, len(authIDs))
+	seen := make(map[string]struct{}, len(authIDs))
+	for _, authID := range authIDs {
+		trimmed := strings.TrimSpace(authID)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		filtered = append(filtered, trimmed)
+	}
+	if len(filtered) == 0 {
+		return ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, excludedAuthIDsContextKey{}, filtered)
+}
+
 // WithSelectedAuthIDCallback returns a child context that receives the selected auth ID.
 func WithSelectedAuthIDCallback(ctx context.Context, callback func(string)) context.Context {
 	if callback == nil {
@@ -55,6 +134,28 @@ func WithSelectedAuthIDCallback(ctx context.Context, callback func(string)) cont
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, selectedAuthCallbackContextKey{}, callback)
+}
+
+// WithFinalizedResponseFormatCallback returns a child context that receives the effective response_format after payload rules.
+func WithFinalizedResponseFormatCallback(ctx context.Context, callback func(string)) context.Context {
+	if callback == nil {
+		return ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, finalizedResponseFormatCallbackContextKey{}, callback)
+}
+
+// WithOriginalRequest returns a child context that preserves the un-defaulted original request bytes for payload rules.
+func WithOriginalRequest(ctx context.Context, rawJSON []byte) context.Context {
+	if len(rawJSON) == 0 {
+		return ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, originalRequestContextKey{}, cloneBytes(rawJSON))
 }
 
 // PrepareStreamModelRoute resolves a stream route once and stores it on the returned context for execution.
@@ -78,6 +179,24 @@ func preparedModelRouteFromContext(ctx context.Context, skipRouterPluginID strin
 	}
 	decision, ok := ctx.Value(preparedModelRouteContextKey{}).(modelRouteDecision)
 	return decision, ok
+}
+
+// PreparedStreamPluginExecutor returns the executor plugin ID if the prepared route targets a plugin executor.
+func PreparedStreamPluginExecutor(ctx context.Context) string {
+	decision, ok := preparedModelRouteFromContext(ctx, "")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(decision.ExecutorPluginID)
+}
+
+// PreparedStreamProviderRoute returns the provider and target model if the prepared route targets a provider route override.
+func PreparedStreamProviderRoute(ctx context.Context) (string, string) {
+	decision, ok := preparedModelRouteFromContext(ctx, "")
+	if !ok {
+		return "", ""
+	}
+	return strings.TrimSpace(decision.Provider), strings.TrimSpace(decision.Model)
 }
 
 // WithExecutionSessionID returns a child context tagged with a long-lived execution session ID.
@@ -142,6 +261,18 @@ func pinnedAuthIDFromContext(ctx context.Context) string {
 	}
 }
 
+func excludedAuthIDsFromContext(ctx context.Context) []string {
+	if ctx == nil {
+		return nil
+	}
+	raw := ctx.Value(excludedAuthIDsContextKey{})
+	ids, ok := raw.([]string)
+	if !ok || len(ids) == 0 {
+		return nil
+	}
+	return append([]string(nil), ids...)
+}
+
 func selectedAuthIDCallbackFromContext(ctx context.Context) func(string) {
 	if ctx == nil {
 		return nil
@@ -151,6 +282,28 @@ func selectedAuthIDCallbackFromContext(ctx context.Context) func(string) {
 		return callback
 	}
 	return nil
+}
+
+func finalizedResponseFormatCallbackFromContext(ctx context.Context) func(string) {
+	if ctx == nil {
+		return nil
+	}
+	raw := ctx.Value(finalizedResponseFormatCallbackContextKey{})
+	if callback, ok := raw.(func(string)); ok && callback != nil {
+		return callback
+	}
+	return nil
+}
+
+func originalRequestFromContext(ctx context.Context) []byte {
+	if ctx == nil {
+		return nil
+	}
+	raw, ok := ctx.Value(originalRequestContextKey{}).([]byte)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	return cloneBytes(raw)
 }
 
 func executionSessionIDFromContext(ctx context.Context) string {

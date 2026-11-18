@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 // A provider-reported reset deadline is a prediction made at the moment of failure, so
@@ -106,16 +106,16 @@ func TestApplyAuthFailureState_ShortResetIsUnchanged(t *testing.T) {
 	}
 }
 
-// The local implementation honors explicit sub-second provider delays.
-func TestApplyAuthFailureState_SubSecondResetRetainsLocalDeadline(t *testing.T) {
+// v8 enforces the retry floor before the personal upper bound to avoid retry loops.
+func TestApplyAuthFailureState_SubSecondResetUsesUpstreamFloorWithinCeiling(t *testing.T) {
 	now := time.Date(2026, 9, 8, 3, 0, 0, 0, time.UTC)
 	tiny := time.Nanosecond
 	auth := &Auth{ID: "codex-floor", Provider: "codex"}
 
 	applyAuthFailureState(auth, &Error{HTTPStatus: http.StatusTooManyRequests, Message: "usage_limit_reached"}, &tiny, now, false)
 
-	if want := now.Add(tiny); !auth.Quota.NextRecoverAt.Equal(want) {
-		t.Fatalf("Quota.NextRecoverAt = %v, want explicit delay %v", auth.Quota.NextRecoverAt, want)
+	if want := now.Add(minQuotaCooldownFloor); !auth.Quota.NextRecoverAt.Equal(want) {
+		t.Fatalf("Quota.NextRecoverAt = %v, want retry floor %v", auth.Quota.NextRecoverAt, want)
 	}
 }
 

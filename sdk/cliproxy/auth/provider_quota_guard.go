@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 )
 
 // ProviderQuota reuses normalized windows, but never Codex's upstream-denial state.

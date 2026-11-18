@@ -7,7 +7,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 // RefreshAuthFiles triggers active refresh for a single auth file or all auth files.
@@ -25,7 +26,7 @@ func (h *Handler) RefreshAuthFiles(c *gin.Context) {
 	}
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		if errBind := c.ShouldBindJSON(&req); errBind != nil && !errors.Is(errBind, io.EOF) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body: " + errBind.Error()})
+			c.JSON(clienterror.HTTPStatusFromErrorOr(errBind, http.StatusBadRequest), gin.H{"error": "invalid request body: " + errBind.Error()})
 			return
 		}
 	}
@@ -66,6 +67,21 @@ func (h *Handler) RefreshAuthFiles(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": coreauth.SanitizeUpstreamErrorSummary(err.Error()),
+		})
+		return
+	}
+
+	if c.GetBool(ConfigV8ContextKey) {
+		h.mu.Lock()
+		host := h.pluginHost
+		h.mu.Unlock()
+		quota := authFileQuotaContext{v8: true}
+		if host != nil {
+			quota.pluginIDs = host.QuotaProviderPluginIDs(ctx)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"ok":   true,
+			"auth": h.buildAuthFileEntry(refreshed, quota),
 		})
 		return
 	}

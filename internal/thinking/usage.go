@@ -3,27 +3,27 @@ package thinking
 import (
 	"strings"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // usageReasoningEffort observes the final payload without changing the thinking
 // conversion pipeline. "default" means no explicit setting, not a guessed level.
 func usageReasoningEffort(body []byte, provider string) string {
-	if !gjson.ValidBytes(body) || !gjson.ParseBytes(body).IsObject() {
+	if !ojson.ValidBytes(body) || !ojson.ParseBytes(body).IsObject() {
 		return ""
 	}
 	provider = strings.ToLower(strings.TrimSpace(provider))
-	config := extractThinkingConfig(body, provider)
+	config := extractThinkingConfigForUsage(body, provider)
 	if !hasThinkingConfig(config) {
 		switch provider {
 		case "openai", "openai-response", "codex", "xai":
-			config = extractCodexConfig(body)
+			config = extractCodexUsageConfig(body)
 			if !hasThinkingConfig(config) {
 				config = extractOpenAIConfig(body)
 			}
 		case "kimi":
-			if !gjson.GetBytes(body, "thinking").Exists() && !gjson.GetBytes(body, "reasoning_effort").Exists() {
-				config = extractCodexConfig(body)
+			if !ojson.GetBytes(body, "thinking").Exists() && !ojson.GetBytes(body, "reasoning_effort").Exists() {
+				config = extractCodexUsageConfig(body)
 			}
 		}
 	}
@@ -35,17 +35,17 @@ func usageReasoningEffort(body []byte, provider string) string {
 	switch provider {
 	case "claude":
 		paths = []string{"thinking", "output_config.effort"}
-		effort := gjson.GetBytes(body, "output_config.effort")
-		if effort.Type == gjson.String && strings.TrimSpace(effort.String()) != "" {
+		effort := ojson.GetBytes(body, "output_config.effort")
+		if effort.Type == ojson.String && strings.TrimSpace(effort.String()) != "" {
 			return strings.ToLower(strings.TrimSpace(effort.String()))
 		}
-		mode := gjson.GetBytes(body, "thinking.type").String()
+		mode := ojson.GetBytes(body, "thinking.type").String()
 		if (mode == "adaptive" || mode == "auto") && !effort.Exists() {
 			return "auto"
 		}
 	case "kimi":
 		paths = []string{"thinking", "reasoning", "reasoning_effort"}
-		if gjson.GetBytes(body, "thinking.type").String() == "enabled" && !gjson.GetBytes(body, "thinking.effort").Exists() {
+		if ojson.GetBytes(body, "thinking.type").String() == "enabled" && !ojson.GetBytes(body, "thinking.effort").Exists() {
 			return "enabled"
 		}
 	case "openai", "openai-response", "codex", "xai":
@@ -60,7 +60,7 @@ func usageReasoningEffort(body []byte, provider string) string {
 		return ""
 	}
 	for _, path := range paths {
-		if gjson.GetBytes(body, path).Exists() {
+		if ojson.GetBytes(body, path).Exists() {
 			return ""
 		}
 	}

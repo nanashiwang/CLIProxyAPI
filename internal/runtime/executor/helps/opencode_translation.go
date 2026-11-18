@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
-	codexclaude "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/codex/claude"
-	codexgemini "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/codex/gemini"
-	codexinteractions "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/codex/interactions"
-	codexopenai "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/codex/openai/chat-completions"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	codexclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/codex/claude"
+	codexgemini "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/codex/gemini"
+	codexinteractions "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/codex/interactions"
+	codexopenai "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/codex/openai/chat-completions"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -26,22 +26,32 @@ func TranslateOpenCodeRequest(from sdktranslator.Format, model string, payload [
 // TranslateOpenCodeRequestWithContext performs the native Responses conversion
 // while preserving the shared summary and plugin-normalization pipeline.
 func TranslateOpenCodeRequestWithContext(ctx context.Context, from sdktranslator.Format, model string, payload []byte, stream bool) []byte {
+	translated, _ := TranslateOpenCodeRequestChecked(ctx, from, model, payload, stream)
+	return translated
+}
+
+// TranslateOpenCodeRequestChecked preserves translation errors for executor requests.
+func TranslateOpenCodeRequestChecked(ctx context.Context, from sdktranslator.Format, model string, payload []byte, stream bool) ([]byte, error) {
+	var err error
 	var translated []byte
 	switch from {
 	case sdktranslator.FormatOpenAI:
-		translated = codexopenai.ConvertOpenAIRequestToCodex(model, payload, stream)
+		translated, err = codexopenai.ConvertOpenAIRequestToCodex(model, payload, stream)
 	case sdktranslator.FormatClaude:
-		translated = codexclaude.ConvertClaudeRequestToCodex(model, payload, stream)
+		translated, err = codexclaude.ConvertClaudeRequestToCodex(model, payload, stream)
 	case sdktranslator.FormatGemini:
-		translated = codexgemini.ConvertGeminiRequestToCodex(model, payload, stream)
+		translated, err = codexgemini.ConvertGeminiRequestToCodex(model, payload, stream)
 	case sdktranslator.FormatInteractions:
-		translated = codexinteractions.ConvertInteractionsRequestToCodex(model, payload, stream)
+		translated, err = codexinteractions.ConvertInteractionsRequestToCodex(model, payload, stream)
 	case sdktranslator.FormatOpenAIResponse, sdktranslator.FormatCodex:
 		translated = payload
 	default:
 		translated = sdktranslator.TranslateRequest(from, sdktranslator.FormatOpenAIResponse, model, payload, stream)
 	}
 
+	if err != nil {
+		return nil, err
+	}
 	translated = restoreOpenCodeResponsesGenerationFields(payload, translated)
 	// Native OpenCode conversion bypasses Registry.TranslateRequest, so apply
 	// the same summary-before-normalizer ordering explicitly.
@@ -49,7 +59,7 @@ func TranslateOpenCodeRequestWithContext(ctx context.Context, from sdktranslator
 	translated = thinking.ApplySummaryConfigForModel(translated, sdktranslator.FormatCodex.String(), model, summaryConfig)
 	translated = sdktranslator.NormalizeRequest(ctx, from, sdktranslator.FormatCodex, model, translated, stream)
 	translated = SetBoolIfDifferent(translated, "stream", stream)
-	return SetStringIfDifferent(translated, "model", model)
+	return SetStringIfDifferent(translated, "model", model), nil
 }
 
 func restoreOpenCodeResponsesGenerationFields(source, translated []byte) []byte {

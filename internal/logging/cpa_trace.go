@@ -2,12 +2,14 @@ package logging
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/httpwire"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -44,7 +46,8 @@ func (s *cpaTraceState) set(traceID string) (string, uint64) {
 			s.executionID = id.String()
 		} else {
 			// Tracing must not panic or fail the model request if entropy is unavailable.
-			s.executionID = fmt.Sprintf("%d-%s", time.Now().UnixNano(), GenerateRequestID())
+			fallbackID, _ := GenerateRequestID()
+			s.executionID = fmt.Sprintf("%d-%s", time.Now().UnixNano(), fallbackID)
 		}
 	}
 	s.selection++
@@ -99,6 +102,7 @@ func GinCPATraceIDCallback(c *gin.Context) func(string) {
 			if validCorrelationID(requestID) && validCorrelationID(authIndex) {
 				log.WithFields(log.Fields{
 					"request_id":       requestID,
+					"correlation_id":   requestID,
 					"cpa_execution_id": executionID,
 					"selection_seq":    selection,
 					"auth_index":       authIndex,
@@ -143,6 +147,13 @@ type cpaTraceResponseWriter struct {
 	state *cpaTraceState
 }
 
+func (w *cpaTraceResponseWriter) Unwrap() http.ResponseWriter {
+	if w == nil {
+		return nil
+	}
+	return w.ResponseWriter
+}
+
 func (w *cpaTraceResponseWriter) WriteHeader(statusCode int) {
 	w.applyTraceHeader()
 	w.ResponseWriter.WriteHeader(statusCode)
@@ -164,8 +175,13 @@ func (w *cpaTraceResponseWriter) WriteString(data string) (int, error) {
 }
 
 func (w *cpaTraceResponseWriter) Flush() {
+	_ = w.FlushError()
+}
+
+// FlushError preserves trace headers while forwarding transport errors.
+func (w *cpaTraceResponseWriter) FlushError() error {
 	w.applyTraceHeader()
-	w.ResponseWriter.Flush()
+	return httpwire.FlushResponse(w.ResponseWriter)
 }
 
 func (w *cpaTraceResponseWriter) applyTraceHeader() {

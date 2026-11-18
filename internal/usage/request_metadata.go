@@ -1,6 +1,6 @@
 package usage
 
-import coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+import coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 
 // normalizeRequestMetadata also protects JSONL reloads and imported snapshots.
 // Missing historical fields are never inferred from a provider or endpoint.

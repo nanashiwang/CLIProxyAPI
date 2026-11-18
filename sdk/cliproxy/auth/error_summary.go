@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 	"regexp"
 	"strings"
 )
@@ -38,8 +38,8 @@ func ExtractUpstreamErrorSummary(raw string) string {
 	if idx := strings.Index(raw, ": {"); idx != -1 && idx < 50 {
 		jsonPart = strings.TrimSpace(raw[idx+2:])
 	}
-	if gjson.Valid(jsonPart) {
-		parsed := gjson.Parse(jsonPart)
+	if ojson.Valid(jsonPart) {
+		parsed := ojson.Parse(jsonPart)
 		var code, message string
 		if errNode := parsed.Get("error"); errNode.Exists() {
 			if errNode.IsObject() {
@@ -48,7 +48,7 @@ func ExtractUpstreamErrorSummary(raw string) string {
 					code = strings.TrimSpace(errNode.Get("type").String())
 				}
 				message = strings.TrimSpace(errNode.Get("message").String())
-			} else if errNode.Type == gjson.String {
+			} else if errNode.Type == ojson.String {
 				message = strings.TrimSpace(errNode.String())
 			}
 		}

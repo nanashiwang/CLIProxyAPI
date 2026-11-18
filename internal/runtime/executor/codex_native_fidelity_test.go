@@ -9,11 +9,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gorilla/websocket"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
-	"github.com/tidwall/gjson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
 func TestCodexNativeStreamFidelity(t *testing.T) {
@@ -91,10 +91,10 @@ func testCodexNativeStreamFidelity(t *testing.T, source sdktranslator.Format) {
 						}
 						for _, line := range bytes.Split(chunk.Payload, []byte("\n")) {
 							data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-							if gjson.GetBytes(data, "type").String() == "codex.response.metadata" {
+							if ojson.GetBytes(data, "type").String() == "codex.response.metadata" {
 								metadataEvents = append(metadataEvents, string(data))
 							}
-							if gjson.GetBytes(data, "type").String() == "response.completed" {
+							if ojson.GetBytes(data, "type").String() == "response.completed" {
 								terminal = bytes.Clone(data)
 							}
 						}
@@ -111,21 +111,24 @@ func testCodexNativeStreamFidelity(t *testing.T, source sdktranslator.Format) {
 							t.Errorf("upstream Lite header = %q, want %q", got, wantLiteHeader)
 						}
 						alias := headerValueCaseInsensitive(upstreamHeaders, "session_id")
+						t.Logf("upstream session alias: %q", alias)
 						if (alias == "") != native {
 							t.Errorf("session alias = %q, native = %t", alias, native)
 						}
 					}
+					t.Logf("downstream metadata: %q", metadataEvents)
 					if len(metadataEvents) != 1 || metadataEvents[0] != metadata {
 						t.Errorf("metadata event changed or duplicated: %q", metadataEvents)
 					}
+					t.Logf("upstream request: %s; downstream completion: %s", body, terminal)
 					if native {
-						if gjson.GetBytes(body, "instructions").Exists() {
+						if ojson.GetBytes(body, "instructions").Exists() {
 							t.Errorf("native request gained instructions: %s", body)
 						}
 						if string(terminal) != completed {
 							t.Errorf("native completion changed: %s", terminal)
 						}
-					} else if gjson.GetBytes(body, "instructions").Type != gjson.String || gjson.GetBytes(terminal, "response.output.0.id").String() != "msg_1" {
+					} else if ojson.GetBytes(body, "instructions").Type != ojson.String || ojson.GetBytes(terminal, "response.output.0.id").String() != "msg_1" {
 						t.Errorf("compatibility normalization/backfill lost: %s; %s", body, terminal)
 					}
 				})
@@ -188,7 +191,7 @@ func TestCodexNativeHTTPStreamKeepsContinuationProtectionAndTurnState(t *testing
 		}
 		for _, line := range bytes.Split(chunk.Payload, []byte("\n")) {
 			data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-			if gjson.GetBytes(data, "type").String() == "response.completed" {
+			if ojson.GetBytes(data, "type").String() == "response.completed" {
 				terminal = bytes.Clone(data)
 			}
 		}
@@ -196,16 +199,16 @@ func TestCodexNativeHTTPStreamKeepsContinuationProtectionAndTurnState(t *testing
 
 	upstreamBody := <-capturedBody
 	upstreamHeaders := <-capturedHeaders
-	if gjson.GetBytes(upstreamBody, "previous_response_id").Exists() {
+	if ojson.GetBytes(upstreamBody, "previous_response_id").Exists() {
 		t.Fatalf("HTTP continuation guard lost; previous_response_id leaked upstream: %s", upstreamBody)
 	}
-	if gjson.GetBytes(upstreamBody, "instructions").Exists() {
+	if ojson.GetBytes(upstreamBody, "instructions").Exists() {
 		t.Fatalf("native request gained instructions: %s", upstreamBody)
 	}
 	if got := upstreamHeaders.Get("X-Codex-Turn-State"); got != "opaque-state" {
 		t.Fatalf("X-Codex-Turn-State = %q, want opaque-state", got)
 	}
-	if got := gjson.GetBytes(terminal, "response.output").Raw; got != "[]" {
+	if got := ojson.GetBytes(terminal, "response.output").Raw; got != "[]" {
 		t.Fatalf("native completion output changed: %s", terminal)
 	}
 }

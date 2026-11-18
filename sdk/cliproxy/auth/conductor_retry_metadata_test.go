@@ -2,9 +2,9 @@ package auth
 
 import (
 	"context"
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	core "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"testing"
 	"time"
 )
@@ -84,7 +84,7 @@ func TestNoMoreRetrySkipsStreamAliasPool(t *testing.T) {
 			return &core.StreamResult{Chunks: chunks}, nil
 		}
 		a := &Auth{ID: "stream-retry-meta", Provider: "codex", Status: StatusActive}
-		_, err := m.executeStreamWithModelPool(context.Background(), exec, a, "codex", core.Request{Model: "alias"}, core.Options{}, "alias", "", []string{"m1", "m2"}, true, OAuthModelAliasResult{}, nil, true, false, nil)
+		_, err := m.executeStreamWithModelPool(context.Background(), exec, a, "codex", core.Request{Model: "alias"}, core.Options{}, "alias", "", []string{"m1", "m2"}, true, OAuthModelAliasResult{}, nil, true, false)
 		if err == nil || calls != 1 || !sameAccountRetryBlocked(err) {
 			t.Fatalf("bootstrap=%v calls=%d err=%v", bootstrap, calls, err)
 		}

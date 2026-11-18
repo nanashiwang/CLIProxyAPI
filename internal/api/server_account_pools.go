@@ -2,8 +2,8 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/clienterror"
-	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"net/http"
 	"strconv"
 	"strings"

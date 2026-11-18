@@ -1,6 +1,6 @@
 package usage
 
-import coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+import coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 
 type retainedDiagnosticTrace struct {
 	refs     int

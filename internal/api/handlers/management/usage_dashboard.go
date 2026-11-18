@@ -9,7 +9,7 @@ import (
 	_ "time/tzdata" // Keep IANA queries available in minimal release containers.
 
 	"github.com/gin-gonic/gin"
-	internalusage "github.com/router-for-me/CLIProxyAPI/v7/internal/usage"
+	internalusage "github.com/router-for-me/CLIProxyAPI/v8/internal/usage"
 )
 
 // GetUsageDashboard applies one filter contract to summaries, trends and diagnostics.

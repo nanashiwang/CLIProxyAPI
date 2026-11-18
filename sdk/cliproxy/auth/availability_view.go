@@ -10,7 +10,7 @@ func isPersistentAuthFailure(auth *Auth, now time.Time) bool {
 		return false
 	}
 	// Preserve the local terminal 401 rule, including pending refresh retries.
-	if hasUnauthorizedAuthFailure(auth) {
+	if hasUnrecoveredUnauthorizedAuthFailure(auth) {
 		return true
 	}
 	// An OAuth credential whose access token is expired cannot be used to serve requests.

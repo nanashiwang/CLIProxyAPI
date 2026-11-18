@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
 func TestResponseTimingPreludeOutputAndUpstreamClock(t *testing.T) {
@@ -96,5 +98,32 @@ func TestUsageFailureRetainsOnlyClassifiedCauseForDiagnostics(t *testing.T) {
 	fail := failFromErrors(fmt.Errorf("private: %w", &net.DNSError{Err: "private-details", Name: "private-host"}))
 	if fail.Category != "dns" {
 		t.Fatal("failure publication lost wrapped cause")
+	}
+}
+
+func TestResponsePacketTimingDoesNotDeclareTokenTTFT(t *testing.T) {
+	ctx := usage.StartDiagnosticAttempt(usage.WithExecutionDiagnostics(context.Background()), "codex", "account", "model")
+	r := NewUsageReporter(ctx, "codex", "model", nil)
+	r.StartResponseTTFT()
+	r.MarkFirstResponsePacket()
+	r.MarkFirstResponsePacket()
+	if r.responseTiming().FirstByteMs == nil || !r.IsFirstPacketSet() || r.IsTTFTSet() {
+		t.Fatal("wire packet must record response timing without declaring a token")
+	}
+	r.ObserveTokenEvent(true)
+	if !r.IsTTFTSet() {
+		t.Fatal("token event did not set TTFT")
+	}
+	diagnostics := usage.CaptureExecutionDiagnostics(ctx, usage.Record{})
+	count := 0
+	if diagnostics != nil {
+		for _, event := range diagnostics.Events {
+			if event.Kind == "first_byte" {
+				count++
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("first-byte diagnostic count = %d, want one wire observation", count)
 	}
 }

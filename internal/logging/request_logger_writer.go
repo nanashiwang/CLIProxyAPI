@@ -7,17 +7,21 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
+	"github.com/MoeForge/moego/regexp"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	log "github.com/sirupsen/logrus"
 )
 
-var requestLogID atomic.Uint64
+var (
+	requestLogID                        atomic.Uint64
+	sanitizeFilenameInvalidCharsPattern = regexp.MustCompile(`[<>:"|?*\s]`)
+	sanitizeFilenameMultiHyphenPattern  = regexp.MustCompile(`-+`)
+)
 
 // LogRequest logs a complete non-streaming request/response cycle to a file.
 //
@@ -111,10 +115,9 @@ func (l *FileRequestLogger) logRequestWithSources(url, method string, requestHea
 
 	// Generate filename with request ID
 	filename := l.generateFilename(url, requestID)
-	if force && !l.enabled {
+	if (force && !l.enabled) || (statusCode >= 400 && statusCode != 499) {
 		filename = l.generateErrorFilename(url, requestID)
 	}
-	filePath := filepath.Join(l.logsDir, filename)
 
 	requestBodyPath, errTemp := l.writeRequestBodyTempFile(body)
 	if errTemp != nil {
@@ -134,7 +137,7 @@ func (l *FileRequestLogger) logRequestWithSources(url, method string, requestHea
 		responseToWrite = response
 	}
 
-	logFile, errOpen := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	logFile, _, errOpen := createUniqueLogFile(l.logsDir, filename)
 	if errOpen != nil {
 		return fmt.Errorf("failed to create log file: %w", errOpen)
 	}
@@ -213,7 +216,6 @@ func (l *FileRequestLogger) LogStreamingRequest(url, method string, headers map[
 
 	// Generate filename with request ID
 	filename := l.generateFilename(url, requestID)
-	filePath := filepath.Join(l.logsDir, filename)
 
 	requestHeaders := make(map[string][]string, len(headers))
 	for key, values := range headers {
@@ -236,7 +238,8 @@ func (l *FileRequestLogger) LogStreamingRequest(url, method string, headers map[
 
 	// Create streaming writer
 	writer := &FileStreamingLogWriter{
-		logFilePath:      filePath,
+		logsDir:          l.logsDir,
+		logFilename:      filename,
 		url:              url,
 		method:           method,
 		timestamp:        time.Now(),
@@ -301,7 +304,7 @@ func (l *FileRequestLogger) generateFilename(url string, requestID ...string) st
 	// Use request ID if provided, otherwise use sequential ID
 	var idPart string
 	if len(requestID) > 0 && requestID[0] != "" {
-		idPart = requestID[0]
+		idPart = ShortRequestID(requestID[0])
 	} else {
 		id := requestLogID.Add(1)
 		idPart = fmt.Sprintf("%d", id)
@@ -370,8 +373,12 @@ func (l *FileRequestLogger) sanitizeForFilename(path string) string {
 	sanitized = strings.ReplaceAll(sanitized, ":", "-")
 
 	// Replace other problematic characters with hyphens
-	reg := regexp.MustCompile(`[<>:"|?*\s]`)
-	sanitized = reg.ReplaceAllString(sanitized, "-")
+	sanitized = sanitizeFilenameInvalidCharsPattern.ReplaceAllString(sanitized, "-")
+
+	// Never let a parent-directory sequence survive.
+	for strings.Contains(sanitized, "..") {
+		sanitized = strings.ReplaceAll(sanitized, "..", "-")
+	}
 
 	// Never let a parent-directory sequence survive.
 	for strings.Contains(sanitized, "..") {
@@ -379,8 +386,7 @@ func (l *FileRequestLogger) sanitizeForFilename(path string) string {
 	}
 
 	// Remove multiple consecutive hyphens
-	reg = regexp.MustCompile(`-+`)
-	sanitized = reg.ReplaceAllString(sanitized, "-")
+	sanitized = sanitizeFilenameMultiHyphenPattern.ReplaceAllString(sanitized, "-")
 
 	// Remove leading/trailing hyphens and dots
 	sanitized = strings.Trim(sanitized, "-.")

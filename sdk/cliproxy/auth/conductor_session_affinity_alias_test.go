@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
 func TestManagerSessionAffinityAliasCooldownPreservesSelection(t *testing.T) {
@@ -20,7 +20,7 @@ func TestManagerSessionAffinityAliasCooldownPreservesSelection(t *testing.T) {
 		"weighted-round-robin": func() Selector { return &WeightedRoundRobinSelector{} },
 		"fill-first":           func() Selector { return &FillFirstSelector{} },
 	} {
-		for _, mode := range []string{"no-session", "explicit-session"} {
+		for _, mode := range []string{"no-session", "explicit-session", "lcp"} {
 			for _, path := range []string{"select", "execute", "stream"} {
 				t.Run(strategy+"/"+mode+"/"+path, func(t *testing.T) {
 					ctx := context.Background()
@@ -58,6 +58,9 @@ func TestManagerSessionAffinityAliasCooldownPreservesSelection(t *testing.T) {
 					var attempts []string
 					execute := func(_ context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 						attempts = append(attempts, auth.ID)
+						if mode == "lcp" && opts.Metadata[cliproxyexecutor.LCPAffinitySessionIDMetadataKey] == nil {
+							t.Error("expected executor to receive the LCP session ID")
+						}
 						if req.Model != targetModel {
 							t.Errorf("upstream model = %s, want %s", req.Model, targetModel)
 						}
@@ -121,6 +124,9 @@ func TestManagerSessionAffinityAliasCooldownPreservesSelection(t *testing.T) {
 						gotID, errPick := run(opts)
 						if errPick != nil || gotID != wantID {
 							t.Fatalf("%s: auth=%q error=%v, want %s; upstream attempts=%v", label, gotID, errPick, wantID, attempts)
+						}
+						if mode == "lcp" && path == "select" && opts.Metadata[cliproxyexecutor.LCPAffinitySessionIDMetadataKey] == nil {
+							t.Fatal("expected LCP matching path to publish a session ID")
 						}
 					}
 					assertPick("cold selection ignores old alias cooldown", "stable", highID)

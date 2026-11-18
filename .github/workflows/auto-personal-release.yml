@@ -59,6 +59,8 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --force --tags origin
+          # Source tags are not transferred by pushing the merged personal branch.
+          git fetch --force --tags https://github.com/router-for-me/CLIProxyAPI.git
 
           existing_tag="$({
             git tag --points-at "${GITHUB_SHA}" |
@@ -106,8 +108,9 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "Release already exists: ${TAG}"
+          published="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '(.isDraft | not)' 2>/dev/null || true)"
+          if [[ "$published" == true ]]; then
+            echo "Published release already exists: ${TAG}"
             exit 0
           fi
           gh workflow run release.yaml \

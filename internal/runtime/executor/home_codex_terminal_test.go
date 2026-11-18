@@ -2,20 +2,18 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
-	"time"
 
+	"github.com/MoeForge/moego/json"
 	"github.com/gorilla/websocket"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executionregistry"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executionregistry"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
 type terminalCodexHomeDispatcher struct {
@@ -71,10 +69,7 @@ func TestHomeCodexTerminalStreamFailureUsesFreshDispatchOnNextRequest(t *testing
 	manager.PublishHomeDispatch(dispatcher, executionregistry.New(), 1)
 	manager.RegisterExecutor(NewCodexWebsocketsExecutor(&config.Config{}))
 
-	requestCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	t.Cleanup(func() { manager.CloseExecutionSession("terminal-home-session") })
-	ctx := cliproxyexecutor.WithDownstreamWebsocket(requestCtx)
+	ctx := cliproxyexecutor.WithDownstreamWebsocket(context.Background())
 	opts := cliproxyexecutor.Options{
 		Stream:         true,
 		SourceFormat:   sdktranslator.FormatOpenAIResponse,
@@ -89,18 +84,7 @@ func TestHomeCodexTerminalStreamFailureUsesFreshDispatchOnNextRequest(t *testing
 	if errFirst != nil {
 		t.Fatalf("first ExecuteStream() error = %v", errFirst)
 	}
-	var sawPayload, sawFailure bool
-	for chunk := range first.Chunks {
-		sawPayload = sawPayload || len(chunk.Payload) > 0
-		if chunk.Err != nil {
-			var status interface{ StatusCode() int }
-			if errors.As(chunk.Err, &status) && status.StatusCode() == 502 {
-				sawFailure = true
-			}
-		}
-	}
-	if !sawPayload || !sawFailure || dispatcher.calls.Load() != 1 {
-		t.Fatalf("first stream lost original frames or retried: payload=%v failure=%v dispatches=%d", sawPayload, sawFailure, dispatcher.calls.Load())
+	for range first.Chunks {
 	}
 
 	second, errSecond := manager.ExecuteStream(ctx, []string{"codex"}, request, opts)

@@ -12,12 +12,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	runtimeexecutor "github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
-	access "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
-	auth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	runtimeexecutor "github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
+	access "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	auth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/tidwall/gjson"
 )
 
@@ -82,6 +82,12 @@ func testResponsesInterrupt(t *testing.T, rejected bool) {
 		}
 		write(`{"type":"response.created","response":{"id":"r2"}}`)
 		write(`{"type":"response.completed","response":{"id":"r2","output":[],"usage":{"input_tokens":2,"output_tokens":1}}}`)
+		p = read()
+		if gjson.GetBytes(p, "type").String() != "response.create" || gjson.GetBytes(p, "previous_response_id").String() != "r2" {
+			t.Errorf("late interrupt reached upstream or continuation lost: %s", p)
+		}
+		write(`{"type":"response.created","response":{"id":"r3"}}`)
+		write(`{"type":"response.completed","response":{"id":"r3","output":[],"usage":{"input_tokens":2,"output_tokens":1}}}`)
 		_, _, _ = c.ReadMessage()
 	}))
 	defer upstream.Close()
@@ -165,7 +171,11 @@ func testResponsesInterrupt(t *testing.T, rejected bool) {
 		steeringPoolRead(t, c, "response.completed")
 		check(0)
 		send(`{"type":"response.interrupt","response_id":"r2","mode":"discard_partial_items"}`)
-		steeringPoolRead(t, c, "error")
+		// A known completed response is an idempotent no-op; the next create
+		// provides a deterministic barrier proving the control was not forwarded.
+		send(fmt.Sprintf(`{"type":"response.create","model":%q,"previous_response_id":"r2","input":[]}`, model))
+		steeringPoolRead(t, c, "response.created")
+		steeringPoolRead(t, c, "response.completed")
 		check(0)
 	}
 	_ = c.Close()

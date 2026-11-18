@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"github.com/tidwall/gjson"
 )
 
@@ -28,7 +28,8 @@ func (r *UsageReporter) resetModelObservation() uint64 {
 	defer r.modelMu.Unlock()
 	r.modelGeneration++
 	r.timing = &usage.ResponseTiming{}
-	r.upstreamModel, r.responseModel, r.responseSource = "", "", ""
+	r.upstreamModel, r.responseModel, r.responseSource = r.expectedUpstreamModel, "", ""
+	r.responseModelFinal.Store(false)
 	r.upstreamTransport = ""
 	r.responseRank = 0
 	return r.modelGeneration

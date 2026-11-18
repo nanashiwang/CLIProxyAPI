@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -64,8 +65,12 @@ def build_bundle(tag, management_tag, output_dir, base_tag=None):
 - 本包不含实际运行配置、密钥、token 或数据库，也不会自动更新线上服务。
 - 回滚时恢复上一版二进制及必要的备份；先排空活动流，避免跨版本并行占用同一账号。
 """.encode()
+    module = run("git", "show", f"{tag}:go.mod").decode()
+    go_version = re.search(r"(?m)^go ([0-9]+\.[0-9]+(?:\.[0-9]+)?)$", module)
+    if go_version is None:
+        raise ValueError("Release module has no Go version")
     contents["build-parameters.json"] = json.dumps({
-        "go_version": "1.26.4", "entrypoint": "./cmd/server", "version": tag.removeprefix("v"),
+        "go_version": go_version.group(1), "entrypoint": "./cmd/server", "version": tag.removeprefix("v"),
         "commit": commit, "ldflags": "-s -w -X main.Version=<version> -X main.Commit=<commit> -X main.BuildDate=<UTC>",
         "linux_plugin": "CGO_ENABLED=1; GLIBC 2.17 baseline", "linux_portable": "CGO_ENABLED=0",
         "freebsd_arm64": "CGO_ENABLED=0; no-plugin", "authoritative_recipe": "release-workflow.yaml",

@@ -5,33 +5,41 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/poo"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/poo"
 )
 
-func (h *BaseAPIHandler) pooEnabled() bool {
-	return h != nil && h.Cfg != nil && h.Cfg.PoOParentGateway.Enabled
+func (h *BaseAPIHandler) pooConfig() config.PoOParentGatewayConfig {
+	if cfg := h.CurrentConfig(); cfg != nil {
+		return cfg.PoOParentGateway
+	}
+	return config.PoOParentGatewayConfig{}
 }
 
+func (h *BaseAPIHandler) pooEnabled() bool { return h.pooConfig().Enabled }
+
 func (h *BaseAPIHandler) pooRequired() bool {
-	return h.pooEnabled() && h.Cfg.PoOParentGateway.IsRequired()
+	cfg := h.pooConfig()
+	return cfg.Enabled && cfg.IsRequired()
 }
 
 func (h *BaseAPIHandler) finishPoONonStream(body []byte, headers http.Header) ([]byte, *interfaces.ErrorMessage) {
-	if !h.pooEnabled() {
+	cfg := h.pooConfig()
+	if !cfg.Enabled {
 		poo.TakeRecordID(headers)
 		return body, nil
 	}
 	recordID := poo.TakeRecordID(headers)
 	if recordID == "" {
-		if h.pooRequired() {
+		if cfg.IsRequired() {
 			return nil, pooOutputError(fmt.Errorf("PoO transport was bypassed"))
 		}
 		return body, nil
 	}
-	proof, err := poo.AwaitResult(recordID, h.Cfg.PoOParentGateway.RequestTimeout())
+	proof, err := poo.AwaitResult(recordID, cfg.RequestTimeout())
 	if err != nil {
-		if h.pooRequired() {
+		if cfg.IsRequired() {
 			return nil, pooOutputError(err)
 		}
 		return body, nil

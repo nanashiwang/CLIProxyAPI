@@ -2,15 +2,19 @@ package handlers
 
 import (
 	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/poo"
-	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/MoeForge/moego/json"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/poo"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	"golang.org/x/net/context"
 )
 
@@ -19,6 +23,57 @@ import (
 // The returned http.Header carries upstream response headers captured before streaming begins.
 func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
 	return h.executeStreamWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, false)
+}
+
+// HasAlternativeExecutionTarget reports whether an alternative credential other
+// than excludedAuthID can serve a replayed request for modelName.
+func (h *BaseAPIHandler) HasAlternativeExecutionTarget(ctx context.Context, handlerType, modelName string, rawJSON []byte, excludedAuthID string) bool {
+	if h == nil || h.AuthManager == nil {
+		return false
+	}
+	originalRequestedModel := modelName
+	execOptions := modelExecutionOptions{
+		AllowSpeechModel: isModelExecutionSpeechProtocol(handlerType),
+	}
+	routeDecision, preparedRoute := preparedModelRouteFromContext(ctx, "")
+	if !preparedRoute {
+		routeDecision = h.applyModelRouter(ctx, handlerType, modelName, rawJSON, true, execOptions)
+	}
+	if routeDecision.ExecutorPluginID != "" {
+		return false
+	}
+	providers, normalizedModel, errMsg := h.providersForExecution(modelName, originalRequestedModel, false, routeDecision, execOptions)
+	if errMsg != nil {
+		return false
+	}
+	providers = adjustExecutionProvidersForEntryProtocol(handlerType, providers)
+	reqMeta := requestExecutionMetadata(ctx)
+	delete(reqMeta, coreexecutor.PinnedAuthMetadataKey)
+	delete(reqMeta, coreexecutor.ExcludedAuthIDsMetadataKey)
+	delete(reqMeta, coreexecutor.ExecutionSessionMetadataKey)
+	delete(reqMeta, coreexecutor.SelectedAuthCallbackMetadataKey)
+	delete(reqMeta, coreexecutor.FinalizedResponseFormatCallbackMetadataKey)
+	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
+	addModelExecutionSourceMetadata(reqMeta, false)
+	setReasoningEffortMetadata(reqMeta, handlerType, normalizedModel, rawJSON)
+	setServiceTierMetadata(reqMeta, rawJSON)
+	setGenerateMetadata(reqMeta, rawJSON)
+	originalRequest := rawJSON
+	if ctxOriginal := originalRequestFromContext(ctx); len(ctxOriginal) > 0 {
+		originalRequest = ctxOriginal
+	}
+	responseProtocol := modelExecutionResponseProtocol(handlerType, handlerType)
+	opts := coreexecutor.Options{
+		Stream:          true,
+		OriginalRequest: originalRequest,
+		SourceFormat:    sdktranslator.FromString(handlerType),
+		ResponseFormat:  sdktranslator.FromString(responseProtocol),
+		Headers:         modelExecutionHeaders(ctx, nil),
+		Query:           modelExecutionQuery(ctx, nil),
+		Metadata:        reqMeta,
+	}
+	ctx = enrichContextWithSessionHierarchy(ctx, opts.Headers, rawJSON, opts.Metadata)
+	return h.AuthManager.HasAlternativeTargetForModel(ctx, providers, normalizedModel, opts, excludedAuthID)
 }
 
 // ExecuteImageStreamWithAuthManager executes a streaming OpenAI-compatible image endpoint request.
@@ -47,29 +102,50 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 		close(errChan)
 		return nil, nil, errChan
 	}
-	req, opts := h.pluginExecutorRequest(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, true, execOptions)
-	lifecycle := h.newRequestLifecycleTracker(ctx, entryProtocol, modelName, originalRequestedModel, true, opts.Metadata, execOptions.SkipInterceptorPluginID)
+	execCtx, nestedTracker := withNestedExecutionTracker(coreusage.WithStream(ctx, true))
+	req, opts := h.pluginExecutorRequest(execCtx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, true, execOptions)
+	lifecycle := h.newRequestLifecycleTracker(execCtx, entryProtocol, modelName, originalRequestedModel, true, opts.Metadata, execOptions.SkipInterceptorPluginID)
 	var interceptErr *interfaces.ErrorMessage
-	req, opts, interceptErr = h.applyRequestInterceptorsBeforeAuth(ctx, entryProtocol, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
+	req, opts, interceptErr = h.applyRequestInterceptorsBeforeAuth(execCtx, entryProtocol, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
 	if interceptErr != nil {
-		lifecycle.completeError(ctx, interceptErr)
+		lifecycle.completeError(execCtx, interceptErr)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- interceptErr
 		close(errChan)
 		return nil, nil, errChan
 	}
-	req, opts, interceptErr = h.applyRequestInterceptorsAfterPluginExecutorRoute(ctx, host, executorPluginID, entryProtocol, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
+	req, opts, interceptErr = h.applyRequestInterceptorsAfterPluginExecutorRoute(execCtx, host, executorPluginID, entryProtocol, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
 	if interceptErr != nil {
-		lifecycle.completeError(ctx, interceptErr)
+		lifecycle.completeError(execCtx, interceptErr)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- interceptErr
 		close(errChan)
 		return nil, nil, errChan
 	}
-	streamResult, errStream := host.ExecutePluginExecutorStream(ctx, executorPluginID, req, opts)
+	execCtx = enrichContextWithSessionHierarchy(execCtx, opts.Headers, req.Payload, opts.Metadata)
+	var reporter *helps.UsageReporter
+	if !execOptions.InternalSource {
+		reporter = helps.NewUsageReporter(execCtx, executorPluginID, modelName, nil)
+		reporter.ApplyPluginExecutorAttribution(executorPluginID, nil)
+		reporter.SetTranslatedReasoningEffort(req.Payload, entryProtocol)
+		reporter.StartResponseTTFT()
+	}
+	var (
+		streamResult *coreexecutor.StreamResult
+		attribution  *pluginapi.UsageAttribution
+		errStream    error
+	)
+	if attrHost, ok := host.(pluginExecutorAttributionHost); ok && attrHost != nil {
+		streamResult, attribution, errStream = attrHost.ExecutePluginExecutorStreamWithAttribution(execCtx, executorPluginID, req, opts)
+	} else {
+		streamResult, errStream = host.ExecutePluginExecutorStream(execCtx, executorPluginID, req, opts)
+	}
 	if errStream != nil {
+		if reporter != nil && !nestedTracker.hasNestedExecution() {
+			reporter.PublishFailure(execCtx, errStream)
+		}
 		errMsg := executionErrorMessage(errStream)
-		lifecycle.completeError(ctx, errMsg)
+		lifecycle.completeError(execCtx, errMsg)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- errMsg
 		close(errChan)
@@ -77,14 +153,20 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 	}
 	if streamResult == nil {
 		errMsg := &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("plugin executor returned nil stream")}
-		lifecycle.completeError(ctx, errMsg)
+		if reporter != nil && !nestedTracker.hasNestedExecution() {
+			reporter.PublishFailure(execCtx, errMsg.Error)
+		}
+		lifecycle.completeError(execCtx, errMsg)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- errMsg
 		close(errChan)
 		return nil, nil, errChan
 	}
+	if reporter != nil && !nestedTracker.hasNestedExecution() {
+		reporter.ApplyPluginExecutorAttribution(executorPluginID, attribution)
+	}
 
-	passthroughHeadersEnabled := PassthroughHeadersEnabled(h.Cfg)
+	passthroughHeadersEnabled := executionPassthroughHeaders(h.CurrentConfig(), execOptions.InternalSource)
 	interceptorHost := h.interceptorHost()
 	streamInterceptorsActive := streamInterceptorsEnabled(interceptorHost)
 	rawStreamHeaders := cloneHeader(streamResult.Headers)
@@ -141,8 +223,20 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 		completionOutcome := pluginapi.RequestCompletionSucceeded
 		completionStatus := http.StatusOK
 		var completionErr error
+		var streamUsage helps.StreamUsageBuffer
 		defer func() {
+			completionOutcome, completionStatus, completionErr = streamDeliveryCompletion(ctx, completionOutcome, completionStatus, completionErr)
 			lifecycle.complete(completionOutcome, completionStatus, completionErr)
+			if reporter != nil && !nestedTracker.hasNestedExecution() {
+				if completionOutcome != pluginapi.RequestCompletionSucceeded && completionErr != nil {
+					if !streamUsage.PublishFailure(execCtx, reporter, completionErr) {
+						reporter.PublishFailure(execCtx, completionErr)
+					}
+				} else {
+					streamUsage.Publish(execCtx, reporter)
+					reporter.EnsurePublished(execCtx)
+				}
+			}
 		}()
 		defer close(dataChan)
 		defer close(errChan)
@@ -167,11 +261,6 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 						select {
 						case errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: errValidate}:
 						case <-done:
-							completionOutcome = pluginapi.RequestCompletionCanceled
-							completionStatus = 0
-							if ctx != nil {
-								completionErr = ctx.Err()
-							}
 						}
 					}
 				}
@@ -185,17 +274,14 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 				select {
 				case errChan <- errMsg:
 				case <-done:
-					completionOutcome = pluginapi.RequestCompletionCanceled
-					completionStatus = 0
-					if ctx != nil {
-						completionErr = ctx.Err()
-					}
 				}
 				return
 			}
 			if len(chunk.Payload) == 0 {
 				continue
 			}
+			observePluginExecutorStreamTTFT(responseProtocol, reporter, chunk.Payload)
+			observePluginExecutorStreamUsage(responseProtocol, chunk.Payload, &streamUsage)
 			payload := cloneBytes(chunk.Payload)
 			if streamInterceptorsActive {
 				chunkReq := pluginapi.StreamChunkInterceptRequest{
@@ -206,11 +292,14 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 					RequestHeaders:  cloneHeader(streamRequestHeaders),
 					ResponseHeaders: cloneHeader(rawStreamHeaders),
 					Body:            payload,
-					HistoryChunks:   cloneByteSlices(historyChunks),
 					ChunkIndex:      chunkIndex,
 					Metadata:        opts.Metadata,
 				}
 				// Re-evaluate each chunk so mid-stream plugin reloads stay correct.
+				// Schema v5+ omits history here.
+				if streamChunkPayloadIncludesHistory(interceptorHost) {
+					chunkReq.HistoryChunks = cloneByteSlices(historyChunks)
+				}
 				// Schema v3+ omits bodies here (one header-init clone only).
 				if streamChunkPayloadIncludesRequestBody(interceptorHost) {
 					chunkReq.OriginalRequest = cloneBytes(streamOriginalRequest)
@@ -237,11 +326,6 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 					select {
 					case errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: errValidate}:
 					case <-done:
-						completionOutcome = pluginapi.RequestCompletionCanceled
-						completionStatus = 0
-						if ctx != nil {
-							completionErr = ctx.Err()
-						}
 					}
 					return
 				}
@@ -252,7 +336,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 			}
 			select {
 			case dataChan <- payload:
-				if streamInterceptorsActive {
+				if streamInterceptorsActive && streamChunkPayloadIncludesHistory(interceptorHost) {
 					historyChunks = appendStreamInterceptorHistory(historyChunks, payload)
 				}
 			case <-done:
@@ -277,6 +361,8 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		ctx = withUsageClientTransport(ctx, true)
 	}
 	originalRequestedModel := modelName
+	// Speech-only models are reachable solely through the speech entry protocol.
+	execOptions.AllowSpeechModel = isModelExecutionSpeechProtocol(entryProtocol)
 	routeDecision, preparedRoute := preparedModelRouteFromContext(ctx, execOptions.SkipRouterPluginID)
 	if !preparedRoute {
 		routeDecision = h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, true, execOptions)
@@ -300,6 +386,10 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	}
 	providers = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
 	reqMeta := requestExecutionMetadata(ctx)
+	if execOptions.Path != "" {
+		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.Path
+	}
+	addCallerScopeMetadata(reqMeta, execOptions.CallerScope)
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	addModelExecutionSourceMetadata(reqMeta, execOptions.InternalSource)
@@ -314,19 +404,27 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		Model:   normalizedModel,
 		Payload: payload,
 	}
+	originalRequest := rawJSON
+	if ctxOriginal := originalRequestFromContext(ctx); len(ctxOriginal) > 0 {
+		originalRequest = ctxOriginal
+	}
 	afterAuthCapture := &requestAfterAuthCapture{}
 	lifecycle := h.newRequestLifecycleTracker(ctx, entryProtocol, normalizedModel, originalRequestedModel, true, reqMeta, execOptions.SkipInterceptorPluginID)
 	opts := coreexecutor.Options{
-		Stream:                      true,
-		Alt:                         alt,
-		OriginalRequest:             rawJSON,
-		SourceFormat:                sdktranslator.FromString(entryProtocol),
-		ResponseFormat:              sdktranslator.FromString(responseProtocol),
-		Headers:                     modelExecutionHeaders(ctx, execOptions.Headers),
-		Query:                       modelExecutionQuery(ctx, execOptions.Query),
-		RequestAfterAuthInterceptor: h.requestAfterAuthInterceptor(afterAuthCapture, lifecycle.requestID(), execOptions.SkipInterceptorPluginID),
+		Stream:                       true,
+		Alt:                          alt,
+		OriginalRequest:              originalRequest,
+		SourceFormat:                 sdktranslator.FromString(entryProtocol),
+		ResponseFormat:               sdktranslator.FromString(responseProtocol),
+		Headers:                      modelExecutionHeaders(ctx, execOptions.Headers),
+		Query:                        modelExecutionQuery(ctx, execOptions.Query),
+		RequestBeforeAuthInterceptor: h.requestBeforeAuthInterceptor(lifecycle.requestID(), execOptions.SkipInterceptorPluginID),
+		RequestAfterAuthInterceptor:  h.requestAfterAuthInterceptor(afterAuthCapture, lifecycle.requestID(), execOptions.SkipInterceptorPluginID),
+		WebSocketResponseObserver:    h.webSocketResponseObserver(lifecycle.requestID(), execOptions.SkipInterceptorPluginID),
+		ProxyURL:                     execOptions.ProxyURL,
 	}
 	opts.Metadata = reqMeta
+	ctx = enrichContextWithSessionHierarchy(ctx, opts.Headers, req.Payload, opts.Metadata)
 	var interceptErr *interfaces.ErrorMessage
 	req, opts, interceptErr = h.applyRequestInterceptorsBeforeAuth(ctx, entryProtocol, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
 	if interceptErr != nil {
@@ -336,6 +434,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		close(errChan)
 		return nil, nil, errChan
 	}
+	ctx = coreauth.WithRequestContinuitySession(enrichContextWithSessionHierarchy(ctx, opts.Headers, req.Payload, opts.Metadata))
 	streamResult, err := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
 	if err != nil {
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
@@ -357,7 +456,10 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	executedRequest := func() (coreexecutor.Request, coreexecutor.Options) {
 		return afterAuthCapture.apply(req, opts)
 	}
-	passthroughHeadersEnabled := PassthroughHeadersEnabled(h.Cfg)
+	if executedReq, executedOpts := executedRequest(); len(executedOpts.Headers) > 0 || len(executedReq.Payload) > 0 || len(executedOpts.Metadata) > 0 {
+		ctx = enrichContextWithSessionHierarchy(ctx, executedOpts.Headers, executedReq.Payload, executedOpts.Metadata)
+	}
+	passthroughHeadersEnabled := executionPassthroughHeaders(h.CurrentConfig(), execOptions.InternalSource)
 	interceptorHost := h.interceptorHost()
 	streamInterceptorsActive := streamInterceptorsEnabled(interceptorHost)
 	// Resolve bootstrap retries and header initialization before returning so the
@@ -425,11 +527,14 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				RequestHeaders:  cloneHeader(streamRequestHeaders),
 				ResponseHeaders: cloneHeader(rawStreamHeaders),
 				Body:            payload,
-				HistoryChunks:   cloneByteSlices(historyChunks),
 				ChunkIndex:      *chunkIndex,
 				Metadata:        opts.Metadata,
 			}
 			// Re-evaluate each chunk so mid-stream plugin reloads stay correct.
+			// Schema v5+ omits history here.
+			if streamChunkPayloadIncludesHistory(interceptorHost) {
+				chunkReq.HistoryChunks = cloneByteSlices(historyChunks)
+			}
 			// Schema v3+ omits bodies here (one header-init clone only).
 			if streamChunkPayloadIncludesRequestBody(interceptorHost) {
 				chunkReq.OriginalRequest = cloneBytes(streamOriginalRequest)
@@ -467,17 +572,10 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	var bootstrapErr *interfaces.ErrorMessage
 	readInitialStreamChunks := func() {
 		for {
-			var chunk coreexecutor.StreamChunk
-			var ok bool
-			if ctx != nil {
-				select {
-				case <-ctx.Done():
-					streamCanceledBeforeRead = true
-					return
-				case chunk, ok = <-chunks:
-				}
-			} else {
-				chunk, ok = <-chunks
+			chunk, ok, canceled := nextStreamChunk(ctx, nil, nil, chunks)
+			if canceled {
+				streamCanceledBeforeRead = true
+				return
 			}
 			if !ok {
 				streamClosedBeforeRead = true
@@ -510,6 +608,9 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		if poo.IsError(err) {
 			return false
 		}
+		if coreauth.IsContinuityTerminatedError(err) {
+			return false
+		}
 		status := statusFromError(err)
 		if status == 0 {
 			return true
@@ -523,7 +624,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		}
 	}
 
-	maxBootstrapRetries := StreamingBootstrapRetries(h.Cfg)
+	maxBootstrapRetries := StreamingBootstrapRetries(h.CurrentConfig())
 	if h.AuthManager.HomeEnabled() {
 		maxBootstrapRetries = 0
 	}
@@ -535,6 +636,16 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		if bootstrapRetries >= maxBootstrapRetries || !bootstrapEligible(bootstrapStreamErr) {
 			bootstrapErr = executionErrorMessage(bootstrapStreamErr)
 			break
+		}
+		if h.AuthManager != nil {
+			proceed, gateErr := h.AuthManager.EvaluatePreOutputStreamQuotaGate(ctx, providers, normalizedModel, opts, bootstrapStreamErr)
+			if !proceed {
+				if gateErr == nil {
+					gateErr = bootstrapStreamErr
+				}
+				bootstrapErr = executionErrorMessage(gateErr)
+				break
+			}
 		}
 		bootstrapRetries++
 		retryResult, retryErr := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
@@ -573,6 +684,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	// The transport recorder id is private control data. Resolve it only after
 	// bootstrap retries select the final upstream stream, then strip every copy
 	// before exposing headers to clients or plugins.
+	proofConfig := h.pooConfig()
 	pooRecordID := poo.TakeRecordID(rawStreamHeaders)
 	baseRecordID := poo.TakeRecordID(baseStreamHeaders)
 	if pooRecordID == "" {
@@ -591,6 +703,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		completionStatus := http.StatusOK
 		var completionErr error
 		defer func() {
+			completionOutcome, completionStatus, completionErr = streamDeliveryCompletion(ctx, completionOutcome, completionStatus, completionErr)
 			lifecycle.complete(completionOutcome, completionStatus, completionErr)
 		}()
 		defer close(dataChan)
@@ -637,11 +750,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 			}
 			completionStatus = bootstrapErr.StatusCode
 			completionErr = bootstrapErr.Error
-			if !sendErr(bootstrapErr) && ctx != nil && ctx.Err() != nil {
-				completionOutcome = pluginapi.RequestCompletionCanceled
-				completionStatus = 0
-				completionErr = ctx.Err()
-			}
+			_ = sendErr(bootstrapErr)
 			return
 		}
 
@@ -663,22 +772,22 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 
 		finishPoO := func() {
 			if pooRecordID == "" {
-				if h.pooRequired() && !allowImageModel {
+				if (proofConfig.Enabled && proofConfig.IsRequired()) && !allowImageModel {
 					pooFailure(fmt.Errorf("PoO transport was bypassed"))
 				}
 				return
 			}
-			proof, proofErr := poo.AwaitResult(pooRecordID, h.Cfg.PoOParentGateway.RequestTimeout())
+			proof, proofErr := poo.AwaitResult(pooRecordID, proofConfig.RequestTimeout())
 			if allowImageModel {
 				return
 			}
 			if proofErr != nil {
-				if h.pooRequired() {
+				if proofConfig.Enabled && proofConfig.IsRequired() {
 					pooFailure(proofErr)
 				}
 				return
 			}
-			if !h.pooEnabled() {
+			if !proofConfig.Enabled {
 				return
 			}
 			if !sentModelData {
@@ -702,7 +811,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				return
 			}
 			sentModelData = true
-			if streamInterceptorsActive {
+			if streamInterceptorsActive && streamChunkPayloadIncludesHistory(interceptorHost) {
 				historyChunks = appendStreamInterceptorHistory(historyChunks, bootstrapPayload)
 			}
 		}
@@ -739,11 +848,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				completionOutcome = pluginapi.RequestCompletionFailed
 				completionStatus = errMsg.StatusCode
 				completionErr = chunk.Err
-				if !sendErr(errMsg) && ctx != nil && ctx.Err() != nil {
-					completionOutcome = pluginapi.RequestCompletionCanceled
-					completionStatus = 0
-					completionErr = ctx.Err()
-				}
+				_ = sendErr(errMsg)
 				return
 			}
 			if len(chunk.Payload) == 0 {
@@ -754,11 +859,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				completionOutcome = pluginapi.RequestCompletionFailed
 				completionStatus = errMsg.StatusCode
 				completionErr = errMsg.Error
-				if !sendErr(errMsg) && ctx != nil && ctx.Err() != nil {
-					completionOutcome = pluginapi.RequestCompletionCanceled
-					completionStatus = 0
-					completionErr = ctx.Err()
-				}
+				_ = sendErr(errMsg)
 				return
 			}
 			if !deliverable {
@@ -773,7 +874,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				return
 			}
 			sentModelData = true
-			if streamInterceptorsActive {
+			if streamInterceptorsActive && streamChunkPayloadIncludesHistory(interceptorHost) {
 				historyChunks = appendStreamInterceptorHistory(historyChunks, payload)
 			}
 		}
@@ -905,4 +1006,23 @@ func validateSSEDataJSON(chunk []byte) error {
 		return errAdd
 	}
 	return state.Finish()
+}
+
+// streamDeliveryCompletion reconciles execution cleanup with the HTTP outcome.
+// Call only after closing output channels: the consumer may need EOF to finish.
+func streamDeliveryCompletion(ctx context.Context, outcome pluginapi.RequestCompletionOutcome, status int, err error) (pluginapi.RequestCompletionOutcome, int, error) {
+	if ctx == nil {
+		return outcome, status, err
+	}
+	deliveryErr, tracked := coreusage.WaitStreamDelivery(ctx)
+	if !tracked || (err != nil && !errors.Is(err, context.Canceled)) || outcome == pluginapi.RequestCompletionRejected {
+		return outcome, status, err
+	}
+	if deliveryErr == nil {
+		return pluginapi.RequestCompletionSucceeded, http.StatusOK, nil
+	}
+	if errors.Is(deliveryErr, context.Canceled) || errors.Is(deliveryErr, context.DeadlineExceeded) {
+		return pluginapi.RequestCompletionCanceled, 0, deliveryErr
+	}
+	return pluginapi.RequestCompletionFailed, executionErrorMessage(deliveryErr).StatusCode, deliveryErr
 }

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 type quotaTestExecutor struct {
@@ -431,7 +431,8 @@ func TestCodexQuotaSingleExclusiveLeaseRecoversWithoutRebindingOrReleasingStream
 	stream := holdPoolLeaseStream(streamCtx, &coreexecutor.StreamResult{Chunks: producer}, done)
 	cancel()
 	retry := 7 * 24 * time.Hour
-	m.MarkResult(context.Background(), Result{AuthID: before.Credential, Provider: "codex", Model: "pool-model", CredentialScope: true, RetryAfter: &retry, Error: &Error{HTTPStatus: 429, Message: "usage_limit_reached"}})
+	current, _ := m.GetByID(before.Credential)
+	m.MarkResult(context.Background(), Result{AuthID: before.Credential, CredentialVersion: current.CredentialVersion, RegistrationEpoch: current.RegistrationEpoch, Provider: "codex", Model: "pool-model", CredentialScope: true, RetryAfter: &retry, Error: &Error{HTTPStatus: 429, Message: "usage_limit_reached"}})
 	a, _ := m.GetByID(before.Credential)
 	if a.NextRetryAfter.After(time.Now().Add(time.Hour)) || a.CodexQuota == nil || !a.CodexQuota.Exhausted || a.CodexQuota.DeniedResetAt.Before(time.Now().Add(6*24*time.Hour)) {
 		t.Fatal("quota ceiling changed observed reset or failed to bound retry", a)
@@ -485,7 +486,8 @@ func TestCodexQuotaRecoveredOldAccountCannotRebindReplacedLease(t *testing.T) {
 	}
 	before, _ := m.AccountPoolLeases()
 	retry := time.Hour
-	m.MarkResult(context.Background(), Result{AuthID: before[0].Credential, Provider: "codex", Model: "pool-model", CredentialScope: true, RetryAfter: &retry, Error: &Error{HTTPStatus: 429, Message: "usage_limit_reached"}})
+	current, _ := m.GetByID(before[0].Credential)
+	m.MarkResult(context.Background(), Result{AuthID: before[0].Credential, CredentialVersion: current.CredentialVersion, RegistrationEpoch: current.RegistrationEpoch, Provider: "codex", Model: "pool-model", CredentialScope: true, RetryAfter: &retry, Error: &Error{HTTPStatus: 429, Message: "usage_limit_reached"}})
 	continuation := coreexecutor.Request{Model: "pool-model", Payload: []byte(`{"previous_response_id":"old-response"}`)}
 	if _, err := m.Execute(caller, []string{"codex"}, continuation, coreexecutor.Options{}); err == nil {
 		t.Fatal("exhausted continuation was allowed")

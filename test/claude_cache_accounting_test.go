@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/pricing"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	codexclaude "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/codex/claude"
-	openaiclaude "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/openai/claude"
-	statistics "github.com/router-for-me/CLIProxyAPI/v7/internal/usage"
-	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/pricing"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	codexclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/codex/claude"
+	openaiclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/openai/claude"
+	statistics "github.com/router-for-me/CLIProxyAPI/v8/internal/usage"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"github.com/tidwall/gjson"
 )
 
@@ -62,6 +62,8 @@ func TestClaudeCacheAccountingAcrossBoundaries(t *testing.T) {
 					nonstream = openaiclaude.ConvertOpenAIResponseToClaudeNonStream(ctx, "", nil, nil, raw, nil)
 					stream := []byte(fmt.Sprintf(`data: {"id":"test","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":%s}`, usage))
 					chunks = openaiclaude.ConvertOpenAIResponseToClaude(ctx, "", []byte(`{"stream":true}`), nil, stream, &param)
+					// Content-bearing finish chunks may carry preliminary usage; flush on the protocol terminal marker.
+					chunks = append(chunks, openaiclaude.ConvertOpenAIResponseToClaude(ctx, "", []byte(`{"stream":true}`), nil, []byte("data: [DONE]"), &param)...)
 					// The same entrypoint also accepts a complete non-stream response.
 					direct := openaiclaude.ConvertOpenAIResponseToClaude(ctx, "", nil, nil, append([]byte("data: "), raw...), new(any))
 					if len(direct) != 1 {

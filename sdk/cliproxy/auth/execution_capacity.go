@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	core "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"github.com/tidwall/gjson"
 )
 
@@ -139,11 +139,34 @@ func (m *Manager) executeStreamObserved(ctx context.Context, executor ProviderEx
 		end()
 		return result, err
 	}
-	out := make(chan core.StreamChunk)
+	// Preserve already queued bootstrap errors before introducing asynchronous
+	// observation. A canceled conductor prefers ready chunks over ctx.Err(); an
+	// unbuffered observer relay must not hide a provider's confirmed quota error.
+	ready := len(result.Chunks)
+	out := make(chan core.StreamChunk, ready)
+	var terminalErr error
+	observeChunk := func(chunk core.StreamChunk) {
+		if chunk.Err != nil {
+			terminalErr = chunk.Err
+			usage.FinishDiagnosticAttempt(ctx, chunk.Err)
+		}
+	}
+buffered:
+	for range ready {
+		select {
+		case chunk, ok := <-result.Chunks:
+			if !ok {
+				break buffered
+			}
+			observeChunk(chunk)
+			out <- chunk
+		default:
+			break buffered
+		}
+	}
 	go func() {
 		defer close(out)
 		defer end()
-		var terminalErr error
 		defer func() {
 			if terminalErr == nil {
 				terminalErr = ctx.Err()
@@ -154,10 +177,7 @@ func (m *Manager) executeStreamObserved(ctx context.Context, executor ProviderEx
 		// tail errors so observation cannot change result/cooldown semantics.
 		// Occupancy ends only after the producer has closed, not on cancellation.
 		for chunk := range result.Chunks {
-			if chunk.Err != nil {
-				terminalErr = chunk.Err
-				usage.FinishDiagnosticAttempt(ctx, chunk.Err)
-			}
+			observeChunk(chunk)
 			out <- chunk
 		}
 	}()

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	"github.com/tidwall/gjson"
 )
 
@@ -32,7 +32,7 @@ func testClaudeFromOpenAIUsesCompatibleDefaultFingerprint(t *testing.T, model st
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				headers = r.Header.Clone()
 				body, _ = io.ReadAll(r.Body)
-				if headers.Get("User-Agent") != "claude-cli/2.1.280 (external, cli)" {
+				if headers.Get("User-Agent") != "claude-cli/2.1.321 (external, cli)" {
 					http.Error(w, "Claude Code version too old", 400)
 					return
 				}
@@ -64,16 +64,16 @@ func testClaudeFromOpenAIUsesCompatibleDefaultFingerprint(t *testing.T, model st
 					t.Fatal(err)
 				}
 			}
-			if headers.Get("X-Stainless-Package-Version") != "0.112.1" {
+			if headers.Get("X-Stainless-Package-Version") != "0.128.0" {
 				t.Fatal("SDK baseline not upgraded")
 			}
-			if headers.Get("X-Stainless-Runtime-Version") != "v26.3.0" {
-				t.Fatal("runtime baseline does not match Claude Code 2.1.280")
+			if headers.Get("X-Stainless-Runtime-Version") != "v26.12.1" {
+				t.Fatal("runtime baseline does not match Claude Code 2.1.321")
 			}
 			if got := gjson.GetBytes(body, "model").String(); got != model {
 				t.Fatalf("upstream model = %q, want %q", got, model)
 			}
-			if !strings.Contains(string(body), "cc_version=2.1.280.") {
+			if !strings.Contains(string(body), "cc_version=2.1.321.") {
 				t.Fatal("billing fingerprint version does not match User-Agent")
 			}
 		})

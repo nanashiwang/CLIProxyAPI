@@ -101,45 +101,53 @@ def quoted(value):
     return json.dumps(str(value), ensure_ascii=False)
 
 
-def set_top_level(source, key, value):
-    pattern = re.compile(rf"(?m)^{re.escape(key)}:\s*.*$")
-    replacement = f"{key}: {value}"
-    updated, count = pattern.subn(replacement, source, count=1)
-    if count != 1:
-        raise RuntimeError(f"missing top-level setting: {key}")
-    return updated
-
-
-def set_nested(source, section, key, value):
-    section_match = re.search(rf"(?m)^{re.escape(section)}:\s*$", source)
-    if not section_match:
-        raise RuntimeError(f"missing section: {section}")
-    block_start = section_match.end()
-    next_top = re.search(r"(?m)^[A-Za-z0-9][A-Za-z0-9_-]*:\s*", source[block_start:])
-    block_end = block_start + (next_top.start() if next_top else len(source[block_start:]))
-    block = source[block_start:block_end]
-    pattern = re.compile(rf"(?m)^(\s{{2}}{re.escape(key)}:\s*).*$")
-    updated_block, count = pattern.subn(rf"\g<1>{value}", block, count=1)
-    if count != 1:
-        raise RuntimeError(f"missing setting: {section}.{key}")
-    return source[:block_start] + updated_block + source[block_end:]
-
-
-def set_api_keys(source, values):
+def set_path(source, path, value):
+    """Edit canonical block YAML without reserializing unrelated configuration."""
+    if source and not source.endswith('\n'):
+        source += '\n'
     lines = source.splitlines(keepends=True)
-    start = next((i for i, line in enumerate(lines) if re.match(r"^api-keys:\s*$", line.rstrip("\n"))), None)
-    if start is None:
-        raise RuntimeError("missing api-keys section")
-    end = start + 1
-    while end < len(lines):
-        line = lines[end]
-        if line.strip() == "" or line.startswith(" ") or line.startswith("\t"):
+    current_indent = 0
+    start, end = 0, len(lines)
+    for depth, key in enumerate(path):
+        indent = ' ' * current_indent
+        pattern = re.compile(rf'^{indent}{re.escape(key)}:[ \t]*(.*?)(?:\r?\n)?$')
+        matches = [(i, pattern.match(lines[i])) for i in range(start, end) if pattern.match(lines[i])]
+        if len(matches) > 1:
+            raise RuntimeError(f'duplicate configuration path: {".".join(path[:depth + 1])}')
+        if matches:
+            index, match = matches[0]
+            block_end = index + 1
+            while block_end < end:
+                line = lines[block_end]
+                if line.strip() and not line.lstrip().startswith('#') and len(line) - len(line.lstrip()) <= len(indent):
+                    break
+                block_end += 1
+        else:
+            index = block_end = end
+            match = None
+        if depth == len(path) - 1:
+            while block_end > index + 1 and (not lines[block_end - 1].strip() or lines[block_end - 1].lstrip().startswith('#')):
+                block_end -= 1
+            lines[index:block_end] = [f'{indent}{key}: {value}\n']
+            return ''.join(lines)
+        if match is None:
+            lines.insert(index, f'{indent}{key}:\n')
             end += 1
-            continue
-        break
-    replacement = ["api-keys:\n"] + [f"  - {quoted(value)}\n" for value in values]
-    return "".join(lines[:start] + replacement + lines[end:])
-
+            block_end = index + 1
+        else:
+            tail = match.group(1).strip()
+            if tail and not tail.startswith('#') and tail not in ('{}', 'null', '~'):
+                raise RuntimeError(f'expected block mapping at {".".join(path[:depth + 1])}; configuration unchanged')
+            if tail in ('{}', 'null', '~'):
+                lines[index] = f'{indent}{key}:\n'
+        start, end = index + 1, block_end
+        children = [line for line in lines[start:end] if line.strip() and not line.lstrip().startswith('#')]
+        if any('\t' in line[:len(line) - len(line.lstrip())] for line in children):
+            raise RuntimeError('tab indentation is unsupported; configuration unchanged')
+        current_indent = min((len(line) - len(line.lstrip()) for line in children), default=len(indent) + 2)
+        if any(line.lstrip().startswith('-') and len(line) - len(line.lstrip()) == current_indent for line in children):
+            raise RuntimeError(f'expected mapping at {".".join(path[:depth + 1])}; configuration unchanged')
+    raise RuntimeError('empty configuration path')
 
 sing_box = json.loads(sing_box_path.read_text())
 inbound = None
@@ -167,24 +175,30 @@ if not api_keys:
 if any(item.startswith("replace-") or item.startswith("your-") for item in api_keys):
     raise RuntimeError("CPA_API_KEYS still contains placeholder values")
 
-text = set_top_level(text, "host", quoted("127.0.0.1"))
-text = set_top_level(text, "port", int(os.environ["CPA_PORT"]))
-text = set_nested(text, "remote-management", "allow-remote", "true")
-text = set_nested(text, "remote-management", "secret-key", quoted(os.environ["CPA_MANAGEMENT_KEY"]))
-text = set_nested(text, "remote-management", "disable-control-panel", "false")
-text = set_nested(text, "remote-management", "panel-github-repository", quoted(os.environ["CPA_PANEL_REPOSITORY"]))
-text = set_api_keys(text, api_keys)
-text = set_top_level(text, "commercial-mode", os.environ["CPA_COMMERCIAL_MODE"])
-text = set_top_level(text, "logging-to-file", "true")
-text = set_top_level(text, "logs-max-total-size-mb", int(os.environ["CPA_LOG_LIMIT_MB"]))
-text = set_top_level(text, "error-logs-max-files", int(os.environ["CPA_ERROR_LOG_MAX_FILES"]))
-text = set_top_level(text, "usage-statistics-enabled", "true")
-text = set_top_level(text, "redis-usage-queue-retention-seconds", 3600)
-text = set_top_level(text, "proxy-url", quoted(proxy_url))
-text = set_top_level(text, "request-retry", 3)
-text = set_top_level(text, "max-retry-credentials", 0)
-text = set_top_level(text, "max-retry-interval", 30)
-text = set_top_level(text, "ws-auth", "true")
+# Releases ship v8 block YAML. Existing v7 configurations retain their legacy layout.
+v8 = bool(re.search(r"(?m)^(server|management|access):", text))
+def setting(legacy, current, value):
+    global text
+    text = set_path(text, current.split('.') if v8 else legacy.split('.'), value)
+
+setting('host', 'server.host', quoted('127.0.0.1'))
+setting('port', 'server.port', int(os.environ['CPA_PORT']))
+setting('remote-management.allow-remote', 'management.allow-remote', 'true')
+setting('remote-management.secret-key', 'management.secret-key', quoted(os.environ['CPA_MANAGEMENT_KEY']))
+setting('remote-management.disable-control-panel', 'management.disable-control-panel', 'false')
+setting('remote-management.panel-github-repository', 'management.panel-github-repository', quoted(os.environ['CPA_PANEL_REPOSITORY']))
+setting('api-keys', 'access.api-keys', json.dumps(api_keys, ensure_ascii=False))
+setting('commercial-mode', 'server.commercial-mode', os.environ['CPA_COMMERCIAL_MODE'])
+setting('logging-to-file', 'observability.logs.logging-to-file', 'true')
+setting('logs-max-total-size-mb', 'observability.logs.logs-max-total-size-mb', int(os.environ['CPA_LOG_LIMIT_MB']))
+setting('error-logs-max-files', 'observability.logs.error-logs-max-files', int(os.environ['CPA_ERROR_LOG_MAX_FILES']))
+setting('usage-statistics-enabled', 'observability.usage.usage-statistics-enabled', 'true')
+setting('redis-usage-queue-retention-seconds', 'observability.usage.redis-usage-queue-retention-seconds', 3600)
+setting('proxy-url', 'requests.proxy-url', quoted(proxy_url))
+setting('request-retry', 'routing.retry.request-retry', 3)
+setting('max-retry-credentials', 'routing.retry.max-retry-credentials', 0)
+setting('max-retry-interval', 'routing.retry.max-retry-interval', 30)
+setting('ws-auth', 'oauth.providers.aistudio.ws-auth', 'true')
 
 config_path.write_text(text)
 os.chmod(config_path, 0o600)
@@ -322,7 +336,7 @@ server {
         return 200 "ok\n";
     }
 
-    location ~ ^/(management\.html|v0/management(?:/|$)) {
+    location ~ ^/(management\.html|v(?:0|8)/management(?:/|$)) {
         include /etc/nginx/snippets/cpa-management-allow.conf;
         limit_req zone=cpa_management burst=30 nodelay;
         proxy_pass http://127.0.0.1:${CPA_PORT};

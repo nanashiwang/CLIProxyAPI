@@ -33,6 +33,8 @@ class BundleTests(unittest.TestCase):
             return b"public source patch\n"
         if args[:2] == ("git", "ls-tree"):
             return b"docs/CODEX_QUOTA_REFRESH_CN.md\n"
+        if args[:2] == ("git", "show") and args[2].endswith(":go.mod"):
+            return b"module fixture\n\ngo 1.26.10\n"
         if args[:2] == ("git", "show"):
             return b"committed public documentation or license\n"
         if args[:2] == ("git", "log"):
@@ -49,6 +51,7 @@ class BundleTests(unittest.TestCase):
             archive_path = next(output.glob("*.zip"))
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertIsNone(archive.testzip())
+                self.assertEqual(json.loads(archive.read("build-parameters.json"))["go_version"], "1.26.10")
                 manifest = json.loads(archive.read("manifest.json"))
                 self.assertEqual(archive.read("management.html"), self.ui)
                 self.assertEqual(manifest["base"], "v1-personal.1")
