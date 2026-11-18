@@ -24,6 +24,8 @@ The Codex bootstrap budget follows upstream's 48 raw SSE/WebSocket frames and 1 
 
 Continuing selected patches keeps a smaller diff but cannot satisfy the requested full feature set. Replacing the fork with upstream loses operational capabilities and historical billing. A blind ours/theirs resolution preserves only one side of conflicting lifecycle contracts. The merge uses upstream's current mechanisms where they include the earlier fix, and reconnects personal-only extensions explicitly.
 
+The automatic release source gate uses Ubuntu with default CGO, matching upstream's full PR test/build/smoke workflow. Waiting for an unacquired Intel macOS runner blocks every later platform build; the generic Linux gate allows those builds to proceed. Darwin archive jobs retain Intel runners, Apple SDK/CGO and architecture verification. The local Darwin full suite covers platform-specific power/renewal tests; final publication still requires all release targets. This refines the runner placement in the [release delivery note](../process/2026-10-18-release-download-and-container-delivery.md).
+
 ## Consequences
 
 This is a coordinated API/configuration migration. Legacy v7 YAML remains readable; v8 configuration writes preserve personal root settings, provider/key identities, notes and test-model. Personal endpoints coexist with the upstream v8 API. Nonterminal renewal failures retain their refresh evidence without poisoning an otherwise valid access token; terminal failures remain isolated and do not repeatedly refresh. Auth, replay, accounting and quota behavior need their own regression coverage beyond compilation.
