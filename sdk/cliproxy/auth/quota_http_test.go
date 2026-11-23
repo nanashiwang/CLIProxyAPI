@@ -83,9 +83,10 @@ func TestQuotaRetryAfterDateAndBackoff(t *testing.T) {
 	if !quotaRetryAfter(now.Add(time.Hour).Format(http.TimeFormat), now).Equal(now.Add(time.Hour)) {
 		t.Fatal("date ignored")
 	}
-	for i := 1; i <= 8; i++ {
-		d := quotaBackoff(i)
-		if d < 2*time.Minute || d > 36*time.Minute {
+	for i, minutes := range []time.Duration{5, 10, 20, 30, 30, 30} {
+		base := minutes * time.Minute
+		d := quotaBackoff(i + 1)
+		if d < base || d > base+base/5 {
 			t.Fatal(d)
 		}
 	}
@@ -230,5 +231,50 @@ func TestManualQuotaRevocationPreservesResponse(t *testing.T) {
 	live, _ := m.GetByID(a.ID)
 	if err != nil || string(got) != body || resp.StatusCode != 401 || live.RejectedAccessToken != "test-token" {
 		t.Fatal("manual read lost its body or failed to invalidate its token")
+	}
+}
+
+func TestQuotaHTTPMinimumBetweenUsageReads(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusForbidden, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			m := NewManager(nil, nil, nil)
+			start := time.Now()
+			now := start
+			m.quotaHTTP.now = func() time.Time { return now }
+			a := &Auth{Provider: "claude", Metadata: map[string]any{"access_token": "fixture"}}
+			// A missing window remains overdue even after the endpoint returns fresh data.
+			a.ProviderQuota = &CodexQuotaSnapshot{Windows: []CodexQuotaWindow{{Name: "weekly", WindowSeconds: 604800, ObservedAt: start.Add(-time.Hour)}}}
+			req, _ := http.NewRequest(http.MethodGet, "https://api.anthropic.com/api/oauth/usage", nil)
+			calls := 0
+			read := func() {
+				t.Helper()
+				resp, err := m.QuotaHTTPRequest(context.Background(), a, req, func() (*http.Response, error) {
+					calls++
+					return &http.Response{StatusCode: status, Header: http.Header{"Retry-After": {"1"}}, Body: io.NopCloser(strings.NewReader(`{"five_hour":{"utilization":5}}`))}, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != status {
+					t.Fatalf("status %d, want %d", resp.StatusCode, status)
+				}
+			}
+			read()
+			due := m.quotaHTTPNextCheck(a)
+			if !due.Equal(start.Add(5 * time.Minute)) {
+				t.Fatalf("next check after %v, want 5m", due.Sub(start))
+			}
+			now = due.Add(-time.Nanosecond)
+			read()
+			if calls != 1 {
+				t.Fatal("short Retry-After, error, or stale window bypassed the floor")
+			}
+			now = due
+			read()
+			if calls != 2 {
+				t.Fatal("endpoint did not revalidate at the deadline")
+			}
+		})
 	}
 }

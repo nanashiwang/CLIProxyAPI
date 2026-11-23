@@ -53,7 +53,7 @@ func TestQuotaGuardFailureRedactionAndRecovery(t *testing.T) {
 			e.fetch = func(context.Context, *Auth, *http.Request) (*http.Response, error) {
 				return quotaResponse(2, now.Add(time.Hour), true), nil
 			}
-			refreshQuotaAt(m, context.Background(), now.Add(3*time.Minute))
+			refreshQuotaAt(m, context.Background(), now.Add(7*time.Minute))
 			got, _ = m.GetByID(a.ID)
 			if got.codexQuotaBlocked || got.QuotaGuard.State != "ready" || got.QuotaGuard.Failure != "" {
 				t.Fatalf("did not recover: %+v", got.QuotaGuard)
@@ -83,7 +83,7 @@ func TestQuotaGuardFreshnessAllProviders(t *testing.T) {
 			if got.codexQuotaBlocked {
 				t.Fatal("valid data did not resume")
 			}
-			ttl := 126 * time.Second
+			ttl := 390 * time.Second
 			blocked, _, _ := isAuthBlockedForModel(got, "model", now.Add(ttl))
 			if !blocked || !isCredentialBlocked(got, 1, now.Add(ttl)) {
 				t.Fatal("request admission reused stale data")
@@ -107,7 +107,7 @@ func TestQuotaGuardPartialWindowsAndDelayedObservation(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	a, _ := m.Register(context.Background(), &Auth{ID: "partial", Provider: "claude", Metadata: map[string]any{"access_token": "fixture"}})
 	now := time.Now()
-	first := now.Add(-4 * time.Minute)
+	first := now.Add(-8 * time.Minute)
 	m.applyProviderQuotaRefresh(a, []CodexQuotaWindow{{Name: "short", UsedPercent: 5, WindowSeconds: 18000}, {Name: "weekly", UsedPercent: 5, WindowSeconds: 604800}}, first, first)
 	m.applyProviderQuotaRefresh(a, []CodexQuotaWindow{{Name: "short", UsedPercent: 5, WindowSeconds: 18000}}, now, now)
 	got, _ := m.GetByID(a.ID)
@@ -117,14 +117,14 @@ func TestQuotaGuardPartialWindowsAndDelayedObservation(t *testing.T) {
 	near := providerQuotaStopThreshold(a, CodexQuotaWindow{Name: "short", WindowSeconds: 18000}, config.CodexQuotaGuard{}) - 5
 	m.applyProviderQuotaRefresh(a, []CodexQuotaWindow{{Name: "short", UsedPercent: near, WindowSeconds: 18000}, {Name: "weekly", UsedPercent: 5, WindowSeconds: 604800}}, now.Add(time.Second), now.Add(time.Second))
 	got, _ = m.GetByID(a.ID)
-	if quotaRoutingBlocked(got, now.Add(126*time.Second)) || !quotaRoutingBlocked(got, now.Add(127*time.Second)) {
-		t.Fatal("warmup lifetime is not 126 seconds")
+	if quotaRoutingBlocked(got, now.Add(390*time.Second)) || !quotaRoutingBlocked(got, now.Add(391*time.Second)) {
+		t.Fatal("warmup lifetime is not 390 seconds")
 	}
 	// Completion time must not make a slow near-limit observation fresh.
 	m2 := NewManager(nil, nil, nil)
 	b, _ := m2.Register(context.Background(), &Auth{ID: "slow", Provider: "claude", Metadata: a.Metadata})
 	near = providerQuotaStopThreshold(b, CodexQuotaWindow{Name: "short", WindowSeconds: 18000}, config.CodexQuotaGuard{}) - 5
-	m2.applyProviderQuotaRefresh(b, []CodexQuotaWindow{{Name: "short", UsedPercent: near, WindowSeconds: 18000}}, now.Add(-3*time.Minute), now)
+	m2.applyProviderQuotaRefresh(b, []CodexQuotaWindow{{Name: "short", UsedPercent: near, WindowSeconds: 18000}}, now.Add(-7*time.Minute), now)
 	got, _ = m2.GetByID(b.ID)
 	if !got.codexQuotaBlocked {
 		t.Fatal("slow response received a new freshness lifetime")
@@ -138,11 +138,11 @@ func TestQuotaGuardAdaptivePolling(t *testing.T) {
 		return quotaResponse(0, now.Add(time.Hour), true), nil
 	}
 	refreshQuotaAt(m, context.Background(), now)
-	refreshQuotaAt(m, context.Background(), now.Add(59*time.Second))
+	refreshQuotaAt(m, context.Background(), now.Add(5*time.Minute-time.Second))
 	if e.calls.Load() != 1 {
 		t.Fatal("warmup polled early")
 	}
-	refreshQuotaAt(m, context.Background(), now.Add(67*time.Second))
+	refreshQuotaAt(m, context.Background(), now.Add(5*time.Minute+31*time.Second))
 	if e.calls.Load() != 2 {
 		t.Fatal("warmup did not verify")
 	}
@@ -150,13 +150,13 @@ func TestQuotaGuardAdaptivePolling(t *testing.T) {
 	if quotaGuardInterval(got, config.CodexQuotaGuard{}) != 30*time.Minute {
 		t.Fatal("idle account did not slow")
 	}
-	refreshQuotaAt(m, context.Background(), now.Add(5*time.Minute))
+	refreshQuotaAt(m, context.Background(), now.Add(7*time.Minute))
 	if e.calls.Load() != 2 {
 		t.Fatal("long interval ignored")
 	}
 	// Normal inference resumes after idleness; cached upstream data must not delay verification.
 	m.MarkResult(context.Background(), Result{AuthID: a.ID, Provider: "codex", Success: true})
-	refreshQuotaAt(m, context.Background(), now.Add(6*time.Minute))
+	refreshQuotaAt(m, context.Background(), now.Add(12*time.Minute))
 	if e.calls.Load() != 3 {
 		t.Fatal("activity did not shorten scheduler and cache together")
 	}
@@ -199,7 +199,7 @@ func TestQuotaGuardCoordinatorWhileWorkerBlocked(t *testing.T) {
 		}
 		return nil, ctx.Err()
 	}
-	m.applyCodexQuotaRefresh(a, []CodexQuotaWindow{quotaWindow("primary", 2, now.Add(time.Hour))}, false, true, now.Add(-125*time.Second), now)
+	m.applyCodexQuotaRefresh(a, []CodexQuotaWindow{quotaWindow("primary", 2, now.Add(time.Hour))}, false, true, now.Add(-389*time.Second), now)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})

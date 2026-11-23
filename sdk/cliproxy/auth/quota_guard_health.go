@@ -9,8 +9,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const quotaGuardPollInterval = time.Minute
-const quotaGuardNearInterval = 15 * time.Second
+const (
+	quotaGuardMinInterval = 5 * time.Minute
+	quotaGuardMaxInterval = 30 * time.Minute
+)
 
 // QuotaGuardStatus is sanitized runtime health, not an upstream error cooldown.
 type QuotaGuardStatus struct {
@@ -59,32 +61,32 @@ func quotaWindowHistory(previous, next CodexQuotaWindow) CodexQuotaWindow {
 func quotaWindowInterval(a *Auth, w CodexQuotaWindow, policy config.CodexQuotaGuard) time.Duration {
 	threshold := quotaGuardThreshold(a, w, policy)
 	if threshold <= 0 || w.UsedPercent >= threshold || !w.rateKnown {
-		return time.Minute
+		return quotaGuardMinInterval
 	}
 	margin := threshold - w.UsedPercent
-	interval := time.Duration(float64(time.Minute) + float64(29*time.Minute)*math.Min(1, math.Max(0, margin/threshold)))
+	interval := time.Duration(float64(quotaGuardMinInterval) + float64(quotaGuardMaxInterval-quotaGuardMinInterval)*math.Min(1, math.Max(0, margin/threshold)))
 	if w.ratePerMinute > 0 {
 		// Check four times before predicted exhaustion, bounded by the query floor.
 		predicted := margin / w.ratePerMinute / 4 * float64(time.Minute)
 		if predicted < float64(interval) {
-			interval = time.Duration(math.Max(float64(time.Minute), predicted))
+			interval = time.Duration(math.Max(float64(quotaGuardMinInterval), predicted))
 		}
 	}
 	requests := a.Success + a.Failed
 	if requests > w.requestCount && (w.idle || requests-w.requestCount >= 20) {
-		interval = time.Minute
+		interval = quotaGuardMinInterval
 	}
 	return interval
 }
 
 func quotaGuardInterval(a *Auth, policy config.CodexQuotaGuard) time.Duration {
 	if a.QuotaGuard != nil && a.QuotaGuard.Failure != "" {
-		return time.Minute
+		return quotaGuardMinInterval
 	}
-	interval := 30 * time.Minute
+	interval := quotaGuardMaxInterval
 	s := quotaGuardSnapshot(a)
 	if s == nil || len(s.Windows) == 0 {
-		return time.Minute
+		return quotaGuardMinInterval
 	}
 	for _, w := range s.Windows {
 		if d := quotaWindowInterval(a, w, policy); d < interval {
@@ -105,12 +107,12 @@ func quotaWindowObserved(s *CodexQuotaSnapshot, w CodexQuotaWindow) time.Time {
 }
 
 func quotaIntervalCeiling(d time.Duration) time.Duration {
-	return min(d+d/10, 30*time.Minute)
+	return min(d+d/10, quotaGuardMaxInterval)
 }
 
 func quotaGuardDue(a *Auth, policy config.CodexQuotaGuard, jitter bool) time.Time {
 	if a.QuotaGuard != nil && a.QuotaGuard.Failure != "" {
-		return a.QuotaGuard.LastAttemptAt.Add(time.Minute)
+		return a.QuotaGuard.LastAttemptAt.Add(quotaGuardMinInterval)
 	}
 	var due time.Time
 	if s := quotaGuardSnapshot(a); s != nil {
@@ -140,7 +142,7 @@ func (m *Manager) quotaGuardHealthBlocked(a *Auth, now time.Time) bool {
 	policy := cfg.EffectiveQuotaGuard()
 	h.NextCheckAt = quotaGuardDue(a, policy, false)
 	if h.NextCheckAt.IsZero() {
-		h.NextCheckAt = h.LastAttemptAt.Add(time.Minute)
+		h.NextCheckAt = h.LastAttemptAt.Add(quotaGuardMinInterval)
 	}
 	if deadline := quotaThresholdWake(a, policy, now); policy.IsEnabled() && deadline.After(h.NextCheckAt) {
 		h.NextCheckAt = deadline

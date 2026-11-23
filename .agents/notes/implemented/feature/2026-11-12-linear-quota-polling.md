@@ -4,11 +4,11 @@ Status: implemented
 
 ## Problem
 
-Fixed polling remains too frequent for accounts with ample quota. The user chooses a linear one-to-thirty-minute interval relative to each account's stable sampled stop threshold, shared by all eligible providers.
+Fixed polling remains too frequent for accounts with ample quota. The user chooses a linear five-to-thirty-minute interval relative to each account's stable sampled stop threshold, shared by all eligible providers.
 
 ## Decision
 
-Reuse normalized windows, the quota broker, scheduler, and frontend cached diagnostics. Each window uses 1 + 29 * clamp((threshold - used) / threshold, 0, 1) minutes. Take the shortest interval. Keep deterministic account/window thresholds across resets. Require two distinct observations before long intervals; reset or decreasing usage restarts warmup. A conservative observed consumption rate caps the interval to one quarter of predicted time to threshold. Twenty completed requests since observation, or resumed activity after an idle observation pair, caps it at one minute. These are risk heuristics, not token-to-quota conversion. Retain original timestamps, add at most ten percent scheduling jitter (capped at thirty minutes), and expire data at the per-window maximum scheduled interval plus one minute grace. Cache and scheduler deadlines must shorten together. Retry-After and stopped-window reset verification remain authoritative.
+Reuse normalized windows, the quota broker, scheduler, and frontend cached diagnostics. Each window uses 5 + 25 * clamp((threshold - used) / threshold, 0, 1) minutes. Take the shortest interval. Keep deterministic account/window thresholds across resets. Require two distinct observations before long intervals; reset or decreasing usage restarts warmup. A conservative observed consumption rate caps the interval to one quarter of predicted time to threshold. Twenty completed requests since observation, or resumed activity after an idle observation pair, caps it at five minutes. These are risk heuristics, not token-to-quota conversion. Retain original timestamps, add at most ten percent scheduling jitter (capped at thirty minutes), and expire data at the per-window maximum scheduled interval plus one minute grace. Cache and scheduler deadlines shorten together while respecting five minutes since the last network read. Shorter polling in production coincided with repeated Claude 429 responses. A longer minimum reduces query pressure and can delay detection of fast consumption. Retry-After and stopped-window reset verification remain authoritative.
 
 ## Alternatives considered
 

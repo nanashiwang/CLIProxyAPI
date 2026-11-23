@@ -46,7 +46,7 @@ func TestQuotaIntermittentFailureRetainsHistory(t *testing.T) {
 	now = state.nextRead.Add(time.Second)
 	status = 429
 	read()
-	if state.failures != 2 || state.until.Sub(now) < 4*time.Minute {
+	if state.failures != 2 || state.until.Sub(now) < 10*time.Minute {
 		t.Fatal("intermittent failure lost escalation")
 	}
 	now = state.until.Add(time.Second)
@@ -59,14 +59,17 @@ func TestQuotaIntermittentFailureRetainsHistory(t *testing.T) {
 		t.Fatal("empty payload fabricated recovery")
 	}
 	body = `{"five_hour":{"utilization":5}}`
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 2; i++ {
 		now = state.nextRead.Add(time.Second)
 		read()
 	}
 	if state.failures != 2 {
 		t.Fatal("recovery cleared before quiet period")
 	}
-	now = state.lastFailure.Add(quotaRecoveryPeriod + time.Second)
+	now = state.nextRead.Add(time.Second)
+	if recovery := state.lastFailure.Add(quotaRecoveryPeriod); now.Before(recovery) {
+		now = recovery
+	}
 	read()
 	if state.failures != 0 {
 		t.Fatal("sustained recovery did not clear history")
@@ -90,7 +93,7 @@ func TestQuotaLinearScheduleAndFreshness(t *testing.T) {
 				a.ProviderQuota = snapshot
 			}
 			a.QuotaGuard = &QuotaGuardStatus{LastAttemptAt: now}
-			want := time.Duration(float64(time.Minute) + float64(29*time.Minute)*(90-used)/90)
+			want := time.Duration(float64(5*time.Minute) + float64(25*time.Minute)*(90-used)/90)
 			if got := quotaGuardInterval(a, policy); (got - want).Abs() > time.Nanosecond {
 				t.Fatalf("%s %v: got %v want %v", provider, used, got, want)
 			}
@@ -111,7 +114,7 @@ func TestQuotaLinearHistoryAndTraffic(t *testing.T) {
 	a := &Auth{Provider: "claude", Metadata: map[string]any{"access_token": "fixture"}}
 	policy := config.CodexQuotaGuard{}
 	w := CodexQuotaWindow{sampleValid: true, Name: "short", WindowSeconds: 18000, ObservedAt: now, ResetAt: now.Add(time.Hour)}
-	if quotaWindowInterval(a, w, policy) != time.Minute {
+	if quotaWindowInterval(a, w, policy) != 5*time.Minute {
 		t.Fatal("cold observation skipped warmup")
 	}
 	next := w
@@ -121,7 +124,7 @@ func TestQuotaLinearHistoryAndTraffic(t *testing.T) {
 		t.Fatal("stable empty quota did not slow to 30 minutes")
 	}
 	a.Success = 1
-	if quotaWindowInterval(a, next, policy) != time.Minute {
+	if quotaWindowInterval(a, next, policy) != 5*time.Minute {
 		t.Fatal("resumed activity did not accelerate")
 	}
 	a.Success = 0
@@ -130,7 +133,7 @@ func TestQuotaLinearHistoryAndTraffic(t *testing.T) {
 	burst.UsedPercent = 40
 	burst.requestCount = 10
 	burst = quotaWindowHistory(next, burst)
-	if quotaWindowInterval(a, burst, policy) != time.Minute {
+	if quotaWindowInterval(a, burst, policy) != 5*time.Minute {
 		t.Fatal("rapid consumption not capped")
 	}
 	same := burst
@@ -149,7 +152,7 @@ func TestQuotaLinearHistoryAndTraffic(t *testing.T) {
 	}
 	next.idle = false
 	a.Success = 20
-	if quotaWindowInterval(a, next, policy) != time.Minute {
+	if quotaWindowInterval(a, next, policy) != 5*time.Minute {
 		t.Fatal("request budget ignored")
 	}
 }
@@ -169,7 +172,7 @@ func TestClaudeQuotaNextCheckIncludesJitter(t *testing.T) {
 	r.Body.Close()
 	next := m.quotaHTTPNextCheck(a)
 	header, _ := time.Parse(time.RFC3339Nano, r.Header.Get("X-CPA-Quota-Next-Check"))
-	if next.Sub(now) < time.Minute || next.Sub(now) > 66*time.Second || !next.Equal(header) {
+	if next.Sub(now) < 5*time.Minute || next.Sub(now) > 330*time.Second || !next.Equal(header) {
 		t.Fatal("scheduler and response deadline disagree")
 	}
 	a.QuotaGuard = &QuotaGuardStatus{LastAttemptAt: now}

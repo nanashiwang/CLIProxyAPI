@@ -109,7 +109,7 @@ func TestProviderQuotaRefreshPauseResumePersistence(t *testing.T) {
 				t.Fatal("restart lost guard")
 			}
 			e.payload = `{}`
-			refreshQuotaAt(m, context.Background(), now.Add(time.Minute))
+			refreshQuotaAt(m, context.Background(), now.Add(6*time.Minute))
 			got, _ = m.GetByID(a.ID)
 			if !got.codexQuotaBlocked {
 				t.Fatal("empty payload fabricated recovery")
@@ -126,7 +126,7 @@ func TestProviderQuotaRefreshPauseResumePersistence(t *testing.T) {
 				t.Fatal("cooling bypassed guard")
 			}
 			e.payload = payload(0)
-			refreshQuotaAt(m, context.Background(), now.Add(5*time.Minute))
+			refreshQuotaAt(m, context.Background(), now.Add(12*time.Minute))
 			got, _ = m.GetByID(a.ID)
 			if got.codexQuotaBlocked {
 				t.Fatal("fresh quota did not resume")

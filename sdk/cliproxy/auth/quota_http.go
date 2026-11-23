@@ -25,6 +25,7 @@ type quotaHTTPState struct {
 	failures    int
 	successes   int
 	lastFailure time.Time
+	lastRead    time.Time
 	nextRead    time.Time
 	cache       map[string]quotaHTTPResult
 }
@@ -89,16 +90,13 @@ func quotaRetryAfter(value string, now time.Time) time.Time {
 const quotaRecoveryPeriod = 30 * time.Minute
 
 func quotaBackoff(n int) time.Duration {
-	if n > 5 {
-		n = 5
+	if n > 4 {
+		n = 4
 	}
 	if n < 1 {
 		n = 1
 	}
-	d := 2 * time.Minute * time.Duration(1<<(n-1))
-	if d > 30*time.Minute {
-		d = 30 * time.Minute
-	}
+	d := min(quotaGuardMinInterval*time.Duration(1<<(n-1)), quotaGuardMaxInterval)
 	return d + time.Duration(rand.Int64N(int64(d/5)+1))
 }
 func quotaHTTPResponse(r quotaHTTPResult, next time.Time) *http.Response {
@@ -140,15 +138,23 @@ func (s *quotaHTTPState) quotaSucceeded(now time.Time) {
 	}
 }
 
+// Partial or stale window data may shorten a cached schedule only to the next permitted read.
+func quotaReadDeadline(observed, expires, due time.Time) time.Time {
+	if due.IsZero() || !due.Before(expires) {
+		return expires
+	}
+	if floor := observed.Add(quotaGuardMinInterval); due.Before(floor) {
+		return floor
+	}
+	return due
+}
+
 func (m *Manager) quotaHTTPNextCheck(a *Auth) time.Time {
 	m.quotaHTTP.mu.Lock()
 	defer m.quotaHTTP.mu.Unlock()
 	if s := m.quotaHTTP.accounts[quotaHTTPKey(a)]; s != nil {
-		next := s.nextRead
 		cfg, _ := m.runtimeConfig.Load().(*config.Config)
-		if cap := quotaGuardDue(a, cfg.EffectiveQuotaGuard(), true); !cap.IsZero() && cap.Before(next) {
-			next = cap
-		}
+		next := quotaReadDeadline(s.lastRead, s.nextRead, quotaGuardDue(a, cfg.EffectiveQuotaGuard(), true))
 		if next.After(s.until) {
 			return next
 		}
@@ -219,7 +225,7 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 			}
 			if len(m.quotaHTTP.accounts) >= 4096 {
 				m.quotaHTTP.mu.Unlock()
-				return quotaHTTPWaiting(now.Add(time.Minute)), nil
+				return quotaHTTPWaiting(now.Add(quotaGuardMinInterval)), nil
 			}
 			s = &quotaHTTPState{cache: make(map[string]quotaHTTPResult)}
 			m.quotaHTTP.accounts[key] = s
@@ -230,7 +236,7 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 			return quotaHTTPWaiting(until), nil
 		}
 		if now.Before(wake) {
-			if r, ok := s.cache[endpoint]; ok {
+			if r, ok := s.cache[endpoint]; ok && r.status >= 200 && r.status < 300 {
 				m.quotaHTTP.mu.Unlock()
 				return quotaHTTPResponse(r, wake), nil
 			}
@@ -239,9 +245,7 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 		}
 		if r, ok := s.cache[endpoint]; ok {
 			if !strings.HasSuffix(req.URL.Path, "/profile") {
-				if cap := quotaGuardDue(a, policy, true); !cap.IsZero() && cap.Before(r.expires) {
-					r.expires = cap
-				}
+				r.expires = quotaReadDeadline(r.observed, r.expires, quotaGuardDue(a, policy, true))
 			}
 			if now.Before(r.expires) {
 				m.quotaHTTP.mu.Unlock()
@@ -294,14 +298,14 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 			s.failures++
 			s.successes = 0
 			s.lastFailure = m.quotaHTTPTime()
-			next = m.quotaHTTPTime().Add(quotaBackoff(s.failures))
-			if deadline := quotaRetryAfter(r.header.Get("Retry-After"), m.quotaHTTPTime()); deadline.After(m.quotaHTTPTime()) {
-				next = deadline
+			next = s.lastFailure.Add(quotaBackoff(s.failures))
+			if deadline := quotaRetryAfter(r.header.Get("Retry-After"), s.lastFailure); deadline.After(s.lastFailure) {
+				next = s.lastFailure.Add(max(quotaGuardMinInterval, deadline.Sub(s.lastFailure)))
 			}
 			s.until = next
 			s.nextRead = time.Time{}
 		} else if r.status >= 200 && r.status < 300 {
-			ttl := quotaGuardPollInterval
+			ttl := quotaGuardMinInterval
 			if strings.HasSuffix(req.URL.Path, "/profile") {
 				ttl = 6 * time.Hour
 			} else {
@@ -338,11 +342,17 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 				ttl = quotaGuardInterval(copy, cfg.EffectiveQuotaGuard())
 			}
 			if !strings.HasSuffix(req.URL.Path, "/profile") {
-				ttl = min(ttl+time.Duration(rand.Int64N(int64(ttl/10)+1)), 30*time.Minute)
+				ttl = min(ttl+time.Duration(rand.Int64N(int64(ttl/10)+1)), quotaGuardMaxInterval)
 			}
 			r.expires = now.Add(ttl)
+		} else {
+			s.successes = 0
+			// Preserve non-retryable HTTP responses during the minimum interval for this endpoint.
+			r.expires = now.Add(quotaGuardMinInterval)
+		}
+		if !r.expires.IsZero() {
 			if !strings.HasSuffix(req.URL.Path, "/profile") {
-				s.nextRead = r.expires
+				s.lastRead, s.nextRead = r.observed, r.expires
 			}
 			if len(s.cache) >= 16 {
 				var oldest string
@@ -356,8 +366,6 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 			}
 			s.cache[endpoint] = r
 			next = r.expires
-		} else {
-			s.successes = 0
 		}
 		close(s.busy)
 		s.busy = nil
