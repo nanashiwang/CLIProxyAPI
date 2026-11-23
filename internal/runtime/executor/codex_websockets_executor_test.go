@@ -974,6 +974,11 @@ func TestCodexWebsocketsExecuteStreamMapsMessageTooBigClose(t *testing.T) {
 			t.Errorf("read upstream websocket message: %v", errRead)
 			return
 		}
+		// An empty response text already commits the turn, even if no chunk is emitted.
+		if err := conn.WriteMessage(websocket.TextMessage, nil); err != nil {
+			t.Error(err)
+			return
+		}
 		deadline := time.Now().Add(time.Second)
 		closeMessage := websocket.FormatCloseMessage(websocket.CloseMessageTooBig, "message too big")
 		if errWrite := conn.WriteControl(websocket.CloseMessage, closeMessage, deadline); errWrite != nil {

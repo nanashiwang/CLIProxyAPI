@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -12,11 +13,21 @@ import (
 
 // CodexOversizedContinuation never treats a delta as a complete HTTP request.
 func CodexOversizedContinuation(ctx context.Context, payloads ...[]byte) bool {
-	if core.RequiredUpstreamWebsocket(ctx) {
+	if core.RequiredUpstreamWebsocket(ctx) || CodexHasIncrementalInput(payloads...) {
 		return true
 	}
 	for _, payload := range payloads {
-		if gjson.GetBytes(payload, "previous_response_id").String() != "" || gjson.GetBytes(payload, "type").String() == "response.append" || gjson.GetBytes(payload, "generate").Exists() && !gjson.GetBytes(payload, "generate").Bool() {
+		if generate := ojson.GetBytesNoCopy(payload, "generate"); generate.Exists() && !generate.Bool() {
+			return true
+		}
+	}
+	return false
+}
+
+// CodexHasIncrementalInput also checks the original input before translation or payload rules.
+func CodexHasIncrementalInput(payloads ...[]byte) bool {
+	for _, payload := range payloads {
+		if ojson.GetBytesNoCopy(payload, "previous_response_id").String() != "" || ojson.GetBytesNoCopy(payload, "type").String() == "response.append" {
 			return true
 		}
 	}

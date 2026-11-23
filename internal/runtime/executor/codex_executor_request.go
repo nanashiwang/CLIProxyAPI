@@ -9,6 +9,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -364,7 +365,7 @@ func applyCodexHeaders(r *http.Request, auth *cliproxyauth.Auth, token string, s
 	} else if ginCtx, ok := r.Context().Value("gin").(*gin.Context); ok && ginCtx != nil && ginCtx.Request != nil {
 		ginHeaders = ginCtx.Request.Header
 	}
-	applyCodexHeadersWithSIWC(r, auth, codexUseSIWCForRequest(r.Context(), auth, ginHeaders), token, stream, cfg, ginHeaders)
+	applyCodexHeadersFromSources(r, auth, token, stream, cfg, ginHeaders)
 }
 
 // applyModelHeaderOverrides forces models.json config.override_header onto upstream headers.
@@ -508,7 +509,33 @@ func stripCodexSIWCUnsupportedFieldsDoc(doc *ojson.Doc, hasExplicitInstructions 
 	return true
 }
 
+const codexExcludeHeader = "X-Codex-Exclude"
+
+// Preserve repeated values and explicit empties, including headers supplied by SDK callers.
+func codexResponseExclusions(headers http.Header) []string {
+	var keys []string
+	for key := range headers {
+		if strings.EqualFold(key, codexExcludeHeader) {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	var values []string
+	for _, key := range keys {
+		values = append(values, headers[key]...)
+	}
+	return values
+}
+
+func forwardCodexResponseExclusions(target, source http.Header) {
+	if values := codexResponseExclusions(source); len(values) > 0 {
+		deleteHeaderCaseInsensitive(target, codexExcludeHeader)
+		target[codexExcludeHeader] = values
+	}
+}
+
 func applyCodexHeadersFromSources(r *http.Request, auth *cliproxyauth.Auth, token string, stream bool, cfg *config.Config, ginHeaders http.Header) {
+	forwardCodexResponseExclusions(r.Header, ginHeaders)
 	applyCodexHeadersWithSIWC(r, auth, codexUseSIWCForRequest(r.Context(), auth, ginHeaders), token, stream, cfg, ginHeaders)
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/proxy"
@@ -118,6 +119,8 @@ func shouldRetryCodexWebsocketSend(err error) bool {
 
 type codexWebsocketMessageTooBigError struct {
 	statusErr
+	peer           *websocket.CloseError
+	rejectedUpload chan codexWebsocketRead
 }
 
 func (codexWebsocketMessageTooBigError) IsRequestScoped() bool {
@@ -128,12 +131,13 @@ func mapCodexWebsocketReadError(err error) error {
 	if err == nil {
 		return nil
 	}
+	var mapped codexWebsocketMessageTooBigError
+	if errors.As(err, &mapped) {
+		return mapped
+	}
 	var closeErr *websocket.CloseError
 	if errors.As(err, &closeErr) && closeErr.Code == websocket.CloseMessageTooBig {
-		return codexWebsocketMessageTooBigError{statusErr: statusErr{
-			code: http.StatusRequestEntityTooLarge,
-			msg:  `{"error":{"message":"upstream websocket message too big","type":"invalid_request_error","code":"message_too_big"}}`,
-		}}
+		return newCodexRemoteSizeError(closeErr, nil)
 	}
 	return err
 }
@@ -326,4 +330,53 @@ func buildCodexResponsesWebsocketURL(httpURL string) (string, error) {
 	return parsed.String(), nil
 }
 
-func (codexWebsocketMessageTooBigError) UsageErrorOrigin() string { return "proxy_processing" }
+func newCodexRemoteSizeError(peer *websocket.CloseError, rejectedUpload chan codexWebsocketRead) codexWebsocketMessageTooBigError {
+	return codexWebsocketMessageTooBigError{statusErr: statusErr{
+		code: http.StatusRequestEntityTooLarge,
+		msg:  `{"error":{"message":"upstream websocket message too big","type":"invalid_request_error","code":"message_too_big"}}`,
+	}, peer: peer, rejectedUpload: rejectedUpload}
+}
+
+func (e codexWebsocketMessageTooBigError) Unwrap() error {
+	if e.peer != nil {
+		return e.peer
+	}
+	return nil
+}
+
+func (e codexWebsocketMessageTooBigError) UsageErrorOrigin() string {
+	if e.peer != nil {
+		return "upstream_response"
+	}
+	return "proxy_processing"
+}
+
+func rejectedCodexUpload(err error) chan codexWebsocketRead {
+	var sizeErr codexWebsocketMessageTooBigError
+	if errors.As(err, &sizeErr) {
+		return sizeErr.rejectedUpload
+	}
+	return nil
+}
+
+// Match the turn as well as the connection: terminal errors can outlive their reader.
+func sizeRejectedDuringUpload(err error, readCh chan codexWebsocketRead) bool {
+	return readCh != nil && rejectedCodexUpload(err) == readCh
+}
+
+// Reuse the preflight policy after an explicit rejection of this upload.
+func codexSizeFallbackError(ctx context.Context, sizeErr error, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, body []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if generate := ojson.GetBytesNoCopy(body, "generate"); generate.Exists() && !generate.Bool() {
+		return sizeErr
+	}
+	if helps.CodexOversizedContinuation(ctx, req.Payload, opts.OriginalRequest, body) {
+		usage.ObserveDiagnosticEvent(ctx, "replay_required")
+		return cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
+	}
+	usage.ObserveDiagnosticEvent(ctx, "http_size_fallback")
+	cliproxyexecutor.ObserveUpstreamTransport(ctx, "sse")
+	return nil
+}

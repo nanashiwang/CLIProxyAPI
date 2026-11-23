@@ -188,8 +188,14 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	var respHS *http.Response
 	var errDial error
 	dialCtx := ctx
+	profile := codexHandshakeProfile{useSIWC, codexResponseExclusions(wsHeaders)}
+	if sess.changedResponseExclusions(profile.exclusions) && helps.CodexHasIncrementalInput(req.Payload, opts.OriginalRequest, upstreamBody) {
+		unlockSession()
+		usage.ObserveDiagnosticEvent(ctx, "replay_required")
+		return resp, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
+	}
 	if cliproxyexecutor.RequiredUpstreamWebsocket(ctx) {
-		conn, closer = existingWebsocketSessionConn(sess, authID, wsURL, executionProxyURL(ctx, sess.effectiveConfig(authID, e.cfg), auth), useSIWC)
+		conn, closer = existingWebsocketSessionConn(sess, authID, wsURL, executionProxyURL(ctx, sess.effectiveConfig(authID, e.cfg), auth), profile)
 		if conn == nil {
 			usage.ObserveDiagnosticEvent(ctx, "replay_required")
 			return resp, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
@@ -217,26 +223,20 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		}
 		return resp, errDial
 	}
+	var readCh chan codexWebsocketRead
+	handleSizeLimit := func(sizeErr error) (cliproxyexecutor.Response, error) {
+		e.invalidateUpstreamConnWithoutDisconnectNotify(sess, conn, "message_limit", sizeErr)
+		sess.clearActive(conn, readCh)
+		unlockSession()
+		if fallbackErr := codexSizeFallbackError(ctx, sizeErr, req, opts, upstreamBody); fallbackErr != nil {
+			return resp, fallbackErr
+		}
+		delegatedHTTP = true
+		return e.CodexExecutor.Execute(ctx, auth, req, opts)
+	}
 	if codexMessageExceedsLimit(closer, wsReqBody) {
 		recordAPIWebsocketHandshake(ctx, e.cfg, respHS)
-		// Retire only this connection; limits never survive a redial or account change.
-		if sess != nil {
-			e.invalidateUpstreamConnWithoutDisconnectNotify(sess, conn, "message_limit", nil)
-		} else {
-			_ = closer.Close()
-		}
-		unlockSession()
-		if ojson.GetBytesNoCopy(upstreamBody, "generate").Exists() && !ojson.GetBytesNoCopy(upstreamBody, "generate").Bool() {
-			return resp, codexWebsocketMessageTooBigError{statusErr: statusErr{code: 413, msg: "upstream websocket warmup message too big"}}
-		}
-		if helps.CodexOversizedContinuation(ctx, req.Payload, opts.OriginalRequest, upstreamBody) {
-			usage.ObserveDiagnosticEvent(ctx, "replay_required")
-			return resp, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
-		}
-		usage.ObserveDiagnosticEvent(ctx, "http_size_fallback")
-		delegatedHTTP = true
-		cliproxyexecutor.ObserveUpstreamTransport(ctx, "sse")
-		return e.CodexExecutor.Execute(ctx, auth, req, opts)
+		return handleSizeLimit(codexWebsocketMessageTooBigError{statusErr: statusErr{code: 413, msg: "upstream websocket warmup message too big"}})
 	}
 	if errBind := sess.bindExecutionLifecycle(opts, conn, closer, req.Model); errBind != nil {
 		unlockSession()
@@ -255,9 +255,9 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		}()
 	}
 
-	var readCh chan codexWebsocketRead
+	trackSizeClose := opts.ExecutionLifecycle == nil
 	if sess != nil {
-		readCh = sess.activate(conn)
+		readCh = sess.activate(conn, trackSizeClose)
 		defer func() {
 			sess.clearActive(conn, readCh)
 		}()
@@ -269,6 +269,10 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	cliproxyexecutor.MarkUpstreamAttempt(ctx)
 	if errSend := writeCodexWebsocketMessage(sess, conn, wsReqBody); errSend != nil {
 		errSend = mapCodexWebsocketWriteError(sess, conn, errSend)
+		if sizeRejectedDuringUpload(errSend, readCh) {
+			helps.RecordAPIWebsocketError(ctx, e.cfg, "send", errSend)
+			return handleSizeLimit(errSend)
+		}
 		if sess != nil && !isEphemeralSession {
 			if cliproxyexecutor.RequiredUpstreamWebsocket(ctx) {
 				e.invalidateUpstreamConnWithoutDisconnectNotify(sess, conn, "send_error", errSend)
@@ -299,7 +303,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 					closeWebsocketAfterBindFailure(sess, conn, closer)
 					return resp, errBind
 				}
-				readCh = sess.activate(conn)
+				readCh = sess.activate(conn, trackSizeClose)
 				restoreMultiAgentV2 = !multiAgentV2Conflict && (optimizeMultiAgentV2 || sess.isMultiAgentV2Optimized(conn))
 				wsReqBodyRetry := frameCodexWebsocketRequestBody(body)
 				helps.RecordAPIWebsocketRequest(ctx, e.cfg, helps.UpstreamRequestLog{
@@ -322,6 +326,10 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 					wsReqBody = wsReqBodyRetry
 				} else {
 					errSendRetry = mapCodexWebsocketWriteError(sess, connRetry, errSendRetry)
+					if sizeRejectedDuringUpload(errSendRetry, readCh) {
+						helps.RecordAPIWebsocketError(ctx, e.cfg, "send", errSendRetry)
+						return handleSizeLimit(errSendRetry)
+					}
 					e.invalidateUpstreamConn(sess, connRetry, "send_error", errSendRetry)
 					helps.RecordAPIWebsocketError(ctx, e.cfg, "send_retry", errSendRetry)
 					return resp, errSendRetry
@@ -358,6 +366,9 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		if errRead != nil {
 			mappedErr := mapCodexWebsocketReadError(errRead)
 			helps.RecordAPIWebsocketError(ctx, e.cfg, "read", mappedErr)
+			if sizeRejectedDuringUpload(mappedErr, readCh) {
+				return handleSizeLimit(mappedErr)
+			}
 			return resp, mappedErr
 		}
 		if msgType != websocket.TextMessage {

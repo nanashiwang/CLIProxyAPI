@@ -629,6 +629,40 @@
         "Go regression tests for the affected behavior; v8 management smoke and browser checks for usage changes."
       ],
       "notes": "Omit unused generic text message IDs before final payload configuration. Preserve reference relationships and existing compatibility normalization for other inputs."
+    },
+    {
+      "id": "codex-websocket-upload-size-rejection",
+      "title": "Recover explicit upload size rejections before response text",
+      "status": "adapted",
+      "source_commit": "1ee67cd6b264dec3e85452e1d92884cb20ae4ea5",
+      "adapted_commit": "1ee67cd6b264dec3e85452e1d92884cb20ae4ea5",
+      "local_areas": [
+        "CLIProxyAPI/internal/runtime/executor"
+      ],
+      "watch_paths": [
+        "backend/crates/providers/openai/src/transport/**"
+      ],
+      "validation": [
+        "Execute, stream and buffered-stream contract tests with an interrupted fragmented upload, metadata, warmup, continuation, reset and bound lifecycle."
+      ],
+      "notes": "Match the peer close to the active upload. Complete requests may retry over HTTP on the same account. Replies, warmup, bound resources and duplex execution guard against duplicate generation."
+    },
+    {
+      "id": "codex-response-exclusions",
+      "title": "Codex response exclusions and WebSocket reuse",
+      "status": "adapted",
+      "source_commit": "7ff77413c8d92803be92e2e13c7eb0f97cb953cb",
+      "adapted_commit": "7ff77413c8d92803be92e2e13c7eb0f97cb953cb",
+      "local_areas": [
+        "CLIProxyAPI/internal/runtime/executor"
+      ],
+      "watch_paths": [
+        "backend/crates/providers/openai/src/transport/**"
+      ],
+      "validation": [
+        "Wire-level header, connection reuse, redial, unchanged override and replay-required tests."
+      ],
+      "notes": "Forward repeated values and compare the final handshake profile, including overrides, before reuse or a pinned continuation."
     }
   ],
   "review_notes": [
