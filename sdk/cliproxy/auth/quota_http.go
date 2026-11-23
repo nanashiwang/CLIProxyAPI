@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
+
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 )
 
@@ -368,6 +370,17 @@ func (m *Manager) QuotaHTTPRequest(ctx context.Context, a *Auth, req *http.Reque
 		if err != nil {
 			return nil, err
 		}
+		if r.status == http.StatusUnauthorized && codexQuotaOAuth(a) && quotaTokenRevoked(r.body) {
+			source := req
+			if resp.Request != nil {
+				source = resp.Request
+			}
+			if IsQuotaRead(a, source) {
+				if token, ok := strings.CutPrefix(source.Header.Get("Authorization"), "Bearer "); ok {
+					m.rejectQuotaAccessToken(ctx, a, token, r.observed)
+				}
+			}
+		}
 		return quotaHTTPResponse(r, next), nil
 	}
 }
@@ -386,4 +399,40 @@ func (m *Manager) RecordQuotaReadFailure(ctx context.Context, a *Auth, status in
 		return
 	}
 	m.finishQuotaGuardFailure(ctx, codexQuotaRefreshJob{auth: a, attempt: &codexQuotaRefreshAttempt{at: time.Now()}}, "http_error", status)
+}
+
+// rejectQuotaAccessToken applies only evidence observed by the live fetch. Cached
+// reads and late failures from a previous credential cannot invalidate a renewal.
+func (m *Manager) rejectQuotaAccessToken(ctx context.Context, observed *Auth, token string, started time.Time) {
+	if ctx.Err() != nil || m.HomeEnabled() || !authMatchesTokenPartition(observed, token) {
+		return
+	}
+	m.mu.Lock()
+	current := m.auths[observed.ID]
+	if current == nil || current.Disabled || current.RegistrationEpoch != observed.RegistrationEpoch || current.CredentialVersion != observed.CredentialVersion ||
+		(current.CodexQuota != nil && !current.CodexQuota.RequestStartedAt.Before(started)) ||
+		(current.QuotaGuard != nil && current.QuotaGuard.LastAttemptAt.After(started)) || !recordRejectedTokenOnAuth(current, token) {
+		m.mu.Unlock()
+		return
+	}
+	current.Generation++
+	current.UpdatedAt = time.Now()
+	if m.scheduler != nil {
+		m.scheduler.upsertAuth(current.Clone())
+	}
+	m.mu.Unlock()
+	m.queueRefreshReschedule(observed.ID)
+}
+func quotaTokenRevoked(body []byte) bool {
+	const limit = 16 << 10
+	if len(body) > limit || !ojson.ValidBytes(body) {
+		return false
+	}
+	for _, field := range []string{"error.code", "detail.code", "code"} {
+		code := ojson.GetBytesNoCopy(body, field)
+		if code.Exists() {
+			return code.Type == ojson.String && code.String() == "token_revoked"
+		}
+	}
+	return false
 }

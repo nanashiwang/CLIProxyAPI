@@ -213,3 +213,22 @@ func TestQuotaHTTPGlobalConcurrencyBound(t *testing.T) {
 		t.Fatal("shared concurrency exceeded")
 	}
 }
+
+func TestManualQuotaRevocationPreservesResponse(t *testing.T) {
+	m, _, a := newQuotaTestManager(t)
+	req, _ := http.NewRequest(http.MethodGet, "https://chatgpt.com/backend-api/wham/usage", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	body := `{"detail":{"code":"token_revoked"}}`
+	resp, err := m.QuotaHTTPRequest(context.Background(), a, req, func() (*http.Response, error) {
+		return &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	got, err := io.ReadAll(resp.Body)
+	live, _ := m.GetByID(a.ID)
+	if err != nil || string(got) != body || resp.StatusCode != 401 || live.RejectedAccessToken != "test-token" {
+		t.Fatal("manual read lost its body or failed to invalidate its token")
+	}
+}

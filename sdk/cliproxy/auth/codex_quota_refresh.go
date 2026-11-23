@@ -2,15 +2,12 @@ package auth
 
 import (
 	"context"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"io"
 	"net/http"
 	"sort"
-	"strings"
 	"sync"
 	"time"
-
-	"github.com/MoeForge/moego/ojson"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 )
 
 const (
@@ -298,13 +295,6 @@ func (m *Manager) refreshCodexQuota(ctx context.Context, job codexQuotaRefreshJo
 	status = resp.StatusCode
 	if resp.StatusCode != http.StatusOK {
 		category = "http_error"
-		if status == http.StatusUnauthorized && quotaTokenRevoked(resp.Body) {
-			token, ok := strings.CutPrefix(req.Header.Get("Authorization"), "Bearer ")
-			if ok && token != "" && authMatchesTokenPartition(job.auth, token) {
-				m.finishQuotaFailure(ctx, job, "token_revoked", status, token)
-				applied = true
-			}
-		}
 		return
 	}
 	const maxQuotaBytes = 1 << 20
@@ -321,19 +311,4 @@ func (m *Manager) refreshCodexQuota(ctx context.Context, job codexQuotaRefreshJo
 	}
 	category = "observation_rejected"
 	applied = m.applyCodexQuotaRefresh(job.auth, windows, denied, allowed, quotaObservedAt(resp, job.attempt.at), now)
-}
-
-func quotaTokenRevoked(reader io.Reader) bool {
-	const limit = 16 << 10
-	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
-	if err != nil || len(body) > limit || !ojson.ValidBytes(body) {
-		return false
-	}
-	for _, field := range []string{"error.code", "detail.code", "code"} {
-		code := ojson.GetBytesNoCopy(body, field)
-		if code.Exists() {
-			return code.Type == ojson.String && code.String() == "token_revoked"
-		}
-	}
-	return false
 }
