@@ -77,6 +77,12 @@ func parseUsageQuery(c *gin.Context, now time.Time) (internalusage.UsageQuery, e
 		Pool: strings.TrimSpace(c.Query("pool")), Status: strings.TrimSpace(c.Query("status")),
 		Search: strings.TrimSpace(c.Query("search")),
 	}
+	if strings.HasPrefix(c.FullPath(), "/v8/management/") {
+		query.ErrorOrigin = strings.TrimSpace(c.Query("error_origin"))
+		if query.ErrorOrigin != "" && !internalusage.ValidErrorOrigin(query.ErrorOrigin) {
+			return query, fmt.Errorf("invalid error_origin")
+		}
+	}
 	zone := strings.TrimSpace(c.DefaultQuery("timezone", "UTC"))
 	if len(zone) > 100 || zone == "" || zone == "Local" {
 		return query, fmt.Errorf("timezone must be an IANA timezone")

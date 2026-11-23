@@ -1014,7 +1014,7 @@ func (e *CodexWebsocketsExecutor) prepareCodexWebsocketStream(ctx context.Contex
 	if errPromptCache != nil {
 		return nil, errPromptCache
 	}
-	helps.SanitizeCodexInputItemIDsDoc(doc)
+	sanitizeCodexRequestItemIDs(doc, auth)
 	// Retain explicit clearing intent before SIWC removes empty instructions.
 	// The outbound body still follows SIWC cleanup; only inheritance keeps the value.
 	var unconfiguredInstructions string

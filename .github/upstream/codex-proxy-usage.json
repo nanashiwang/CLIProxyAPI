@@ -557,6 +557,78 @@
         "React tests, lint, type-check/build and local usage-route browser inspection; offline monitor retry tests"
       ],
       "notes": "Only structured string x-retry-metadata is honored, case-insensitively. Skip same-account alias retries, refresh and retry waits, including Home dispatch. Existing capacity/overload paths may rotate only under existing admission and replay constraints; other errors stop. Preserve cooldown/Retry-After and committed-stream boundaries."
+    },
+    {
+      "id": "quota-access-token-revocation",
+      "title": "Recover rejected access tokens observed during quota reads",
+      "status": "adapted",
+      "source_commit": "6420d86aa6d046d5e61205d3772e0a65926df9cf",
+      "adapted_commit": "6420d86aa6d046d5e61205d3772e0a65926df9cf",
+      "local_areas": [
+        "CLIProxyAPI/sdk/cliproxy/auth"
+      ],
+      "watch_paths": [
+        "backend/crates/providers/openai/src/credential/quota/**"
+      ],
+      "validation": [
+        "Go regression tests for the affected behavior; v8 management smoke and browser checks for usage changes."
+      ],
+      "notes": "A structured 401 from the quota read rejects only the token sent, guarded by the credential version, registration epoch and observation time. Schedule recovery through the existing refresh loop."
+    },
+    {
+      "id": "usage-error-origin",
+      "title": "Filter errors by their observed origin",
+      "status": "adapted",
+      "source_commit": "dca9806961812a2458c881828942fd18105b3fc2",
+      "adapted_commit": "dca9806961812a2458c881828942fd18105b3fc2",
+      "local_areas": [
+        "CLIProxyAPI/internal/usage",
+        "Cli-Proxy-API-Management-Center/src/features/usage"
+      ],
+      "watch_paths": [
+        "backend/crates/gateway-admin/src/**",
+        "frontend/src/components/usage/**"
+      ],
+      "validation": [
+        "Go regression tests for the affected behavior; v8 management smoke and browser checks for usage changes."
+      ],
+      "notes": "Persist bounded evidence and use one filter for v8 records and aggregates. Unobserved or historical failures have unknown origin."
+    },
+    {
+      "id": "gpt62-ultrafast-pricing",
+      "title": "GPT-6.2 embedded prices and Ultrafast display",
+      "status": "adapted",
+      "source_commit": "bb440a3cbb600eb0b4d0145fa253c86666db9fdb",
+      "adapted_commit": "bb440a3cbb600eb0b4d0145fa253c86666db9fdb",
+      "local_areas": [
+        "CLIProxyAPI/internal/pricing",
+        "Cli-Proxy-API-Management-Center/src/features/usage"
+      ],
+      "watch_paths": [
+        "backend/crates/providers/openai/src/transport/usage.rs",
+        "frontend/src/components/usage/**"
+      ],
+      "validation": [
+        "Go regression tests for the affected behavior; v8 management smoke and browser checks for usage changes."
+      ],
+      "notes": "Prefer the observed response tier, then the effective outbound tier. Embedded fallback applies the official promotional period at request time. Show the saved billing snapshot."
+    },
+    {
+      "id": "codex-oauth-text-replay-ids",
+      "title": "Codex OAuth replay of inline text messages",
+      "status": "adapted",
+      "source_commit": "d90b9d129e5f8b026b2a6ebb763a7628280c804b",
+      "adapted_commit": "d90b9d129e5f8b026b2a6ebb763a7628280c804b",
+      "local_areas": [
+        "CLIProxyAPI/internal/runtime/executor"
+      ],
+      "watch_paths": [
+        "backend/crates/providers/openai/src/compat/**"
+      ],
+      "validation": [
+        "Go regression tests for the affected behavior; v8 management smoke and browser checks for usage changes."
+      ],
+      "notes": "Omit unused generic text message IDs before final payload configuration. Preserve reference relationships and existing compatibility normalization for other inputs."
     }
   ],
   "review_notes": [

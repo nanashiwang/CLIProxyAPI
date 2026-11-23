@@ -43,6 +43,15 @@ func SanitizeCodexInputItemIDs(body []byte) []byte {
 // removes encrypted reasoning items whose IDs exceed the Codex limit, and deterministically
 // shortens other overlong input item IDs.
 func SanitizeCodexInputItemIDsDoc(doc *ojson.Doc) bool {
+	return sanitizeCodexInputIDs(doc, false)
+}
+
+// SanitizeCodexOAuthInputIDsDoc omits optional SDK message IDs only on OAuth replay.
+func SanitizeCodexOAuthInputIDsDoc(doc *ojson.Doc) bool {
+	return sanitizeCodexInputIDs(doc, true)
+}
+
+func sanitizeCodexInputIDs(doc *ojson.Doc, oauth bool) bool {
 	if doc == nil || doc.Len() == 0 {
 		return false
 	}
@@ -54,6 +63,7 @@ func SanitizeCodexInputItemIDsDoc(doc *ojson.Doc) bool {
 	items := input.Array()
 	idStates := make(map[string]uint8, len(items))
 	hasDropped := false
+	var references map[string]bool
 	for _, item := range items {
 		if shouldDropCodexEncryptedReasoningItem(item) {
 			hasDropped = true
@@ -64,6 +74,12 @@ func SanitizeCodexInputItemIDsDoc(doc *ojson.Doc) bool {
 			continue
 		}
 		originalID := itemID.String()
+		if oauth && strings.HasPrefix(originalID, "item_") && (item.Get("type").String() == "item_reference" || (item.Get("type").Type == ojson.Null && !item.Get("role").Exists() && !item.Get("content").Exists())) {
+			if references == nil {
+				references = make(map[string]bool)
+			}
+			references[originalID] = true
+		}
 		id := normalizeCodexInputItemID(item, originalID)
 		state := idStates[id]
 		if state&codexInputItemIDSeen != 0 {
@@ -96,6 +112,17 @@ func SanitizeCodexInputItemIDsDoc(doc *ojson.Doc) bool {
 		itemID := item.Get("id")
 		if itemID.Type == ojson.String {
 			originalID := itemID.String()
+			if oauth && strings.HasPrefix(originalID, "item_") {
+				if references[originalID] {
+					continue
+				}
+				if inlineCodexTextMessage(item) {
+					if doc.Delete(fmt.Sprintf("input.%d.id", idx)) == nil {
+						changed = true
+					}
+					continue
+				}
+			}
 			id := normalizeCodexInputItemID(item, originalID)
 			if id != originalID && idStates[id]&(codexInputItemIDPreserved|codexInputItemIDDuplicate) != 0 {
 				collisionKey := id + "\x00" + originalID
@@ -258,4 +285,30 @@ func codexInputItemIDWithHashSuffixRunes(id string, runes []rune, attempt int) s
 		prefixLength = len(runes)
 	}
 	return sanitizeCodexInputItemIDChars(string(runes[:prefixLength])) + suffix
+}
+
+func inlineCodexTextMessage(item ojson.Result) bool {
+	if item.Get("type").String() != "message" || item.Get("encrypted_content").Exists() {
+		return false
+	}
+	switch item.Get("role").String() {
+	case "system", "developer", "user", "assistant":
+	default:
+		return false
+	}
+	content := item.Get("content")
+	if content.Type == ojson.String {
+		return content.String() != ""
+	}
+	if !content.IsArray() {
+		return false
+	}
+	parts := content.Array()
+	for _, part := range parts {
+		typ := part.Get("type").String()
+		if (typ != "output_text" && typ != "input_text") || part.Get("text").Type != ojson.String {
+			return false
+		}
+	}
+	return len(parts) > 0
 }

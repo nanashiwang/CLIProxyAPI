@@ -29,3 +29,5 @@ This is observed usage, not reserved capacity: calls between checks or already i
 ## Related notes
 
 The usage-timezone-and-account-facts note owns display/accounting. The Kimi concurrency-admission note owns request rejection, independent of usage protection. Existing release-delivery and capability-review notes still apply.
+
+A structured 401 token_revoked is evidence about the access token sent on that quota request. Apply it while checking the registration epoch, credential version, exact token and observation age. The existing refresh scheduler owns renewal and backoff. Revoking the refresh grant or releasing a pool lease would affect state beyond that observation.

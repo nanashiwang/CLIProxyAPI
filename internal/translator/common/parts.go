@@ -179,3 +179,5 @@ func IsHTTPURL(value string) bool {
 	}
 	return strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https")
 }
+
+func (*UnsupportedPartError) UsageErrorOrigin() string { return "proxy_processing" }

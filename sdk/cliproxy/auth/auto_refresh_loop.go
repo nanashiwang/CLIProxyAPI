@@ -461,6 +461,9 @@ func nextRefreshCheckAt(now time.Time, auth *Auth, interval time.Duration) (time
 		return minDue, true
 	}
 
+	if codexQuotaOAuth(auth) && auth.RejectedAccessToken != "" && auth.RejectedAccessToken == authOuterAccessToken(auth) && authRefreshToken(auth) != "" {
+		return now, true
+	}
 	if auth.AuthKind() == AuthKindAPIKey {
 		return time.Time{}, false
 	}

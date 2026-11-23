@@ -25,3 +25,5 @@ Older backend responses lack new fields, so the frontend must retain legacy pres
 ## Related-note audit
 
 The existing [stream-truncated-no-replay note](../bug-fix/2026-11-08-stream-truncated-no-replay.md) remains authoritative for replay. The October usage/diagnostic notes retain accounting and snapshot boundaries. This adds health evidence and transport negotiation without superseding those decisions.
+
+Error origin is an independent stored dimension. A recorded upstream rejection, a typed transport failure, or an explicit local failure supplies evidence. A synthesized HTTP status alone cannot distinguish a proxy rejection from an upstream one. Unknown historical failures are filterable. OAuth replay cleanup examines the whole input for references before discarding optional inline text IDs.

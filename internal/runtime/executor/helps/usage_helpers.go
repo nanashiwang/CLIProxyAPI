@@ -41,6 +41,7 @@ type UsageReporter struct {
 	clientMetadata        usage.ClientRequestMetadata
 	modelMu               sync.RWMutex
 	modelGeneration       uint64
+	upstreamHTTPStatus    int
 	expectedUpstreamModel string
 	upstreamModel         string
 	upstreamTransport     string
@@ -499,6 +500,11 @@ func (r *UsageReporter) observeResponseForGeneration(resp *http.Response, genera
 	if r == nil || resp == nil {
 		return
 	}
+	r.modelMu.Lock()
+	if generation == r.modelGeneration {
+		r.upstreamHTTPStatus = resp.StatusCode
+	}
+	r.modelMu.Unlock()
 	usage.ObserveDiagnosticEvent(r.diagnosticContext, "upstream_headers")
 	if r.quotaObserver != nil {
 		r.quotaObserver(resp.Header)
@@ -923,8 +929,24 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 	}
 }
 
-func (r *UsageReporter) failFromErrors(_ context.Context, errs ...error) usage.Failure {
-	return failFromErrorsWithRules(r.requestScopedErrorRules(), errs...)
+func (r *UsageReporter) failFromErrors(ctx context.Context, errs ...error) usage.Failure {
+	fail := failFromErrorsWithRules(r.requestScopedErrorRules(), errs...)
+	if fail.Origin != "" || r == nil {
+		return fail
+	}
+	r.modelMu.RLock()
+	status := r.upstreamHTTPStatus
+	r.modelMu.RUnlock()
+	if status >= 400 && status == fail.StatusCode {
+		fail.Origin = "upstream_response"
+	}
+	if cliproxyexecutor.UpstreamAttempted(ctx) {
+		switch fail.Category {
+		case "dns", "tls", "connection_closed", "connection_refused", "timeout":
+			fail.Origin = "upstream_connection"
+		}
+	}
+	return fail
 }
 
 func failFromErrors(errs ...error) usage.Failure {
@@ -950,6 +972,12 @@ func failFromErrorsWithRules(rules []internalconfig.RequestScopedErrorRule, errs
 			Body:       body,
 			StatusCode: clienterror.HTTPStatusFromError(err),
 			Category:   usage.FailureCategory(err),
+		}
+		if origin, ok := errors.AsType[interface {
+			error
+			UsageErrorOrigin() string
+		}](err); ok {
+			fail.Origin = origin.UsageErrorOrigin()
 		}
 		if truncatedErr, ok := errors.AsType[cliproxyexecutor.StreamTruncatedError](err); ok && truncatedErr != nil && truncatedErr.IsStreamTruncated() {
 			fail.Code = usage.FailureStreamTruncatedCode

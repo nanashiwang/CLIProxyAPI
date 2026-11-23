@@ -72,3 +72,19 @@ func TestDashboardServiceHealthKeepsAccounting(t *testing.T) {
 		t.Fatal("excluded outcomes supplied rate")
 	}
 }
+
+func TestErrorOriginFilteringDoesNotInferLegacyFailures(t *testing.T) {
+	stats := NewRequestStatistics()
+	now := time.Now().UTC()
+	for _, origin := range []string{"upstream_connection", "upstream_response", "proxy_processing", "private legacy text", ""} {
+		stats.events = append(stats.events, normalizeStoredEvent(storedEvent{Detail: RequestDetail{Timestamp: now, Generate: true, Failed: origin != "", ErrorOrigin: origin}}))
+	}
+	for _, origin := range []string{"upstream_connection", "upstream_response", "proxy_processing", "unknown"} {
+		q := UsageQuery{ErrorOrigin: origin}
+		p := stats.QueryRecords(q, 1, 25, "timestamp", "desc")
+		d := stats.Dashboard(q, now.Add(time.Second))
+		if len(p.Items) != 1 || p.Items[0].ErrorOrigin != origin || d.Summary.FailureCount != 1 || !d.ErrorOriginFilter {
+			t.Fatalf("origin %s, records %d, failures %d", origin, len(p.Items), d.Summary.FailureCount)
+		}
+	}
+}

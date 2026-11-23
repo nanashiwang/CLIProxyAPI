@@ -234,3 +234,42 @@ func TestQuotaGuardCoordinatorWhileWorkerBlocked(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexQuotaRevocationUsesObservedCredential(t *testing.T) {
+	for _, tc := range []struct {
+		name, code     string
+		rotate, reject bool
+	}{
+		{"revoked", "token_revoked", false, true}, {"other", "invalid_token", false, false}, {"rotated", "token_revoked", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, e, a := newQuotaTestManager(t)
+			now := time.Now()
+			m.mu.Lock()
+			m.auths[a.ID].Metadata["refresh_token"] = "fixture-refresh"
+			m.auths[a.ID].Metadata["expired"] = now.Add(12 * time.Hour).Format(time.RFC3339)
+			m.mu.Unlock()
+			e.fetch = func(_ context.Context, observed *Auth, req *http.Request) (*http.Response, error) {
+				req.Header.Set("Authorization", "Bearer "+authOuterAccessToken(observed))
+				if tc.rotate {
+					m.mu.Lock()
+					m.auths[a.ID].Metadata["access_token"] = "replacement"
+					m.auths[a.ID].CredentialVersion++
+					m.mu.Unlock()
+				}
+				return &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"` + tc.code + `"}}`))}, nil
+			}
+			refreshQuotaAt(m, context.Background(), now)
+			got, _ := m.GetByID(a.ID)
+			if (got.RejectedAccessToken != "") != tc.reject || got.RejectedRefreshToken != "" {
+				t.Fatal("wrong credential rejected")
+			}
+			if tc.reject {
+				due, scheduled := nextRefreshCheckAt(now, got, time.Minute)
+				if !scheduled || due.After(now) || !m.shouldRefresh(got, now) {
+					t.Fatal("replacement not scheduled")
+				}
+			}
+		})
+	}
+}

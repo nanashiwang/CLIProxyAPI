@@ -306,3 +306,5 @@ func claudeThreadEventPayload(event []byte) []byte {
 	}
 	return bytes.Join(lines, []byte("\n"))
 }
+
+func (ClaudeThreadBetaConflictError) UsageErrorOrigin() string { return "proxy_processing" }

@@ -3,6 +3,7 @@ package pricing
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
@@ -297,4 +298,31 @@ func TestGPT61SolFallbackPricesAndSnapshots(t *testing.T) {
 	}
 	assertFloatClose(t, s.CalculateUsageCost(r).TotalUSD, .0042)
 	assertFloatClose(t, old.TotalUSD, .003)
+}
+
+func TestEmbeddedGPT62UltrafastRatesAtPacificMidnight(t *testing.T) {
+	service := NewService()
+	cut := time.Date(2027, 3, 1, 8, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		model string
+		input int64
+		at    time.Time
+		rate  float64
+	}{
+		{"gpt-6.2-astra", 272000, cut.Add(-time.Second), 24},
+		{"gpt-6.2-astra", 272001, cut.Add(-time.Second), 48},
+		{"gpt-6.2-sol", 272000, cut, 12},
+		{"gpt-6.2-sol", 272001, cut, 24},
+	} {
+		rec := coreusage.Record{Provider: "codex", Model: tc.model, RequestedAt: tc.at, EffectiveServiceTier: "ultrafast", Detail: coreusage.Detail{TokenBreakdown: coreusage.NewSubsetTokenBreakdown(tc.input, 0, 0, 1, 0, tc.input+1)}}
+		b := service.CalculateUsageCost(rec)
+		if !b.Priced || !b.Pricing.Estimated || b.Pricing.ServiceTier != "ultrafast" {
+			t.Fatal(b)
+		}
+		assertFloatClose(t, b.Pricing.UnitPricesUSDPerMillion.Input, tc.rate)
+		rec.ResponseServiceTier = "default"
+		if service.CalculateUsageCost(rec).Pricing.ServiceTier != "standard" {
+			t.Fatal("response downgrade lost")
+		}
+	}
 }

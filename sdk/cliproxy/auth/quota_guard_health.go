@@ -217,6 +217,10 @@ func (m *Manager) logQuotaGuardObservation(a *Auth) {
 
 // finishQuotaGuardFailure never records response bodies, credentials or raw transport errors.
 func (m *Manager) finishQuotaGuardFailure(ctx context.Context, job codexQuotaRefreshJob, category string, status int) {
+	m.finishQuotaFailure(ctx, job, category, status, "")
+}
+
+func (m *Manager) finishQuotaFailure(ctx context.Context, job codexQuotaRefreshJob, category string, status int, rejectedToken string) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -237,6 +241,13 @@ func (m *Manager) finishQuotaGuardFailure(ctx context.Context, job codexQuotaRef
 		m.mu.Unlock()
 		return
 	}
+	if rejectedToken != "" {
+		if m.HomeEnabled() || a.CredentialVersion != job.auth.CredentialVersion || !authMatchesTokenPartition(a, rejectedToken) {
+			m.mu.Unlock()
+			return
+		}
+		recordRejectedTokenOnAuth(a, rejectedToken)
+	}
 	a.QuotaGuard.LastAttemptAt = job.attempt.at
 	a.QuotaGuard.LastFailureAt = job.attempt.at
 	a.QuotaGuard.Failure, a.QuotaGuard.HTTPStatus = category, status
@@ -246,6 +257,9 @@ func (m *Manager) finishQuotaGuardFailure(ctx context.Context, job codexQuotaRef
 	m.mu.Unlock()
 	log.WithFields(log.Fields{"auth_index": snapshot.Index, "provider": snapshot.Provider, "category": category, "http_status": status, "next_check_at": snapshot.QuotaGuard.NextCheckAt}).Warn("quota guard query failed")
 	m.publishCodexQuota(snapshot, false)
+	if rejectedToken != "" {
+		m.queueRefreshReschedule(snapshot.ID)
+	}
 }
 
 // reconcileQuotaGuardHealth is independent of network workers, including hung requests.

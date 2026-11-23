@@ -110,6 +110,7 @@ const FailureForceCooldownCode = "force_cooldown"
 
 // Failure holds HTTP failure metadata for an upstream request attempt.
 type Failure struct {
+	Origin     string
 	Category   string
 	StatusCode int
 	Body       string

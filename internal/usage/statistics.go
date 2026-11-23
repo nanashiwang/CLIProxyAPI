@@ -81,6 +81,7 @@ type TokenStats struct {
 
 // RequestDetail stores one persisted request event without secrets or failure bodies.
 type RequestDetail struct {
+	ErrorOrigin                 string                    `json:"error_origin,omitempty"`
 	ServiceOutcome              string                    `json:"service_outcome,omitempty"`
 	Timing                      *coreusage.ResponseTiming `json:"timing,omitempty"`
 	Diagnostics                 *coreusage.Diagnostics    `json:"diagnostics,omitempty"`
@@ -1202,6 +1203,7 @@ func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
 		API:     apiIdentifier(record.APIKey, endpoint, provider),
 		Model:   model,
 		Detail: RequestDetail{
+			ErrorOrigin:                 record.Fail.Origin,
 			ServiceOutcome:              serviceOutcome(failed, record.Fail.Category, statusCode),
 			Diagnostics:                 coreusage.NormalizeDiagnostics(record.Diagnostics),
 			Timestamp:                   timestamp.UTC(),
@@ -1242,6 +1244,11 @@ func eventFromRecord(ctx context.Context, record coreusage.Record) storedEvent {
 }
 
 func normalizeStoredEvent(event storedEvent) storedEvent {
+	if !event.Detail.Failed {
+		event.Detail.ErrorOrigin = ""
+	} else if !ValidErrorOrigin(event.Detail.ErrorOrigin) {
+		event.Detail.ErrorOrigin = "unknown"
+	}
 	// Preserve missing outcome evidence before legacy status defaults are applied.
 	switch event.Detail.ServiceOutcome {
 	case "succeeded", "failed", "incomplete", "cancelled", "caller_error", "unknown":

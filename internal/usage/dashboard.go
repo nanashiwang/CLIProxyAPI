@@ -26,6 +26,7 @@ type UsageQuery struct {
 	APIKey        string
 	Pool          string
 	Status        string
+	ErrorOrigin   string
 	StatusCode    int
 	Search        string
 	IncludeWarmup bool
@@ -169,20 +170,29 @@ type UsageFilterOptions struct {
 	Pools     []UsageFilterOption `json:"pools"`
 }
 
+func ValidErrorOrigin(value string) bool {
+	switch value {
+	case "upstream_connection", "upstream_response", "proxy_processing", "unknown":
+		return true
+	}
+	return false
+}
+
 type UsageDashboard struct {
-	ComputedAt  time.Time          `json:"computed_at"`
-	CacheHit    bool               `json:"cache_hit"`
-	Timezone    string             `json:"timezone"`
-	Summary     UsageSummary       `json:"summary"`
-	Performance UsagePerformance   `json:"performance"`
-	Health      UsageHealth        `json:"health"`
-	Cost        UsageCost          `json:"cost"`
-	Trend       []UsageTrendPoint  `json:"trend"`
-	Dimensions  UsageDimensions    `json:"dimensions"`
-	Filters     UsageFilterOptions `json:"filters"`
-	Granularity string             `json:"granularity"`
-	From        time.Time          `json:"from"`
-	To          time.Time          `json:"to"`
+	ErrorOriginFilter bool               `json:"error_origin_filter"`
+	ComputedAt        time.Time          `json:"computed_at"`
+	CacheHit          bool               `json:"cache_hit"`
+	Timezone          string             `json:"timezone"`
+	Summary           UsageSummary       `json:"summary"`
+	Performance       UsagePerformance   `json:"performance"`
+	Health            UsageHealth        `json:"health"`
+	Cost              UsageCost          `json:"cost"`
+	Trend             []UsageTrendPoint  `json:"trend"`
+	Dimensions        UsageDimensions    `json:"dimensions"`
+	Filters           UsageFilterOptions `json:"filters"`
+	Granularity       string             `json:"granularity"`
+	From              time.Time          `json:"from"`
+	To                time.Time          `json:"to"`
 }
 
 func (q UsageQuery) matchesTime(event storedEvent) bool {
@@ -199,6 +209,7 @@ func (q UsageQuery) matches(event storedEvent) bool {
 		(q.APIKey != "" && q.APIKey != usageAPIKey(event)) ||
 		(q.Pool != "" && q.Pool != d.PoolID) ||
 		(q.Status == "success" && d.Failed) || (q.Status == "failed" && !d.Failed) ||
+		(q.ErrorOrigin != "" && (!d.Failed || q.ErrorOrigin != d.ErrorOrigin)) ||
 		(q.StatusCode != 0 && q.StatusCode != d.StatusCode) {
 		return false
 	}
@@ -533,7 +544,7 @@ func buildDashboard(events []storedEvent, query UsageQuery, now time.Time) Usage
 		location = time.UTC
 	}
 	query.Search = strings.ToLower(strings.TrimSpace(query.Search))
-	result := UsageDashboard{From: query.From, To: query.To, Timezone: location.String(),
+	result := UsageDashboard{ErrorOriginFilter: true, From: query.From, To: query.To, Timezone: location.String(),
 		Health: UsageHealth{StatusCodes: make(map[string]int64)}, Trend: make([]UsageTrendPoint, 0)}
 	if result.To.IsZero() {
 		result.To = now.UTC()

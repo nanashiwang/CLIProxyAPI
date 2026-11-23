@@ -367,3 +367,5 @@ func closeHTTPResponseBody(resp *http.Response, logPrefix string) {
 		log.Errorf("%s: %v", logPrefix, errClose)
 	}
 }
+
+func (statusErrWithHeaders) UsageErrorOrigin() string { return "upstream_response" }

@@ -325,3 +325,5 @@ func buildCodexResponsesWebsocketURL(httpURL string) (string, error) {
 	}
 	return parsed.String(), nil
 }
+
+func (codexWebsocketMessageTooBigError) UsageErrorOrigin() string { return "proxy_processing" }

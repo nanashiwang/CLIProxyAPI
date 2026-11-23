@@ -27,6 +27,7 @@ func (r *UsageReporter) resetModelObservation() uint64 {
 	r.modelMu.Lock()
 	defer r.modelMu.Unlock()
 	r.modelGeneration++
+	r.upstreamHTTPStatus = 0
 	r.timing = &usage.ResponseTiming{}
 	r.upstreamModel, r.responseModel, r.responseSource = r.expectedUpstreamModel, "", ""
 	r.responseModelFinal.Store(false)

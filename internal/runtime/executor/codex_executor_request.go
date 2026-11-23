@@ -190,7 +190,7 @@ func (e *CodexExecutor) cacheHelperDoc(ctx context.Context, from sdktranslator.F
 	if cache.ID != "" {
 		helps.SetStringIfDifferentDoc(doc, "prompt_cache_key", cache.ID)
 	}
-	helps.SanitizeCodexInputItemIDsDoc(doc)
+	sanitizeCodexRequestItemIDs(doc, auth)
 	helps.FinalizePayloadDoc(ctx, doc)
 	var rawJSON []byte
 	if doc != nil {
@@ -984,4 +984,12 @@ func codexImageGenerationToolModel(body []byte) string {
 		}
 	}
 	return codexDefaultImageToolModel
+}
+
+func sanitizeCodexRequestItemIDs(doc *ojson.Doc, auth *cliproxyauth.Auth) {
+	if auth != nil && !codexAuthUsesAPIKey(auth) {
+		helps.SanitizeCodexOAuthInputIDsDoc(doc)
+		return
+	}
+	helps.SanitizeCodexInputItemIDsDoc(doc)
 }

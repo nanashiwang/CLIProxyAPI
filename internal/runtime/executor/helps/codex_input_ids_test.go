@@ -457,3 +457,13 @@ func BenchmarkSanitizeCodexInputItemIDsLargeHistory(b *testing.B) {
 		benchmarkSanitizeCodexInputItemIDsOutput = SanitizeCodexInputItemIDs(body)
 	}
 }
+
+func TestOAuthReplayTextIDsRespectForwardReferences(t *testing.T) {
+	doc := ojson.NewDocString(`{"input":[{"type":"message","role":"user","id":"item_drop","content":[{"type":"input_text","text":"hi"}]},{"type":"message","role":"assistant","id":"item_keep","content":"hello"},{"type":"item_reference","id":"item_keep"},{"type":"message","role":"user","id":"item_image","content":[{"type":"input_image","file_id":"f"}]}]}`)
+	if !SanitizeCodexOAuthInputIDsDoc(doc) || doc.Get("input.0.id").Exists() || doc.Get("input.0.content.0.text").String() != "hi" || doc.Get("input.1.id").String() != doc.Get("input.2.id").String() || !doc.Get("input.3.id").Exists() {
+		t.Fatal(doc.String())
+	}
+	if SanitizeCodexOAuthInputIDsDoc(doc) {
+		t.Fatal("not idempotent")
+	}
+}

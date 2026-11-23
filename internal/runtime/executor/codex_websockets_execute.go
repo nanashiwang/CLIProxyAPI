@@ -123,7 +123,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	if errPromptCache != nil {
 		return resp, errPromptCache
 	}
-	helps.SanitizeCodexInputItemIDsDoc(doc)
+	sanitizeCodexRequestItemIDs(doc, auth)
 	if useSIWC {
 		applyCodexSIWCWebsocketBodyRulesDoc(doc, hasExplicitInstructions, cliproxyexecutor.Options{KeepTopLevelEffort: thinking.HasThinkingSuffix(req.Model)})
 	}

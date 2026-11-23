@@ -170,6 +170,9 @@ func (m *Manager) shouldRefresh(a *Auth, now time.Time) bool {
 		return false
 	}
 
+	if codexQuotaOAuth(a) && a.RejectedAccessToken != "" && a.RejectedAccessToken == authOuterAccessToken(a) && authRefreshToken(a) != "" {
+		return true
+	}
 	lastRefresh := a.LastRefreshedAt
 	if lastRefresh.IsZero() {
 		if ts, ok := authLastRefreshTimestamp(a); ok {

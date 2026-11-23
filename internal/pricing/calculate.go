@@ -97,6 +97,20 @@ func (s *Service) CalculateUsageCost(record coreusage.Record) coreusage.Billing 
 	outputPrice := selectBucketPrice(resolved.entry, "output_cost_per_token", tier, threshold)
 	cacheReadPrice := selectBucketPrice(resolved.entry, "cache_read_input_token_cost", tier, threshold)
 	cacheWritePrice := selectBucketPrice(resolved.entry, "cache_creation_input_token_cost", tier, threshold)
+	if tier == "ultrafast" && source == "embedded" && (resolved.name == "gpt-6.2-astra" || resolved.name == "gpt-6.2-sol") {
+		at := record.RequestedAt
+		if at.IsZero() {
+			at = calculatedAt
+		}
+		// Midnight in Los Angeles on March 1, 2027 is 08:00 UTC.
+		if at.Before(time.Date(2027, 3, 1, 8, 0, 0, 0, time.UTC)) {
+			// The promotional rate is half the published Ultrafast list rate.
+			inputPrice.value /= 2
+			outputPrice.value /= 2
+			cacheReadPrice.value /= 2
+			cacheWritePrice.value /= 2
+		}
+	}
 
 	if resolved.hasOverride {
 		inputPrice = applyPriceOverride(inputPrice, resolved.override.Input)
@@ -194,6 +208,9 @@ func effectiveServiceTier(record coreusage.Record) string {
 	tier := strings.ToLower(strings.TrimSpace(record.ResponseServiceTier))
 	if tier == "" {
 		tier = strings.ToLower(strings.TrimSpace(record.Detail.ResponseServiceTier))
+	}
+	if tier == "" {
+		tier = strings.ToLower(strings.TrimSpace(record.EffectiveServiceTier))
 	}
 	if tier == "" {
 		tier = strings.ToLower(strings.TrimSpace(record.ServiceTier))
@@ -394,6 +411,8 @@ func deriveCombinedPrice(entry modelEntry, baseField, thresholdSuffix, tierSuffi
 
 func serviceTierSuffix(tier string) string {
 	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "ultrafast":
+		return "_" + tier
 	case "flex":
 		return "_flex"
 	case "priority", "fast":

@@ -2287,3 +2287,29 @@ func TestOpenCodeUsageSourceDoesNotExposeCredential(t *testing.T) {
 		t.Fatalf("unsafe usage source: %s", got)
 	}
 }
+
+func TestFailureOriginRequiresCurrentAttemptEvidence(t *testing.T) {
+	r := &UsageReporter{}
+	ctx := cliproxyexecutor.WithUpstreamAttemptTracker(context.Background())
+	rejected := usageResponseBodyError{status: 429}
+	if r.failFromErrors(ctx, rejected).Origin != "" {
+		t.Fatal("status alone classified as upstream")
+	}
+	generation := r.resetModelObservation()
+	r.observeResponseForGeneration(&http.Response{StatusCode: 429}, generation)
+	if r.failFromErrors(ctx, rejected).Origin != "upstream_response" {
+		t.Fatal("observed rejection lost")
+	}
+	r.resetModelObservation()
+	r.observeResponseForGeneration(&http.Response{StatusCode: 429}, generation)
+	if r.failFromErrors(ctx, rejected).Origin != "" {
+		t.Fatal("older exchange contaminated new attempt")
+	}
+	cliproxyexecutor.MarkUpstreamAttempt(ctx)
+	if r.failFromErrors(ctx, io.ErrUnexpectedEOF).Origin != "upstream_connection" {
+		t.Fatal("connection failure lost")
+	}
+	if r.failFromErrors(ctx, ClaudeThreadBetaConflictError{}).Origin != "proxy_processing" {
+		t.Fatal("local rejection lost")
+	}
+}
