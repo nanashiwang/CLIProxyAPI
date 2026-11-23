@@ -520,5 +520,6 @@ func (m *Manager) codexQuotaRoutingBlocked(a *Auth) bool {
 }
 func (m *Manager) codexQuotaRoutingBlockedAt(a *Auth, now time.Time) bool {
 	healthBlocked := m.quotaGuardHealthBlocked(a, now)
+	a.quotaPace = observedQuotaPace(a, m.runtimeConfigSnapshot(), now)
 	return healthBlocked || m.providerQuotaGuardBlocked(a) || m.codexQuotaGuardBlocked(a) || (a.CodexQuota != nil && a.CodexQuota.Exhausted && !m.cooldownDisabledForAuth(a))
 }

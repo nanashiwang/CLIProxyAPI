@@ -65,6 +65,17 @@ func (h *Handler) ConfigV8(c *gin.Context) {
 				}
 			}
 			h.injectV8APIKeyAuthIndexesLocked(root, data)
+			// Advertise support on the routing board even for legacy YAML with no routing block.
+			if len(parts) == 0 {
+				routing := yamlMappingValue(root, "routing")
+				if routing == nil {
+					routing = emptyYAMLMappingNode()
+					setYAMLMappingValue(root, "routing", routing)
+				}
+				if routing.Kind == yaml.MappingNode && yamlMappingValue(routing, "quota-pacing") == nil {
+					setYAMLMappingValue(routing, "quota-pacing", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "false"})
+				}
+			}
 		}
 		value := configV8Node(root, parts)
 		if value == nil {

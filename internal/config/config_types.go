@@ -614,6 +614,10 @@ type QuotaExceeded struct {
 
 // RoutingConfig configures how credentials are selected for requests.
 type RoutingConfig struct {
+	// QuotaPacing adjusts local weighted dispatch using fresh Codex OAuth quota windows.
+	QuotaPacing     bool   `yaml:"quota-pacing,omitempty" json:"quota-pacing,omitempty"`
+	QuotaPacingPool string `yaml:"quota-pacing-pool,omitempty" json:"quota-pacing-pool,omitempty"`
+
 	// Strategy selects the credential selection strategy.
 	// Supported values: "round-robin" (default), "weighted-round-robin", "fill-first".
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`

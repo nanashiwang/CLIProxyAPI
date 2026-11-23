@@ -71,6 +71,12 @@ def main():
                         time.sleep(0.2)
                 normalized = get('config')
                 assert all(key in normalized for key in ('server', 'management', 'access')), 'v7 YAML must load through the v8 configuration contract'
+                assert normalized['routing']['quota-pacing'] is False
+                request('config', 'PATCH', {'routing': {'strategy': 'weighted-round-robin', 'quota-pacing': True, 'quota-pacing-pool': 'pilot'}})
+                routing = get('config')['routing']
+                assert routing['quota-pacing'] is True and routing['quota-pacing-pool'] == 'pilot'
+                request('config', 'PATCH', {'routing': {'quota-pacing': False, 'quota-pacing-pool': ''}})
+                assert get('config')['routing']['quota-pacing'] is False
                 verify_provider_identity(request)
                 for path, fields in [
                     ("account-pools", ("config", "keys", "credentials", "revision")),

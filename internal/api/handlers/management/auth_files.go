@@ -747,6 +747,11 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quota authFileQu
 	if !auth.LastRefreshedAt.IsZero() {
 		entry["last_refresh"] = auth.LastRefreshedAt
 	}
+	if quota.v8 {
+		if factor, window, validFor, ok := auth.QuotaPacing(time.Now()); ok {
+			entry["quota_pacing"] = gin.H{"factor": factor, "window": window, "valid_for_ms": validFor.Milliseconds()}
+		}
+	}
 	if auth.QuotaGuard != nil {
 		entry["quota_guard"] = auth.QuotaGuard
 	}

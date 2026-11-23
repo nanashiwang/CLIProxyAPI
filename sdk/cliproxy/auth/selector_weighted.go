@@ -23,6 +23,7 @@ type weightedTransportProviderKey struct{}
 // weightedReservation separates speculative credit from committed, clamped credit.
 // Releasing one request must never undo accounting committed by another request.
 type weightedReservation struct {
+	paced           []pacedDelta
 	selector        *WeightedRoundRobinSelector
 	state           *weightedPoolState
 	generation      uint64
@@ -354,12 +355,20 @@ func (s *WeightedRoundRobinSelector) reservePool(route string, available []*Auth
 }
 
 func (s *WeightedRoundRobinSelector) reservePoolScoped(route string, priority int, transportClass string, available []*Auth, weights []int64, ids []string, authID string) (*Auth, *weightedReservation) {
+	return s.reservePoolScopedAt(route, priority, transportClass, available, weights, ids, authID, time.Now())
+}
+
+func (s *WeightedRoundRobinSelector) reservePoolScopedAt(route string, priority int, transportClass string, available []*Auth, weights []int64, ids []string, authID string, now time.Time) (*Auth, *weightedReservation) {
+	shares := quotaPacingShares(available, ids, weights, now)
+	if shares != nil {
+		route = "\x00quota-pacing\x00" + route
+	}
 	dKey := dynamicWeightedPoolKey(route, priority, transportClass)
 	versions := extractWeightedAuthVersions(available, ids)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(ids) > maxExactWeightedPoolMembers || s.largeStates[dKey] != nil {
-		return s.reserveDynamicPoolLocked(dKey, route, available, weights, ids, versions, authID)
+		return s.reserveDynamicPoolLocked(dKey, route, available, weights, ids, versions, authID, shares)
 	}
 	key := weightedPoolDigest(route, ids)
 	if s.states == nil {
@@ -392,6 +401,9 @@ func (s *WeightedRoundRobinSelector) reservePoolScoped(route string, priority in
 		s.stateCount++
 	} else {
 		state.prepareWithVersions(weights, versions)
+	}
+	if shares != nil {
+		return s.reservePacedLocked(state, available, ids, shares, authID)
 	}
 	var picked *Auth
 	var pickedCurrent, total int64
@@ -468,7 +480,7 @@ func (s *WeightedRoundRobinSelector) evictOneLargePoolLocked() {
 	delete(s.largeStates, oldest)
 }
 
-func (s *WeightedRoundRobinSelector) reserveDynamicPoolLocked(dKey, route string, available []*Auth, weights []int64, ids []string, versions []weightedAuthVersion, authID string) (*Auth, *weightedReservation) {
+func (s *WeightedRoundRobinSelector) reserveDynamicPoolLocked(dKey, route string, available []*Auth, weights []int64, ids []string, versions []weightedAuthVersion, authID string, shares []int64) (*Auth, *weightedReservation) {
 	if s.largeStates == nil {
 		s.largeStates = make(map[string]*weightedPoolState)
 	}
@@ -493,6 +505,9 @@ func (s *WeightedRoundRobinSelector) reserveDynamicPoolLocked(dKey, route string
 		s.largeOrder = append(s.largeOrder, dKey)
 	}
 	state.syncDynamicMembers(ids, weights, versions)
+	if shares != nil {
+		return s.reservePacedLocked(state, available, ids, shares, authID)
+	}
 
 	var picked *Auth
 	var pickedEpoch uint64
@@ -803,6 +818,10 @@ func (r *weightedReservation) finish(committed bool) {
 	}
 	r.finished = true
 	if r.state.generation != r.generation {
+		return
+	}
+	if r.paced != nil {
+		r.finishPacedLocked(committed)
 		return
 	}
 	if r.state.dynamic {

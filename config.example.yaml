@@ -192,6 +192,11 @@ routing:
   # In Home mode, compatible Home versions charge retained WS turns from usage after completion;
   # CPA preserves the retained credential and concurrency slot instead of redispatching each turn.
   # For OAuth/file credentials, add a top-level numeric "weight" field to the auth JSON.
+  # Adjust weighted-round-robin shares for local Codex OAuth using fresh quota-guard observations.
+  # The tightest observed window scales manual weight by 0.5x to 1.5x in quarter steps.
+  # Existing bindings keep their credential. Empty pool scope includes all eligible Codex OAuth accounts.
+  quota-pacing: false
+  # quota-pacing-pool: "pilot" # Optional account-pools group ID; requires enabled account pools.
   # Enable universal session-sticky routing for all clients.
   # Explicit Claude Code, Codex, OpenCode, pi, and generic (X-Session-ID) session headers
   # are preferred, followed by prompt_cache_key, Responses conversation IDs, legacy body IDs,

@@ -97,6 +97,7 @@ type Auth struct {
 	// CodexQuota retains observed windows independently of cooldown deadlines.
 	QuotaGuard           *QuotaGuardStatus `json:"quota_guard,omitempty"`
 	quotaGuardValidUntil time.Time
+	quotaPace            quotaPace
 	ProviderQuota        *CodexQuotaSnapshot `json:"provider_quota,omitempty"`
 	CodexQuota           *CodexQuotaSnapshot `json:"codex_quota,omitempty"`
 	codexQuotaBlocked    bool
