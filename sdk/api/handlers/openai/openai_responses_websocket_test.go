@@ -3348,6 +3348,51 @@ func TestResponsesWebsocketExposesTerminalOAuthError(t *testing.T) {
 	}
 }
 
+// An unread pipe holds the subscriber inside its terminal write while a second
+// error ends the handler. Cleanup must leave the claimed frame intact.
+func TestResponsesWebsocketCleanupPreservesPendingDisconnectFrame(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client, server := net.Pipe()
+		defer func() { _ = client.Close() }()
+		defer func() { _ = server.Close() }()
+
+		executor := &websocketUpstreamDisconnectExecutor{subscribed: make(chan string, 1)}
+		manager := coreauth.NewManager(nil, nil, nil)
+		manager.RegisterExecutor(executor)
+		h := NewOpenAIResponsesAPIHandler(handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, manager))
+		router := gin.New()
+		router.GET("/v1/responses", h.ResponsesWebsocket)
+		go func() {
+			req, err := http.ReadRequest(bufio.NewReader(server))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			router.ServeHTTP(newHijackableWebsocketResponseWriter(server), req)
+		}()
+
+		dialer := websocket.Dialer{NetDial: func(_, _ string) (net.Conn, error) { return client, nil }}
+		conn, _, err := dialer.Dial("ws://pipe/v1/responses", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		executor.TriggerDisconnect(<-executor.subscribed, websocketPinnedFailoverStatusError{
+			status: http.StatusTooManyRequests, msg: "quota exceeded",
+		})
+		synctest.Wait()
+		// An unroutable turn terminates the stream while the disconnect writer
+		// owns the socket. Wait for teardown before allowing the write to finish.
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"unroutable-cleanup-test","input":[]}`)); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		_, frame, err := conn.ReadMessage()
+		if err != nil || ojson.GetBytes(frame, "status").Int() != http.StatusTooManyRequests {
+			t.Fatalf("terminal frame = %s, err = %v, want 429", frame, err)
+		}
+	})
+}
+
 func TestResponsesWebsocketTerminalErrorWrittenOnceAcrossForwardAndDisconnect(t *testing.T) {
 	serverErrCh := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

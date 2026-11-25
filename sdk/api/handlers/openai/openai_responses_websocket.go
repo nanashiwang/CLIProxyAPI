@@ -600,12 +600,15 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			log.Infof("responses websocket: upstream execution session closed id=%s", passthroughSessionID)
 		}
 		close(wsDone)
-		cancelSocket(nil)
-		_, _ = writer.closeWithoutError()
-		if errClose := conn.Close(); errClose != nil && !isWebsocketConnectionClosedError(errClose) {
+		// A disconnect subscriber may still be writing the terminal frame. Only
+		// downstream cancellation should interrupt the writer that owns the close.
+		abortClose := context.AfterFunc(socketCtx, func() { _ = conn.Close() })
+		if _, errClose := writer.closeWithoutError(); errClose != nil && !isWebsocketConnectionClosedError(errClose) {
 			log.Warnf("responses websocket: close connection error: %v", errClose)
 		}
 		disconnectWg.Wait()
+		abortClose()
+		cancelSocket(nil)
 		if errMsg := recordedDisconnectErr.Load(); errMsg != nil {
 			h.LoggingAPIResponseError(c, errMsg)
 		}

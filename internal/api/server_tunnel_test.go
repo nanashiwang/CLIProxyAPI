@@ -68,6 +68,17 @@ func dialServerTunnelWithType(t *testing.T, baseURL, apiKey string, role wstunne
 	t.Cleanup(func() {
 		_ = conn.Close()
 	})
+	// Upgrade completes before commitPeer registers the server. A control reply
+	// from its read loop proves registration before a client takes its snapshot.
+	if role == wstunnel.RoleServer {
+		if errWrite := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"list_servers"}`)); errWrite != nil {
+			t.Fatalf("probe server %s: %v", uuid, errWrite)
+		}
+		reply := readServerTunnelJSON(t, conn)
+		if reply.Get("code").String() != wstunnel.ErrCodeUnsupportedRoleAction {
+			t.Fatalf("unexpected registration probe reply from %s: %s", uuid, reply.Raw)
+		}
+	}
 	return conn
 }
 

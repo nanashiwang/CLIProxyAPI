@@ -14,6 +14,8 @@ An upstream 1009 can arrive between Go WebSocket write fragments. The reader att
 
 Responses forwards repeated `x-codex-exclude` values. Account and model overrides apply before checking the handshake profile. An independent turn can redial. An incremental turn with changed exclusions needs a full replay and does not evict the original socket.
 
+A stream error and a session disconnect can report the same upstream 429 after output has reached the client. Both use the downstream writer’s existing close ownership. Handler cleanup waits for the subscriber to finish its terminal frame and only interrupts that write on downstream cancellation. An unconditional socket close during cleanup can truncate the winning write and leave the client with EOF.
+
 ## Alternatives considered
 
 Replacing totals changes historical reports and billing interpretation. Inferring cancellation from running diagnostic snapshots misclassifies observations captured before completion. Copying Rust storage or scheduling would duplicate CPA ownership. Keeping a fixed size boundary cannot use larger upstream connections. Unbounded monitoring retries hide outages. Retrying after a TCP reset or the first metadata frame risks duplicate generation. Comparing the first exclusion value would silently retain stale response fields when later values change.
@@ -23,6 +25,8 @@ Replacing totals changes historical reports and billing interpretation. Inferrin
 Passed outcome/persistence/dashboard tests; advertised limit, UTF-8 boundary, invalid/redial limit, HTTP fallback and continuation integration tests; no-more-retry terminal conversion, local/Home refresh, alias and bootstrap tests. Full Go suite, binary build and real management smoke passed. Targeted race tests and 19 offline monitor tests passed. Paired React verification and desktop/mobile local usage-route browser checks passed. Release assets are verified separately during publishing.
 
 The upload and handshake regressions pass in the non-streaming, buffered and unbuffered executor entry points. The partial-upload test waits for the peer’s close acknowledgement between fragments. Wire tests check the count of HTTP attempts, repeated header values, operator precedence and socket reuse. Targeted race tests pass across three runs.
+
+The terminal-frame regression uses an unread in-memory pipe to hold the disconnect writer while the handler exits. The previous cleanup produces EOF in this ordering. Reading the pipe releases the final 429 frame.
 
 ## Consequences
 
