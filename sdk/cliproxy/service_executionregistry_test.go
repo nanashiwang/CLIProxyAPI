@@ -1446,11 +1446,8 @@ func TestServiceHeartbeatFailoverDoesNotDrainBlockingScope(t *testing.T) {
 	select {
 	case <-started:
 		t.Fatal("heartbeat failover started draining the blocking scope")
-	case <-time.After(50 * time.Millisecond):
-	}
-	select {
 	case <-secondSubscribe:
-	case <-time.After(time.Second):
+	case <-time.After(3 * homeSubscriberRetryInitial):
 		t.Fatal("new subscription did not start while the old scope remained active")
 	}
 	service.homeMu.Lock()
@@ -1466,7 +1463,9 @@ func TestServiceHeartbeatFailoverDoesNotDrainBlockingScope(t *testing.T) {
 	select {
 	case <-serviceCtx.Done():
 		t.Fatal("heartbeat failover canceled the service run")
-	case <-time.After(50 * time.Millisecond):
+	case <-started:
+		t.Fatal("the replacement subscription drained the active scope")
+	default:
 	}
 
 	close(release)
